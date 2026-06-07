@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "server/file_server",
+    "server/authentication",
+    "infra",
+    "base",
+    "frontend",
+    "server/email",
+    "quality",
+    "telemetry"
+]
+resolver = "2"

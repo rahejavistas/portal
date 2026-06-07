@@ -1,0 +1,89 @@
+version: '3.3'
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: always
+
+  minio-create-bucket:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c " until /usr/bin/mc alias set myminio http://minio:9000 admin password; do sleep 1; done; /usr/bin/mc mb myminio/vistas-files || true; /usr/bin/mc anonymous set public myminio/vistas-files || true; exit 0; "
+
+  migration:
+    build:
+      context: .
+      dockerfile: docker/local/migration.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./config_local.toml:/app/config_local.toml:ro
+    environment:
+      - APP_ENV=local
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/local/server.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      minio-create-bucket:
+        condition: service_completed_successfully
+      migration:
+        condition: service_completed_successfully
+    volumes:
+      - ./config_local.toml:/app/config_local.toml:ro
+    environment:
+      - APP_ENV=local
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+    ports:
+      - "3000:3000"
+    restart: always
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/local/frontend.Dockerfile
+    depends_on:
+      - server
+    ports:
+      - "4000:4000"
+    environment:
+      - SERVER_URL=http://server:3000
+      - PORT=4000
+
+volumes:
+  pgdata:
+  minio_data:

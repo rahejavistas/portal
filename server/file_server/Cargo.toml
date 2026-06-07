@@ -1,0 +1,28 @@
+[package]
+name = "file_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.6", features = ["multipart"] }
+tower = "0.4"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base = { path = "../../base" }
+authentication = { path = "../authentication" }
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "uuid", "chrono"] }
+rand = "0.8"
+tower-http = { version = "0.4", features = ["cors", "set-header"] }
+jsonwebtoken = "9.3"
+toml = "0.8"
+email = { version = "0.1.0", path = "../email" }
+tracing = "0.1.44"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "serde"] }
+aws-sdk-s3 = "1.17.0"
+humantime = "2.1"
+humantime-serde = "1.1"
+opentelemetry = { version = "0.21", features = ["metrics"] }
+telemetry = { version = "0.1.0", path = "../../telemetry" }
+governor = "0.6"

@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - server
+      - frontend
+    restart: always
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/prod/server.Dockerfile
+    volumes:
+      - ./config_prod.toml:/app/config_prod.toml:ro
+    environment:
+      - APP_ENV=prod
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/prod/frontend.Dockerfile
+    environment:
+      - APP_ENV=prod
+    restart: always
+
+  migration:
+    build:
+      context: .
+      dockerfile: docker/prod/migration.Dockerfile
+    volumes:
+      - ./config_prod.toml:/app/config_prod.toml:ro
+    environment:
+      - APP_ENV=prod
+    # Migration runs once and exits, so no restart policy

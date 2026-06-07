@@ -1,0 +1,273 @@
+pub const LOGIN_HTML: &str = r#"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vistas Portal - Secure Login</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+        :root {
+            --background: #FFFFFF;
+            --foreground: #111827;
+            --primary: #3B82F6;
+            --primary-hover: #2563EB;
+            --secondary: #10B981;
+            --accent: #F59E0B;
+            --muted: #F3F4F6;
+            --muted-foreground: #6B7280;
+            --border: #E5E7EB;
+            --radius-md: 6px;
+            --radius-lg: 8px;
+        }
+        body {
+            background-color: var(--muted);
+            color: var(--foreground);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        /* Decorative Background Shapes */
+        .bg-shape-1 {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0) 70%);
+            top: -100px;
+            right: -100px;
+            z-index: 1;
+        }
+        .bg-shape-2 {
+            position: absolute;
+            width: 500px;
+            height: 500px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.06) 0%, rgba(16, 185, 129, 0) 70%);
+            bottom: -150px;
+            left: -150px;
+            z-index: 1;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 440px;
+            padding: 24px;
+            position: relative;
+            z-index: 10;
+        }
+        .display-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .display-title {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            text-transform: uppercase;
+            color: var(--primary);
+            margin: 0 0 4px 0;
+            line-height: 0.9;
+        }
+        .display-subtitle {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--muted-foreground);
+            margin: 0;
+        }
+        .login-card {
+            background-color: var(--background);
+            border-radius: var(--radius-lg);
+            padding: 40px;
+            box-shadow: none;
+            border: none;
+            transition: transform 0.2s ease;
+        }
+        .login-card:hover {
+            transform: scale(1.01);
+        }
+        h2 {
+            font-size: 1.75rem;
+            margin: 0 0 8px 0;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+        .subtitle {
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
+        .form-group {
+            margin-bottom: 24px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--foreground);
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border-radius: var(--radius-md);
+            border: 2px solid transparent;
+            background-color: var(--muted);
+            color: var(--foreground);
+            font-size: 15px;
+            transition: all 0.2s ease;
+        }
+        input::placeholder {
+            color: var(--muted-foreground);
+            opacity: 0.7;
+        }
+        input:focus {
+            outline: none;
+            background-color: var(--background);
+            border-color: var(--primary);
+        }
+        button {
+            width: 100%;
+            padding: 15px;
+            border-radius: var(--radius-md);
+            border: none;
+            background-color: var(--primary);
+            color: var(--background);
+            font-weight: 700;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 16px;
+        }
+        button:hover {
+            background-color: var(--primary-hover);
+            transform: scale(1.05);
+        }
+        button:focus-visible {
+            outline: 2px solid var(--primary);
+            outline-offset: 2px;
+        }
+        .error-msg {
+            color: #EF4444;
+            font-size: 0.8125rem;
+            margin-top: 24px;
+            text-align: center;
+            display: none;
+            background-color: #FEE2E2;
+            padding: 12px;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+        }
+        .helper-links {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 32px;
+            font-size: 0.8125rem;
+            border-top: 2px solid var(--muted);
+            padding-top: 20px;
+        }
+        .helper-links a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+        .helper-links a:hover {
+            color: var(--primary-hover);
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-shape-1"></div>
+    <div class="bg-shape-2"></div>
+
+    <div class="container">
+        <div class="display-header">
+            <h1 class="display-title">Vistas</h1>
+            <div class="display-subtitle">Secure Access Portal</div>
+        </div>
+        
+        <div class="login-card">
+            <h2>Sign In</h2>
+            <div class="subtitle">Enter your credentials to securely access your Vistas documents portal.</div>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" required placeholder="name@vistas.com">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" required placeholder="••••••••">
+                </div>
+                <button type="submit">Sign In to Account</button>
+                <div class="error-msg" id="error-msg">Invalid email or password</div>
+            </form>
+            <div class="helper-links">
+                <a href="/forgot-password">Reset Password</a>
+                <span style="color: var(--muted-foreground); opacity: 0.3;">|</span>
+                <code style="color: var(--muted-foreground); font-weight: 500;">admin@vistas.com</code>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
+
+        if (localStorage.getItem('vfs_token')) {
+            window.location.href = '/dashboard';
+        }
+
+        const form = document.getElementById('login-form');
+        const errorMsg = document.getElementById('error-msg');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMsg.style.display = 'none';
+
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    localStorage.setItem('vfs_token', data.token);
+                    localStorage.setItem('vfs_user', JSON.stringify(data.user));
+                    window.location.href = '/dashboard';
+                } else {
+                    errorMsg.textContent = data.message || 'Invalid email or password';
+                    errorMsg.style.display = 'block';
+                }
+            } catch (err) {
+                errorMsg.textContent = 'Failed to connect to backend server';
+                errorMsg.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
+"#;
