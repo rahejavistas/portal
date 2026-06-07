@@ -5,9 +5,8 @@ use std::path::Path;
 mod views;
 
 fn process_html(html: &str, api_base: &str) -> String {
-    // Replace the default API_BASE logic with the injected api_base
-    // If api_base is empty, it falls back to relative paths ("")
-    let replacement = format!("const API_BASE = window.location.port === \"4000\" ? `http://${{window.location.hostname}}:3000` : \"{}\";", api_base);
+    // Completely replace the local development ternary logic with the simple API_BASE constant
+    let replacement = format!("const API_BASE = \"{}\";", api_base);
     html.replace(
         "const API_BASE = window.location.port === \"4000\" ? `http://${window.location.hostname}:3000` : \"\";",
         &replacement
