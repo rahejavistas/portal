@@ -581,7 +581,7 @@
                  .replace(/'/g, "&#039;");
         }
 
-        const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
+        const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "https://api.vistas.com";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
         
