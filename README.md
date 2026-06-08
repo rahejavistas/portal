@@ -263,3 +263,5 @@ Toggles the soft-deleted state of a document.
 * **Response (204 No Content)**
 
 </details>
+
+---

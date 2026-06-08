@@ -41,8 +41,42 @@ impl AppConfig {
         let config_str = std::fs::read_to_string(&file_name)
             .unwrap_or_else(|e| panic!("Failed to read configuration file {}: {}", file_name, e));
 
-        let config: Self = toml::from_str(&config_str)
+        let mut config: Self = toml::from_str(&config_str)
             .unwrap_or_else(|e| panic!("Failed to parse configuration file {}: {}", file_name, e));
+
+        // Override settings with environment variables if present
+        if let Ok(jwt_secret) = std::env::var("JWT_SECRET") {
+            config.jwt_secret = jwt_secret;
+        }
+        if let Ok(db_url) = std::env::var("DATABASE_URL") {
+            config.postgres.database_url = Some(db_url);
+        }
+        if let Ok(db_host) = std::env::var("DATABASE_HOST") {
+            config.postgres.host = db_host;
+        }
+        if let Ok(db_port) = std::env::var("DATABASE_PORT") {
+            if let Ok(port) = db_port.parse::<u16>() {
+                config.postgres.port = port;
+            }
+        }
+        if let Ok(db_username) = std::env::var("DATABASE_USERNAME") {
+            config.postgres.username = db_username;
+        }
+        if let Ok(db_password) = std::env::var("DATABASE_PASSWORD") {
+            config.postgres.password = Some(db_password);
+        }
+        if let Ok(db_name) = std::env::var("DATABASE_NAME") {
+            config.postgres.database = db_name;
+        }
+        if let Ok(s3_region) = std::env::var("S3_REGION") {
+            config.s3.region = s3_region;
+        }
+        if let Ok(s3_bucket) = std::env::var("S3_BUCKET_NAME") {
+            config.s3.bucket_name = s3_bucket;
+        }
+        if let Ok(admin_email) = std::env::var("ADMIN_EMAIL") {
+            config.admin_email = admin_email;
+        }
 
         config
     }

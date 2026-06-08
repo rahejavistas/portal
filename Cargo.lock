@@ -1657,17 +1657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hostname"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
-dependencies = [
- "cfg-if",
- "libc",
- "windows-link",
-]
-
-[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2198,18 +2187,18 @@ dependencies = [
  "fastrand",
  "futures-io",
  "futures-util",
- "hostname",
  "httpdate",
  "idna",
  "mime",
- "native-tls",
  "nom 8.0.0",
  "percent-encoding",
  "quoted_printable",
+ "rustls 0.23.40",
  "socket2 0.6.4",
  "tokio",
- "tokio-native-tls",
+ "tokio-rustls 0.26.4",
  "url",
+ "webpki-roots 1.0.7",
 ]
 
 [[package]]
@@ -3955,16 +3944,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "tokio-native-tls"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
-dependencies = [
- "native-tls",
- "tokio",
 ]
 
 [[package]]

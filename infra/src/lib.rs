@@ -1,5 +1,6 @@
 pub mod db {
-    use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
+    use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, Pool, Postgres};
+    use std::str::FromStr;
     use std::time::Duration;
 
     /// Runs all pending migrations in the `migrations` directory.
@@ -13,10 +14,12 @@ pub mod db {
 
     /// Helper to create a connection pool
     pub async fn create_pool(database_url: &str) -> Result<Pool<Postgres>, sqlx::Error> {
+        let connect_options = PgConnectOptions::from_str(database_url)?.statement_cache_capacity(0);
+
         PgPoolOptions::new()
             .max_connections(5)
             .acquire_timeout(Duration::from_secs(3))
-            .connect(database_url)
+            .connect_with(connect_options)
             .await
     }
 }

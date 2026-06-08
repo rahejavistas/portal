@@ -1,22 +1,29 @@
 use crate::config::PostgresConfig;
-use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
+use sqlx::{postgres::PgConnectOptions, postgres::PgPoolOptions, Pool, Postgres};
+use std::str::FromStr;
 use std::time::Duration;
 
 pub async fn create_pool(config: &PostgresConfig) -> Result<Pool<Postgres>, sqlx::Error> {
-    let password_part = config
-        .password
-        .as_deref()
-        .map(|p| format!(":{}", p))
-        .unwrap_or_default();
-    let db_url = format!(
-        "postgres://{}{password_part}@{}:{}/{}",
-        config.username, config.host, config.port, config.database
-    );
+    let db_url = if let Some(ref url) = config.database_url {
+        url.clone()
+    } else {
+        let password_part = config
+            .password
+            .as_deref()
+            .map(|p| format!(":{}", p))
+            .unwrap_or_default();
+        format!(
+            "postgres://{}{password_part}@{}:{}/{}",
+            config.username, config.host, config.port, config.database
+        )
+    };
+
+    let connect_options = PgConnectOptions::from_str(&db_url)?.statement_cache_capacity(0);
 
     PgPoolOptions::new()
         .max_connections(config.max_connections)
         .acquire_timeout(Duration::from_secs(3))
-        .connect(&db_url)
+        .connect_with(connect_options)
         .await
 }
 
