@@ -1,0 +1,241 @@
+{
+  "template_id": "tenant_onboarding_v1",
+  "name": "Tenant Onboarding Process",
+  "description": "Stages for tenant onboarding from owner document submission to shifting permission",
+  "step_id": 1,
+  "is_optional": false,
+  "is_review_required": false,
+  "substeps": [
+    {
+      "step_id": 2,
+      "name": "Step 1: Onboarding Documents and Payments",
+      "description": "Submit owner documents, tenant KYC, undertaking, and pay necessary fees",
+      "is_optional": false,
+      "is_review_required": true,
+      "substeps": [
+        {
+          "step_id": 3,
+          "name": "Owner Documents",
+          "description": "Submit ownership documentation (if not submitted already)",
+          "is_optional": false,
+          "is_review_required": false,
+          "fields": [
+            {
+              "field_id": 101,
+              "name": "Sale Agreement / Chain Agreement",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_PROPERTY"
+              }
+            },
+            {
+              "field_id": 102,
+              "name": "Possession Letter",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_PROPERTY"
+              }
+            },
+            {
+              "field_id": 103,
+              "name": "Parking Allotment Letter",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_PROPERTY"
+              }
+            },
+            {
+              "field_id": 104,
+              "name": "Loan Sanction Letter (If Loan Availed)",
+              "type": "document",
+              "is_optional": true,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_PROPERTY"
+              }
+            },
+            {
+              "field_id": 105,
+              "name": "Owner KYC Documents",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_KYC"
+              }
+            },
+            {
+              "field_id": 106,
+              "name": "ADDA Enrollment Form",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_GENERAL"
+              }
+            }
+          ]
+        },
+        {
+          "step_id": 4,
+          "name": "Tenant KYC",
+          "description": "Submit KYC documents for the tenant",
+          "is_optional": false,
+          "is_review_required": false,
+          "fields": [
+            {
+              "field_id": 107,
+              "name": "Tenant KYC Documents",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_KYC"
+              }
+            }
+          ]
+        },
+        {
+          "step_id": 5,
+          "name": "Undertaking",
+          "description": "Submit signed undertaking on 200/- stamp paper in society format",
+          "is_optional": false,
+          "is_review_required": false,
+          "fields": [
+            {
+              "field_id": 108,
+              "name": "Undertaking (Stamp Paper)",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_GENERAL"
+              }
+            }
+          ]
+        },
+        {
+          "step_id": 6,
+          "name": "Payments",
+          "description": "Pay shifting charges and one-year NOC charges",
+          "is_optional": false,
+          "is_review_required": false,
+          "fields": [
+            {
+              "field_id": 109,
+              "name": "One Year NOC Charges (11,800/-)",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_GENERAL"
+              }
+            },
+            {
+              "field_id": 110,
+              "name": "Shifting Charges (8,614/-)",
+              "type": "document",
+              "is_optional": false,
+              "filled_by": "user",
+              "requirements": {
+                "document_type": "RESIDENT_GENERAL"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "step_id": 7,
+      "name": "Step 2: Meeting with Committee",
+      "description": "Schedule and complete the meeting with Office Bearers / Managing Committee",
+      "is_optional": false,
+      "is_review_required": true,
+      "fields": [
+        {
+          "field_id": 111,
+          "name": "Meeting Remarks & Status",
+          "type": "text",
+          "is_optional": false,
+          "filled_by": "admin",
+          "requirements": {
+            "format": "string"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": 8,
+      "name": "Step 3: NOC Issuance",
+      "description": "NOC will be issued by the society administration",
+      "is_optional": false,
+      "is_review_required": true,
+      "fields": [
+        {
+          "field_id": 112,
+          "name": "Issued NOC Document",
+          "type": "document",
+          "is_optional": false,
+          "filled_by": "admin",
+          "requirements": {
+            "document_type": "RESIDENT_GENERAL"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": 9,
+      "name": "Step 4: Agreement Registration & Police Verification",
+      "description": "Submit registered agreement and police verification details",
+      "is_optional": false,
+      "is_review_required": true,
+      "fields": [
+        {
+          "field_id": 113,
+          "name": "Registered Agreement",
+          "type": "document",
+          "is_optional": false,
+          "filled_by": "user",
+          "requirements": {
+            "document_type": "RESIDENT_RENTAL"
+          }
+        },
+        {
+          "field_id": 114,
+          "name": "Police Verification Form / Receipt",
+          "type": "document",
+          "is_optional": false,
+          "filled_by": "user",
+          "requirements": {
+            "document_type": "RESIDENT_KYC"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": 10,
+      "name": "Step 5: Shifting Permission",
+      "description": "Receive final shifting permission from the society office",
+      "is_optional": false,
+      "is_review_required": true,
+      "fields": [
+        {
+          "field_id": 115,
+          "name": "Shifting Permission Letter",
+          "type": "document",
+          "is_optional": false,
+          "filled_by": "admin",
+          "requirements": {
+            "document_type": "RESIDENT_GENERAL"
+          }
+        }
+      ]
+    }
+  ]
+}
