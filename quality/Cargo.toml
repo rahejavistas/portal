@@ -13,6 +13,7 @@ uuid = { version = "1.8", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 infra = { path = "../infra" }
 base = { path = "../base" }
+process = { path = "../process" }
 
 [dev-dependencies]
 authentication = { path = "../server/authentication" }
