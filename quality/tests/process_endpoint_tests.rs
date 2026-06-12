@@ -47,7 +47,7 @@ fn setup_process(url: &str, env: &quality::TestEnv) -> (String, String, String) 
     let admin_jwt = quick_setup_admin(env);
     let admin_auth = format!("Bearer {}", admin_jwt);
     let _rid = quick_create_user(env, &admin_jwt, "res@test.com", "A", "101");
-    let res_jwt = quick_onboard_user(env, "res@test.com", "pass123");
+    let res_jwt = quick_onboard_user(env, "res@test.com", "password123");
     let res_auth = format!("Bearer {}", res_jwt);
 
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
@@ -435,12 +435,12 @@ async fn test_user_cannot_access_other_users_process() {
     let _u1 = quick_create_user(&env, &admin_jwt, "u1@test.com", "A", "101");
     let u1_auth = format!(
         "Bearer {}",
-        quick_onboard_user(&env, "u1@test.com", "pass1")
+        quick_onboard_user(&env, "u1@test.com", "password1")
     );
     let _u2 = quick_create_user(&env, &admin_jwt, "u2@test.com", "A", "102");
     let u2_auth = format!(
         "Bearer {}",
-        quick_onboard_user(&env, "u2@test.com", "pass2")
+        quick_onboard_user(&env, "u2@test.com", "password2")
     );
 
     // User 1 initializes their process
