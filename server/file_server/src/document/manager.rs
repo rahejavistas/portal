@@ -23,7 +23,7 @@ impl DocumentManager {
     }
 
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
-        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let key = super::derive_s3_key(doc.process_id, doc.access_level, doc.document_id);
         self.s3_accessor
             .create_presigned_url(&key)
             .await
@@ -90,6 +90,19 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(private_assigned_ids);
 
+        // 4. Fetch PRIVATE documents associated with processes owned by the user
+        let process_assigned_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT d.document_id \
+             FROM documents d \
+             JOIN processes p ON d.process_id = p.process_id \
+             WHERE p.user_id = $1 AND NOT d.is_deleted",
+        )
+        .bind(user.user_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        allowed_ids.extend(process_assigned_ids);
+
         Ok(allowed_ids)
     }
 
@@ -122,7 +135,7 @@ impl DocumentManager {
         // C. Fetch the authorized document
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.process_id, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -152,7 +165,7 @@ impl DocumentManager {
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.process_id, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -196,6 +209,7 @@ impl DocumentManager {
             document_type,
             access_level,
             false,
+            None,
         )
         .await?;
 
@@ -316,6 +330,7 @@ impl DocumentManager {
             DocumentType::ResidentGeneral,
             DocumentAccessLevel::Private,
             true, // is_user_uploaded
+            None,
         )
         .await?;
 
@@ -336,6 +351,66 @@ impl DocumentManager {
         })
     }
 
+    /// Atomically creates a document for a process, assigning it to the process owner's flat.
+    pub async fn create_document_for_process_atomic(
+        &self,
+        process_id: Uuid,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<DocumentWithMetadata, String> {
+        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Find the user_id associated with the process
+        let process_user_id: i32 =
+            sqlx::query_scalar("SELECT user_id FROM processes WHERE process_id = $1")
+                .bind(process_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "Process not found".to_string())?;
+
+        // Find that user's active flat_id
+        let flat_id: i32 = sqlx::query_scalar(
+            "SELECT flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE LIMIT 1",
+        )
+        .bind(process_user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Process owner does not have an active flat ownership".to_string())?;
+
+        let doc = Self::insert_document(
+            &mut *tx,
+            title,
+            description,
+            DocumentCategory::ResidentSpecific,
+            DocumentType::ResidentGeneral,
+            DocumentAccessLevel::Private,
+            true, // is_user_uploaded
+            Some(process_id),
+        )
+        .await?;
+
+        // Insert into document_flats
+        sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
+            .bind(doc.document_id)
+            .bind(flat_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        Ok(DocumentWithMetadata {
+            document: doc,
+            metadata: None,
+            download_url: None,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn insert_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         title: &str,
@@ -344,12 +419,13 @@ impl DocumentManager {
         document_type: DocumentType,
         access_level: DocumentAccessLevel,
         is_user_uploaded: bool,
+        process_id: Option<Uuid>,
     ) -> Result<Document, String> {
         let empty_roles: Vec<UserRole> = vec![];
         let doc: Document = sqlx::query_as(
-            "INSERT INTO documents (title, description, category, document_type, access_level, restricted_committee_roles, is_user_uploaded) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded",
+            "INSERT INTO documents (title, description, category, document_type, access_level, restricted_committee_roles, is_user_uploaded, process_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, process_id",
         )
         .bind(title)
         .bind(description)
@@ -358,6 +434,7 @@ impl DocumentManager {
         .bind(access_level)
         .bind(&empty_roles)
         .bind(is_user_uploaded)
+        .bind(process_id)
         .fetch_one(executor)
         .await
         .map_err(|e| e.to_string())?;
@@ -380,7 +457,7 @@ impl DocumentManager {
             "UPDATE documents \
              SET title = $1, description = $2, category = $3, document_type = $4, access_level = $5, restricted_committee_roles = $6 \
              WHERE document_id = $7 \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded",
+             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, process_id",
         )
         .bind(title)
         .bind(description)
@@ -506,7 +583,7 @@ impl DocumentManager {
     ) -> Result<Option<DocumentWithMetadata>, String> {
         let mut doc_with_meta: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.process_id, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -529,7 +606,7 @@ impl DocumentManager {
     pub async fn admin_list_all_documents(&self) -> Result<Vec<DocumentWithMetadata>, String> {
         let all_docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.process_id, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -545,6 +622,32 @@ impl DocumentManager {
     /// Soft deletes a document by toggling is_deleted = TRUE.
     pub async fn admin_soft_delete_document(&self, document_id: Uuid) -> Result<(), String> {
         sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = $1")
+            .bind(document_id)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Fetches all non-deleted documents for a specific process.
+    pub async fn get_documents_for_process(
+        &self,
+        process_id: Uuid,
+    ) -> Result<Vec<Document>, String> {
+        sqlx::query_as(
+            "SELECT document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, process_id \
+             FROM documents \
+             WHERE process_id = $1 AND NOT is_deleted"
+        )
+        .bind(process_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Permanently deletes a document from the database (e.g. on S3 upload failure rollback).
+    pub async fn delete_document_permanently(&self, document_id: Uuid) -> Result<(), String> {
+        sqlx::query("DELETE FROM documents WHERE document_id = $1")
             .bind(document_id)
             .execute(&self.pg_pool)
             .await

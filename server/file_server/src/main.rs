@@ -87,6 +87,10 @@ async fn main() {
             "/documents/:id/delete",
             post(handlers::documents::admin_delete_document),
         )
+        .route(
+            "/process/review",
+            post(handlers::process::admin_review_step),
+        )
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::admin_guard,
@@ -115,6 +119,22 @@ async fn main() {
         .route(
             "/api/v1/documents/upload",
             post(handlers::documents::user_create_document),
+        )
+        .route(
+            "/api/v1/process/state",
+            post(handlers::process::get_process_state),
+        )
+        .route(
+            "/api/v1/process/save-step",
+            post(handlers::process::save_process_step),
+        )
+        .route(
+            "/api/v1/process/upload",
+            post(handlers::process::process_upload_document),
+        )
+        .route(
+            "/api/v1/process/download-url",
+            post(handlers::process::process_download_url),
         )
         .nest("/api/v1/admin", admin_routes)
         // Standard CORS and custom security headers middleware

@@ -6,6 +6,7 @@ pub struct ProcessContext<'a> {
     pub conn: &'a mut sqlx::PgConnection,
     pub user_id: i32,
     pub template: &'a crate::ProcessTemplate,
+    pub ownership_id: Option<i32>,
 }
 
 impl<'a> ProcessContext<'a> {
@@ -18,17 +19,24 @@ impl<'a> ProcessContext<'a> {
             conn,
             user_id,
             template,
+            ownership_id: None,
         }
+    }
+
+    pub fn with_ownership(mut self, ownership_id: Option<i32>) -> Self {
+        self.ownership_id = ownership_id;
+        self
     }
 
     /// Initialize a new process workflow instance in the DB and create all step instances based on the template.
     pub async fn init(self) -> Result<ProcessExecutor<'a>, sqlx::Error> {
         // 1. Insert process
         let process_id: Uuid = sqlx::query_scalar(
-            "INSERT INTO processes (user_id, template_id) VALUES ($1, $2) RETURNING process_id",
+            "INSERT INTO processes (user_id, template_id, ownership_id) VALUES ($1, $2, $3) RETURNING process_id",
         )
         .bind(self.user_id)
         .bind(&self.template.template_id)
+        .bind(self.ownership_id)
         .fetch_one(&mut *self.conn)
         .await?;
 
@@ -193,48 +201,10 @@ impl<'a> ProcessExecutor<'a> {
         .await
         .map_err(|e| e.to_string())?;
 
-        let mut steps_to_reset = vec![target_step_id];
-        let mut curr_info = step_info_map.get(&target_step_id).unwrap();
-        while let Some(parent_id) = curr_info.parent_id {
-            if parent_id == 1 {
-                break;
-            }
-            steps_to_reset.push(parent_id);
-            if let Some(p_info) = step_info_map.get(&parent_id) {
-                curr_info = p_info;
-            } else {
-                break;
-            }
-        }
+        self.invalidate_parent_chain(target_step_id, &step_info_map)
+            .await?;
 
-        for step_id in steps_to_reset {
-            let state_of_step = self.workflow.steps.get(&step_id).unwrap();
-            let is_step_closed = matches!(
-                state_of_step,
-                crate::state_machine::StepState::Completed(_)
-                    | crate::state_machine::StepState::PendingReview(_)
-            );
-            if is_step_closed {
-                insert_step_review(
-                    &mut *self.conn,
-                    self.process_id,
-                    step_id,
-                    Some(self.user_id),
-                    false,
-                    Some("Substep/step edited by administrator"),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            }
-        }
-
-        // Refresh internal workflow state
-        let state = load_process_state(&mut *self.conn, self.process_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        self.workflow = crate::state_machine::Workflow::from_state(self.template, &state);
-
-        Ok(())
+        self.refresh_workflow().await
     }
 
     /// Record an admin review, update the workflow state, and persist changes to the database.
@@ -283,13 +253,7 @@ impl<'a> ProcessExecutor<'a> {
         .await
         .map_err(|e| e.to_string())?;
 
-        // Refresh internal workflow state
-        let state = load_process_state(&mut *self.conn, self.process_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        self.workflow = crate::state_machine::Workflow::from_state(self.template, &state);
-
-        Ok(())
+        self.refresh_workflow().await
     }
 
     /// Manually update step completion status in the database (e.g. to bypass review) and refresh workflow.
@@ -330,7 +294,15 @@ impl<'a> ProcessExecutor<'a> {
             }
         }
 
-        // Gather steps to reset: this step and its parent steps recursively
+        // Gather steps to reset and insert rejection reviews
+        self.invalidate_parent_chain_with_note(
+            target_step_id,
+            &step_info_map,
+            "Step reopened by administrator",
+        )
+        .await?;
+
+        // Also reset the target step itself and its parents
         let mut steps_to_reset = vec![target_step_id];
         let step_info = step_info_map.get(&target_step_id).unwrap();
         let mut curr_info = step_info;
@@ -346,8 +318,62 @@ impl<'a> ProcessExecutor<'a> {
             }
         }
 
-        // Insert non-approval reviews to invalidate approvals for all closed steps in the chain
-        for &step_id in &steps_to_reset {
+        let steps_to_update: Vec<(i32, bool)> =
+            steps_to_reset.iter().map(|&id| (id, false)).collect();
+        update_steps_completion(&mut *self.conn, self.process_id, &steps_to_update)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        self.refresh_workflow().await
+    }
+
+    // ---- Private helpers ----
+
+    /// Reload workflow state from the database.
+    async fn refresh_workflow(&mut self) -> Result<(), String> {
+        let state = load_process_state(&mut *self.conn, self.process_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.workflow = crate::state_machine::Workflow::from_state(self.template, &state);
+        Ok(())
+    }
+
+    /// Insert rejection reviews for a step and all its closed parent steps (used when admin edits a completed step).
+    async fn invalidate_parent_chain(
+        &mut self,
+        target_step_id: i32,
+        step_info_map: &HashMap<i32, crate::state_machine::StepInfo>,
+    ) -> Result<(), String> {
+        self.invalidate_parent_chain_with_note(
+            target_step_id,
+            step_info_map,
+            "Substep/step edited by administrator",
+        )
+        .await
+    }
+
+    /// Insert rejection reviews for a step and all its closed parent steps with a custom note.
+    async fn invalidate_parent_chain_with_note(
+        &mut self,
+        target_step_id: i32,
+        step_info_map: &HashMap<i32, crate::state_machine::StepInfo>,
+        note: &str,
+    ) -> Result<(), String> {
+        let mut steps_to_reset = vec![target_step_id];
+        let mut curr_info = step_info_map.get(&target_step_id).unwrap();
+        while let Some(parent_id) = curr_info.parent_id {
+            if parent_id == 1 {
+                break;
+            }
+            steps_to_reset.push(parent_id);
+            if let Some(p_info) = step_info_map.get(&parent_id) {
+                curr_info = p_info;
+            } else {
+                break;
+            }
+        }
+
+        for step_id in steps_to_reset {
             let state_of_step = self.workflow.steps.get(&step_id).unwrap();
             let is_step_closed = matches!(
                 state_of_step,
@@ -361,24 +387,12 @@ impl<'a> ProcessExecutor<'a> {
                     step_id,
                     Some(self.user_id),
                     false,
-                    Some("Step reopened by administrator"),
+                    Some(note),
                 )
                 .await
                 .map_err(|e| e.to_string())?;
             }
         }
-
-        let steps_to_update: Vec<(i32, bool)> =
-            steps_to_reset.iter().map(|&id| (id, false)).collect();
-        update_steps_completion(&mut *self.conn, self.process_id, &steps_to_update)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Refresh internal workflow state
-        let state = load_process_state(&mut *self.conn, self.process_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        self.workflow = crate::state_machine::Workflow::from_state(self.template, &state);
 
         Ok(())
     }
@@ -538,4 +552,110 @@ async fn insert_step_review(
     .await?;
 
     Ok(())
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct ProcessReviewHistory {
+    pub review_id: Uuid,
+    pub template_step_id: i32,
+    pub admin_email: Option<String>,
+    pub is_approved: bool,
+    pub notes: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct ProcessFieldHistoryRow {
+    pub template_field_id: i32,
+    pub text_value: Option<String>,
+    pub document_id: Option<Uuid>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ProcessInfo {
+    pub user_id: i32,
+    pub template_id: String,
+    pub ownership_id: Option<i32>,
+}
+
+pub async fn get_process_info(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<Option<ProcessInfo>, sqlx::Error> {
+    sqlx::query_as("SELECT user_id, template_id, ownership_id FROM processes WHERE process_id = $1")
+        .bind(process_id)
+        .fetch_optional(conn)
+        .await
+}
+
+pub async fn find_process_by_ownership_and_template(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: Option<i32>,
+    user_id: i32,
+    template_id: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    if let Some(oid) = ownership_id {
+        sqlx::query_scalar(
+            "SELECT process_id FROM processes WHERE ownership_id = $1 AND template_id = $2",
+        )
+        .bind(oid)
+        .bind(template_id)
+        .fetch_optional(conn)
+        .await
+    } else {
+        sqlx::query_scalar(
+            "SELECT process_id FROM processes WHERE user_id = $1 AND template_id = $2 AND ownership_id IS NULL",
+        )
+        .bind(user_id)
+        .bind(template_id)
+        .fetch_optional(conn)
+        .await
+    }
+}
+
+pub async fn get_process_reviews(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<Vec<ProcessReviewHistory>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT pr.review_id, ps.template_step_id, u.email as admin_email, pr.is_approved, pr.notes, pr.created_at \
+         FROM process_step_reviews pr \
+         JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
+         LEFT JOIN users u ON pr.admin_id = u.user_id \
+         WHERE ps.process_id = $1 \
+         ORDER BY pr.created_at ASC"
+    )
+    .bind(process_id)
+    .fetch_all(conn)
+    .await
+}
+
+pub async fn get_field_history(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<Vec<ProcessFieldHistoryRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT pf.template_field_id, pf.text_value, pf.document_id, pf.updated_at \
+         FROM process_fields pf \
+         JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
+         WHERE ps.process_id = $1 \
+         ORDER BY pf.template_field_id, pf.updated_at DESC, pf.field_instance_id DESC",
+    )
+    .bind(process_id)
+    .fetch_all(conn)
+    .await
+}
+
+/// Fetch all active flat ownerships for a user as (ownership_id, flat_id) pairs.
+pub async fn get_active_ownerships_for_user(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+) -> Result<Vec<(i32, i32)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT ownership_id, flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+    )
+    .bind(user_id)
+    .fetch_all(conn)
+    .await
 }
