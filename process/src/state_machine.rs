@@ -248,6 +248,9 @@ impl Step<PendingReview> {
         let mut steps_to_update = Vec::new();
 
         if is_approved {
+            // Explicitly mark step as completed so completed_at is set to approval time
+            steps_to_update.push((self.step_id, true));
+
             let completed_step =
                 Step::new(self.step_id, self.parent_id, self.fields, self.field_states);
             ReviewedStepTransition::ToCompleted(completed_step, ReviewResult { steps_to_update })

@@ -1,14 +1,5 @@
 -- Migration: Process Workflows Schema
 
--- 1. Processes Table
--- User can have same process multiple times.
-CREATE TABLE IF NOT EXISTS processes (
-    process_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    template_id VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-);
 
 -- 2. Process Steps Table (Supports hierarchical steps and substeps)
 -- Each process can have multiple steps. Each step can have multiple substeps.
@@ -49,7 +40,7 @@ CREATE TABLE IF NOT EXISTS process_fields (
 
 -- 4. Process Step Reviews Table (Admin review history)
 CREATE TABLE IF NOT EXISTS process_step_reviews (
-    review_id PRIMARY KEY DEFAULT gen_random_uuid(),
+    review_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     step_instance_id UUID NOT NULL REFERENCES process_steps(step_instance_id) ON DELETE CASCADE,
     admin_id INT REFERENCES users(user_id) ON DELETE SET NULL,
     

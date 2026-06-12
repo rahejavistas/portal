@@ -40,6 +40,16 @@ BEGIN
 END
 $$;
 
+-- 1.5 Processes Table (needed for references constraint in documents)
+CREATE TABLE IF NOT EXISTS processes (
+    process_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    template_id VARCHAR(255) NOT NULL,
+    ownership_id INT REFERENCES flat_ownerships(ownership_id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
 -- 2. Core Documents Table (Holds universal/common properties)
 CREATE TABLE IF NOT EXISTS documents (
     document_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,6 +70,9 @@ CREATE TABLE IF NOT EXISTS documents (
     
     -- Flag for user uploads
     is_user_uploaded BOOLEAN DEFAULT FALSE NOT NULL,
+    
+    -- Process association (Optional, for process-specific documents)
+    process_id UUID REFERENCES processes(process_id) ON DELETE SET NULL,
     
     -- Ensure document category matches its type
     CONSTRAINT chk_document_type_category CHECK (
@@ -99,6 +112,7 @@ CREATE TABLE IF NOT EXISTS document_flats (
 -- Core Indexes
 CREATE INDEX IF NOT EXISTS idx_documents_category_type ON documents(category, document_type);
 CREATE INDEX IF NOT EXISTS idx_documents_access_level ON documents(access_level);
+CREATE INDEX IF NOT EXISTS idx_documents_process ON documents(process_id);
 
 -- Metadata Specific Indexes
 CREATE INDEX IF NOT EXISTS idx_generic_meta_date ON generic_document_metadata(document_date);

@@ -101,6 +101,7 @@ pub struct Document {
     pub uploaded_date: DateTime<Utc>,
     pub is_deleted: bool,
     pub is_user_uploaded: bool,
+    pub process_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -145,14 +146,24 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
     }
 }
 
-pub fn derive_s3_key(access_level: DocumentAccessLevel, document_id: Uuid) -> String {
-    let prefix = match access_level {
-        DocumentAccessLevel::Public | DocumentAccessLevel::CommitteeOnly => "public",
-        DocumentAccessLevel::Private => "private",
-    };
-    let uuid_str = document_id.to_string();
-    let first_char = uuid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
-    format!("{}/{}/{}", prefix, first_char, uuid_str)
+pub fn derive_s3_key(
+    process_id: Option<Uuid>,
+    access_level: DocumentAccessLevel,
+    document_id: Uuid,
+) -> String {
+    if let Some(pid) = process_id {
+        let pid_str = pid.to_string();
+        let first_char = pid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
+        format!("process/{}/{}/{}", first_char, pid_str, document_id)
+    } else {
+        let prefix = match access_level {
+            DocumentAccessLevel::Public | DocumentAccessLevel::CommitteeOnly => "public",
+            DocumentAccessLevel::Private => "private",
+        };
+        let uuid_str = document_id.to_string();
+        let first_char = uuid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
+        format!("{}/{}/{}", prefix, first_char, uuid_str)
+    }
 }
 
 /// Structured input for document metadata fields, used by the manager's
