@@ -2,7 +2,6 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
 };
-use tracing::{error, info};
 
 pub mod config;
 
@@ -51,7 +50,9 @@ pub async fn send_email(email_payload: &Email) -> Result<(), String> {
     let config = match EmailConfig::from_env() {
         Some(c) => c,
         None => {
-            error!("SMTP configuration is missing in environment variables. Skipping email send.");
+            eprintln!(
+                "SMTP configuration is missing in environment variables. Skipping email send."
+            );
             return Ok(()); // Fail gracefully as per instructions
         }
     };
@@ -74,7 +75,7 @@ pub async fn send_email(email_payload: &Email) -> Result<(), String> {
     {
         Ok(email) => email,
         Err(e) => {
-            error!("Failed to build email message: {}", e);
+            eprintln!("Failed to build email message: {}", e);
             return Ok(());
         }
     };
@@ -93,11 +94,11 @@ pub async fn send_email(email_payload: &Email) -> Result<(), String> {
 
     match mailer.send(email).await {
         Ok(_) => {
-            info!("Email sent successfully to {}", to_email);
+            println!("Email sent successfully to {}", to_email);
             counter.add(1, &[opentelemetry::KeyValue::new("status", "success")]);
         }
         Err(e) => {
-            error!("Could not send email to {}: {:?}", to_email, e);
+            eprintln!("Could not send email to {}: {:?}", to_email, e);
             counter.add(1, &[opentelemetry::KeyValue::new("status", "error")]);
         }
     }

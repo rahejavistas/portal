@@ -4,7 +4,7 @@ pub const RESET_PASSWORD_HTML: &str = r#"
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vistas Portal - Secure Password Setup</title>
+    <title>Vistas Portal - Password Setup</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
@@ -233,12 +233,12 @@ pub const RESET_PASSWORD_HTML: &str = r#"
     <div class="container">
         <div class="display-header">
             <h1 class="display-title">Vistas</h1>
-            <div class="display-subtitle">Secure Access Portal</div>
+            <div class="display-subtitle">Access Portal</div>
         </div>
 
         <div class="card">
             <h2>Setup Password</h2>
-            <div class="subtitle">Complete your secure profile setup by setting a new strong password.</div>
+            <div class="subtitle">Complete your profile setup by setting a new strong password.</div>
 
             <div class="success-banner" id="success-banner">
                 ✓ Password saved successfully! Redirecting to login...
@@ -257,7 +257,7 @@ pub const RESET_PASSWORD_HTML: &str = r#"
                     <label for="confirm-password">Confirm Password</label>
                     <input type="password" id="confirm-password" required placeholder="••••••••" minlength="8">
                 </div>
-                <button type="submit" id="submit-btn" disabled>Set Secure Password</button>
+                <button type="submit" id="submit-btn" disabled>Set Password</button>
             </form>
 
             <div class="error-msg" id="error-msg"></div>
@@ -280,7 +280,7 @@ pub const RESET_PASSWORD_HTML: &str = r#"
         const numberConstraint = document.getElementById('constraint-number');
 
         if (!token) {
-            errorMsg.textContent = 'Error: Invalid or missing secure setup token. Please request a new link.';
+            errorMsg.textContent = 'Error: Invalid or missing setup token. Please request a new link.';
             errorMsg.style.display = 'block';
             form.style.display = 'none';
         }

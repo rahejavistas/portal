@@ -10,6 +10,7 @@ use uuid::Uuid;
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DocumentCategory {
     ResidentSpecific,
+    ProcessSpecific,
     Generic,
     MeetingMinutes,
     Operational,
@@ -21,6 +22,7 @@ impl DocumentCategory {
     pub fn default_access_level(&self) -> DocumentAccessLevel {
         match self {
             DocumentCategory::ResidentSpecific => DocumentAccessLevel::Private,
+            DocumentCategory::ProcessSpecific => DocumentAccessLevel::Private,
             DocumentCategory::Generic => DocumentAccessLevel::Public,
             DocumentCategory::MeetingMinutes => DocumentAccessLevel::Public,
             DocumentCategory::Operational => DocumentAccessLevel::Public,
@@ -37,6 +39,7 @@ impl DocumentCategory {
                 DocumentType::ResidentRental,
                 DocumentType::ResidentGeneral,
             ],
+            DocumentCategory::ProcessSpecific => &[DocumentType::ProcessGeneral],
             DocumentCategory::Generic => {
                 &[DocumentType::GenericRulebook, DocumentType::GenericBylaws]
             }
@@ -79,6 +82,7 @@ pub enum DocumentType {
     ResidentKyc,
     ResidentRental,
     ResidentGeneral,
+    ProcessGeneral,
     GenericRulebook,
     GenericBylaws,
     MinutesAgm,

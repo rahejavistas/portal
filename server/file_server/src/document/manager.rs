@@ -385,8 +385,8 @@ impl DocumentManager {
             &mut *tx,
             title,
             description,
-            DocumentCategory::ResidentSpecific,
-            DocumentType::ResidentGeneral,
+            DocumentCategory::ProcessSpecific,
+            DocumentType::ProcessGeneral,
             DocumentAccessLevel::Private,
             true, // is_user_uploaded
             Some(process_id),
@@ -653,5 +653,23 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Fetches a non-deleted document by document_id that belongs to a specific process.
+    pub async fn get_process_document(
+        &self,
+        document_id: Uuid,
+        process_id: Uuid,
+    ) -> Result<Option<Document>, String> {
+        sqlx::query_as(
+            "SELECT document_id, title, description, category, document_type, access_level, \
+             restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, process_id \
+             FROM documents WHERE document_id = $1 AND process_id = $2 AND NOT is_deleted",
+        )
+        .bind(document_id)
+        .bind(process_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 }

@@ -9,7 +9,8 @@ BEGIN
             'RESIDENT_SPECIFIC',
             'GENERIC',
             'MEETING_MINUTES',
-            'OPERATIONAL'
+            'OPERATIONAL',
+            'PROCESS_SPECIFIC'
         );
     END IF;
 
@@ -34,7 +35,8 @@ BEGIN
             'MINUTES_MGMT',
             'OPERATIONAL_VENDOR_CONTRACT',
             'OPERATIONAL_PAYMENT',
-            'OPERATIONAL_SLA'
+            'OPERATIONAL_SLA',
+            'PROCESS_GENERAL'
         );
     END IF;
 END
@@ -79,7 +81,8 @@ CREATE TABLE IF NOT EXISTS documents (
         (category = 'RESIDENT_SPECIFIC' AND document_type IN ('RESIDENT_PROPERTY', 'RESIDENT_KYC', 'RESIDENT_RENTAL', 'RESIDENT_GENERAL')) OR
         (category = 'GENERIC' AND document_type IN ('GENERIC_RULEBOOK', 'GENERIC_BYLAWS')) OR
         (category = 'MEETING_MINUTES' AND document_type IN ('MINUTES_AGM', 'MINUTES_GBM', 'MINUTES_MGMT')) OR
-        (category = 'OPERATIONAL' AND document_type IN ('OPERATIONAL_VENDOR_CONTRACT', 'OPERATIONAL_PAYMENT', 'OPERATIONAL_SLA'))
+        (category = 'OPERATIONAL' AND document_type IN ('OPERATIONAL_VENDOR_CONTRACT', 'OPERATIONAL_PAYMENT', 'OPERATIONAL_SLA')) OR
+        (category = 'PROCESS_SPECIFIC' AND document_type IN ('PROCESS_GENERAL'))
     )
 );
 

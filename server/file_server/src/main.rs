@@ -57,6 +57,7 @@ async fn main() {
         jwt_expiry: config.jwt_expiry,
         forgot_password_expiry: config.forgot_password_expiry,
         rate_limiters,
+        log_reset_link: config.log_reset_link.unwrap_or(false),
     };
 
     let admin_routes = Router::new()
@@ -91,6 +92,10 @@ async fn main() {
             "/process/review",
             post(handlers::process::admin_review_step),
         )
+        .route(
+            "/process/revoke",
+            post(handlers::process::admin_revoke_step),
+        )
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             middleware::admin_guard,
@@ -119,6 +124,10 @@ async fn main() {
         .route(
             "/api/v1/documents/upload",
             post(handlers::documents::user_create_document),
+        )
+        .route(
+            "/api/v1/process/list",
+            post(handlers::process::list_user_processes),
         )
         .route(
             "/api/v1/process/state",

@@ -1,5 +1,6 @@
 pub mod db;
 pub mod fields;
+pub mod notification;
 pub mod state_machine;
 
 use serde::{Deserialize, Serialize};

@@ -34,6 +34,12 @@ impl FlatIdentifier {
         if wing.is_empty() {
             return Err("Wing cannot be empty.".to_string());
         }
+        if !wing.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Err(format!(
+                "Wing '{}' must contain only letters (A-Z), not digits.",
+                wing
+            ));
+        }
         if flat_number.is_empty() {
             return Err("Flat number cannot be empty.".to_string());
         }
@@ -121,5 +127,11 @@ mod tests {
         let a = FlatIdentifier::new("a", "203").unwrap();
         let b = FlatIdentifier::new("A", "0203").unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_numeric_wing_rejected() {
+        assert!(FlatIdentifier::new("3", "0301").is_err());
+        assert!(FlatIdentifier::new("K3", "0303").is_err());
     }
 }

@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+// ==========================================
+// Core enums
+// ==========================================
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StepStatus {
@@ -11,10 +15,22 @@ pub enum StepStatus {
     Completed,
 }
 
-// State representations loaded from DB for the pure state machine input
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ProcessTurn {
+    User,
+    Admin,
+    None,
+}
+
+// ==========================================
+// DB state (loaded from database, fed into pure functions)
+// ==========================================
+
 #[derive(Debug, Clone)]
 pub struct StepStateDb {
     pub is_completed: bool,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,8 +49,12 @@ pub struct ReviewState {
 pub struct ProcessStateInput {
     pub steps: HashMap<i32, StepStateDb>,
     pub fields: HashMap<i32, FieldState>,
-    pub reviews: HashMap<i32, Vec<ReviewState>>, // key: template_step_id
+    pub reviews: HashMap<i32, Vec<ReviewState>>,
 }
+
+// ==========================================
+// Operation inputs / outputs
+// ==========================================
 
 #[derive(Debug, Clone)]
 pub struct SaveFieldInput {
@@ -43,16 +63,19 @@ pub struct SaveFieldInput {
     pub document_id: Option<Uuid>,
 }
 
+/// Result of validating and computing a step save operation.
 #[derive(Debug, Clone)]
-pub struct TransitionResult {
-    pub steps_to_update: Vec<(i32, bool)>, // (template_step_id, is_completed)
-    pub fields_to_save: Vec<(i32, Option<String>, Option<Uuid>)>, // (template_field_id, text_value, document_id)
+pub struct SaveResult {
+    /// (template_step_id, is_completed)
+    pub steps_to_update: Vec<(i32, bool)>,
+    /// (template_field_id, text_value, document_id)
+    pub fields_to_save: Vec<(i32, Option<String>, Option<Uuid>)>,
+    pub new_status: StepStatus,
 }
 
-#[derive(Debug, Clone)]
-pub struct ReviewResult {
-    pub steps_to_update: Vec<(i32, bool)>, // (template_step_id, is_completed)
-}
+// ==========================================
+// Template info (flattened from tree)
+// ==========================================
 
 #[derive(Debug, Clone)]
 pub struct StepInfo {
@@ -64,306 +87,11 @@ pub struct StepInfo {
     pub substep_ids: Vec<i32>,
 }
 
-// Typestate pattern structs to represent step lifecycle phases
-#[derive(Debug, Clone)]
-pub struct Step<State> {
-    pub step_id: i32,
-    pub parent_id: Option<i32>,
-    pub fields: Vec<crate::ProcessFieldTemplate>,
-    pub field_states: HashMap<i32, FieldState>,
-    _marker: std::marker::PhantomData<State>,
-}
+// ==========================================
+// Template helpers
+// ==========================================
 
-impl<State> Step<State> {
-    pub fn new(
-        step_id: i32,
-        parent_id: Option<i32>,
-        fields: Vec<crate::ProcessFieldTemplate>,
-        field_states: HashMap<i32, FieldState>,
-    ) -> Self {
-        Self {
-            step_id,
-            parent_id,
-            fields,
-            field_states,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Locked;
-
-#[derive(Debug, Clone)]
-pub struct Open;
-
-#[derive(Debug, Clone)]
-pub struct PendingReview;
-
-#[derive(Debug, Clone)]
-pub struct Completed;
-
-// Represents the output states when transitioning an Open step after saving fields
-pub enum SavedStepTransition {
-    RemainOpen(Step<Open>, TransitionResult),
-    ToPendingReview(Step<PendingReview>, TransitionResult),
-    ToCompleted(Step<Completed>, TransitionResult),
-}
-
-// Represents the output states when transitioning a PendingReview step after an admin review
-pub enum ReviewedStepTransition {
-    ToOpen(Step<Open>, ReviewResult),
-    ToCompleted(Step<Completed>, ReviewResult),
-}
-
-impl Step<Open> {
-    /// Save field values for a step that is currently Open.
-    ///
-    /// Transitions:
-    /// - `OPEN` -> `PENDING_REVIEW` if all required fields are filled and admin review is required.
-    /// - `OPEN` -> `COMPLETED` if all required fields are filled and no review is required.
-    /// - `OPEN` -> `OPEN` (remains open) if some mandatory fields are still missing.
-    ///
-    /// Preconditions:
-    /// - Only admin users can fill fields marked as `filled_by: "admin"`.
-    /// - All submitted fields are validated using their respective type applicators.
-    pub fn save_fields(
-        mut self,
-        fields_submitted: &[SaveFieldInput],
-        is_admin: bool,
-        step_info_map: &HashMap<i32, StepInfo>,
-        current_step_states: &HashMap<i32, bool>,
-    ) -> Result<SavedStepTransition, String> {
-        let mut fields_to_save = Vec::new();
-
-        for submitted in fields_submitted {
-            let field_meta = self
-                .fields
-                .iter()
-                .find(|f| f.field_id == submitted.template_field_id)
-                .ok_or_else(|| {
-                    format!(
-                        "Field ID {} does not belong to step {}",
-                        submitted.template_field_id, self.step_id
-                    )
-                })?;
-
-            if field_meta.filled_by == "admin" && !is_admin {
-                return Err(format!(
-                    "Field '{}' can only be filled by an admin",
-                    field_meta.name
-                ));
-            }
-
-            crate::fields::validate_field(
-                &field_meta.r#type,
-                submitted.text_value.as_deref(),
-                submitted.document_id,
-            )?;
-
-            self.field_states.insert(
-                submitted.template_field_id,
-                FieldState {
-                    text_value: submitted.text_value.clone(),
-                    document_id: submitted.document_id,
-                },
-            );
-
-            fields_to_save.push((
-                submitted.template_field_id,
-                submitted.text_value.clone(),
-                submitted.document_id,
-            ));
-        }
-
-        let fields_map: HashMap<i32, (Option<String>, Option<Uuid>)> = self
-            .field_states
-            .iter()
-            .map(|(&k, v)| (k, (v.text_value.clone(), v.document_id)))
-            .collect();
-        let target_completed = check_step_completed(self.step_id, step_info_map, &fields_map);
-
-        let mut steps_to_update = vec![(self.step_id, target_completed)];
-
-        // Propagate completion to parent step if all sibling substeps are completed
-        let step_info = step_info_map.get(&self.step_id).unwrap();
-        if let Some(parent_id) = step_info.parent_id {
-            if let Some(parent_info) = step_info_map.get(&parent_id) {
-                if parent_id != 1 {
-                    // root template step_id is 1
-                    let mut all_completed = true;
-                    for &sub_id in &parent_info.substep_ids {
-                        let is_sub_completed = if sub_id == self.step_id {
-                            target_completed
-                        } else {
-                            *current_step_states.get(&sub_id).unwrap_or(&false)
-                        };
-                        if !is_sub_completed {
-                            all_completed = false;
-                            break;
-                        }
-                    }
-                    steps_to_update.push((parent_id, all_completed));
-                }
-            }
-        }
-
-        let transition_res = TransitionResult {
-            steps_to_update,
-            fields_to_save,
-        };
-
-        if target_completed {
-            if step_info.is_review_required {
-                Ok(SavedStepTransition::ToPendingReview(
-                    Step::new(self.step_id, self.parent_id, self.fields, self.field_states),
-                    transition_res,
-                ))
-            } else {
-                Ok(SavedStepTransition::ToCompleted(
-                    Step::new(self.step_id, self.parent_id, self.fields, self.field_states),
-                    transition_res,
-                ))
-            }
-        } else {
-            Ok(SavedStepTransition::RemainOpen(self, transition_res))
-        }
-    }
-}
-
-impl Step<PendingReview> {
-    /// Submit an admin review (approve or reject) for a step that is Pending Review.
-    ///
-    /// Transitions:
-    /// - **Approval (`is_approved = true`)**: Transitions the step from `PENDING_REVIEW` to `COMPLETED`.
-    /// - **Rejection (`is_approved = false`)**: Transitions the step from `PENDING_REVIEW` back to `OPEN` for changes.
-    ///
-    /// Conditions:
-    /// - A rejected step recursively resets completion states of any parent steps so they open up again.
-    pub fn review(
-        self,
-        is_approved: bool,
-        step_info_map: &HashMap<i32, StepInfo>,
-    ) -> ReviewedStepTransition {
-        let mut steps_to_update = Vec::new();
-
-        if is_approved {
-            // Explicitly mark step as completed so completed_at is set to approval time
-            steps_to_update.push((self.step_id, true));
-
-            let completed_step =
-                Step::new(self.step_id, self.parent_id, self.fields, self.field_states);
-            ReviewedStepTransition::ToCompleted(completed_step, ReviewResult { steps_to_update })
-        } else {
-            steps_to_update.push((self.step_id, false));
-
-            // Traverse upwards to reset parent steps completion status
-            let step_info = step_info_map.get(&self.step_id).unwrap();
-            let mut curr_info = step_info;
-            while let Some(parent_id) = curr_info.parent_id {
-                if parent_id == 1 {
-                    break;
-                }
-                steps_to_update.push((parent_id, false));
-                if let Some(p_info) = step_info_map.get(&parent_id) {
-                    curr_info = p_info;
-                } else {
-                    break;
-                }
-            }
-
-            let open_step = Step::new(self.step_id, self.parent_id, self.fields, self.field_states);
-            ReviewedStepTransition::ToOpen(open_step, ReviewResult { steps_to_update })
-        }
-    }
-}
-
-// Holds step typestate wrappers
-#[derive(Debug, Clone)]
-pub enum StepState {
-    Locked(Step<Locked>),
-    Open(Step<Open>),
-    PendingReview(Step<PendingReview>),
-    Completed(Step<Completed>),
-}
-
-impl StepState {
-    pub fn status(&self) -> StepStatus {
-        match self {
-            StepState::Locked(_) => StepStatus::Locked,
-            StepState::Open(_) => StepStatus::Open,
-            StepState::PendingReview(_) => StepStatus::PendingReview,
-            StepState::Completed(_) => StepStatus::Completed,
-        }
-    }
-
-    pub fn parent_id(&self) -> Option<i32> {
-        match self {
-            StepState::Locked(s) => s.parent_id,
-            StepState::Open(s) => s.parent_id,
-            StepState::PendingReview(s) => s.parent_id,
-            StepState::Completed(s) => s.parent_id,
-        }
-    }
-}
-
-// The complete workflow containing all active steps wraped in their typestates
-#[derive(Debug, Clone)]
-pub struct Workflow {
-    pub steps: HashMap<i32, StepState>,
-}
-
-impl Workflow {
-    /// Build and wrap active workflow steps in their correct typestate wrappers using the current DB state.
-    pub fn from_state(template: &crate::ProcessTemplate, state_input: &ProcessStateInput) -> Self {
-        let step_info_map = build_step_info_map(template);
-        let statuses = compute_statuses(template, state_input);
-        let mut steps = HashMap::new();
-
-        for (&step_id, &status) in &statuses {
-            if let Some(info) = step_info_map.get(&step_id) {
-                let mut field_states = HashMap::new();
-                for field in &info.fields {
-                    if let Some(f_state) = state_input.fields.get(&field.field_id) {
-                        field_states.insert(field.field_id, f_state.clone());
-                    }
-                }
-
-                let step_state = match status {
-                    StepStatus::Locked => StepState::Locked(Step::new(
-                        step_id,
-                        info.parent_id,
-                        info.fields.clone(),
-                        field_states,
-                    )),
-                    StepStatus::Open => StepState::Open(Step::new(
-                        step_id,
-                        info.parent_id,
-                        info.fields.clone(),
-                        field_states,
-                    )),
-                    StepStatus::PendingReview => StepState::PendingReview(Step::new(
-                        step_id,
-                        info.parent_id,
-                        info.fields.clone(),
-                        field_states,
-                    )),
-                    StepStatus::Completed => StepState::Completed(Step::new(
-                        step_id,
-                        info.parent_id,
-                        info.fields.clone(),
-                        field_states,
-                    )),
-                };
-                steps.insert(step_id, step_state);
-            }
-        }
-
-        Self { steps }
-    }
-}
-
-/// Helper function to build a lookup map of steps from the tree template.
+/// Build a flat lookup map of step info from the tree template.
 pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, StepInfo> {
     let mut map = HashMap::new();
 
@@ -394,7 +122,6 @@ pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, St
     map
 }
 
-// Recursive helper to traverse the tree template and construct step info.
 fn insert_step_info_recursive(
     map: &mut HashMap<i32, StepInfo>,
     step: &crate::ProcessStepTemplate,
@@ -425,36 +152,46 @@ fn insert_step_info_recursive(
     }
 }
 
-// Check if all mandatory fields in a given step are filled.
-fn check_step_completed(
-    step_id: i32,
-    map: &HashMap<i32, StepInfo>,
-    fields_map: &HashMap<i32, (Option<String>, Option<Uuid>)>,
-) -> bool {
-    let info = map.get(&step_id).unwrap();
+// ==========================================
+// Pure computation functions
+// ==========================================
 
+/// Check if all mandatory fields in a step are filled.
+pub fn check_step_completed(
+    step_id: i32,
+    info_map: &HashMap<i32, StepInfo>,
+    fields: &HashMap<i32, FieldState>,
+) -> bool {
+    let info = match info_map.get(&step_id) {
+        Some(i) => i,
+        None => return false,
+    };
     for field in &info.fields {
         if !field.is_optional {
-            if let Some(val) = fields_map.get(&field.field_id) {
-                if !crate::fields::is_field_filled(&field.r#type, val.0.as_deref(), val.1) {
-                    return false;
-                }
+            let is_filled = if let Some(fs) = fields.get(&field.field_id) {
+                crate::fields::is_field_filled(
+                    &field.r#type,
+                    fs.text_value.as_deref(),
+                    fs.document_id,
+                )
             } else {
+                false
+            };
+            if !is_filled {
                 return false;
             }
         }
     }
-
     true
 }
 
-/// Compute the status of each step based on DB completion state and reviews.
+/// Compute the status of every step based on DB state and reviews.
 ///
-/// Status rules:
-/// - A step is `Locked` if its preceding step is not `Completed`.
-/// - A step is `Completed` if it is completed in the DB and approved (or does not require review).
-/// - A step is `PendingReview` if it is completed in the DB but does not have approval yet.
-/// - A step is `Open` if it is unlocked but not yet completed.
+/// Rules:
+/// - `Locked` if the preceding top-level step is not `Completed`.
+/// - `Completed` if completed in DB and approved (or no review required).
+/// - `PendingReview` if completed in DB but not yet approved.
+/// - `Open` if unlocked but not yet completed.
 pub fn compute_statuses(
     template: &crate::ProcessTemplate,
     state_input: &ProcessStateInput,
@@ -471,34 +208,30 @@ pub fn compute_statuses(
         if !completed {
             return false;
         }
-
         let info = match step_info_map.get(&step_id) {
             Some(i) => i,
             None => return false,
         };
-
         if info.is_review_required {
-            if let Some(revs) = state_input.reviews.get(&step_id) {
-                let latest_review = revs.iter().max_by_key(|r| r.created_at);
-                if let Some(r) = latest_review {
-                    r.is_approved
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
+            state_input
+                .reviews
+                .get(&step_id)
+                .and_then(|revs| revs.iter().max_by_key(|r| r.created_at))
+                .map(|r| r.is_approved)
+                .unwrap_or(false)
         } else {
             true
         }
     };
 
+    // Safe unwrap: template.step_id is the root step.
     let root_info = step_info_map.get(&template.step_id).unwrap();
     let top_step_ids = &root_info.substep_ids;
 
     let mut prev_approved = true;
 
     for &step_id in top_step_ids {
+        // Safe unwrap: step_id comes from root_info.substep_ids.
         let info = step_info_map.get(&step_id).unwrap();
 
         let status = if !prev_approved {
@@ -529,8 +262,7 @@ pub fn compute_statuses(
         for &sub_id in &info.substep_ids {
             let sub_status = match status {
                 StepStatus::Locked => StepStatus::Locked,
-                StepStatus::Completed => StepStatus::Completed,
-                StepStatus::PendingReview => StepStatus::Completed,
+                StepStatus::Completed | StepStatus::PendingReview => StepStatus::Completed,
                 StepStatus::Open => {
                     let sub_completed = state_input
                         .steps
@@ -565,6 +297,250 @@ pub fn compute_statuses(
     statuses
 }
 
+/// Determine whose turn it is to act on the process.
+///
+/// Simple rules:
+/// 1. If root is Completed → None
+/// 2. If any step is PendingReview → Admin
+/// 3. If any Open step has admin fields → Admin
+/// 4. Otherwise → User
+pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInput) -> ProcessTurn {
+    let statuses = compute_statuses(template, state);
+    let info_map = build_step_info_map(template);
+
+    if statuses.get(&template.step_id) == Some(&StepStatus::Completed) {
+        return ProcessTurn::None;
+    }
+
+    for &status in statuses.values() {
+        if status == StepStatus::PendingReview {
+            return ProcessTurn::Admin;
+        }
+    }
+
+    for (&step_id, &status) in &statuses {
+        if status == StepStatus::Open {
+            if let Some(info) = info_map.get(&step_id) {
+                if info.fields.iter().any(|f| f.filled_by == "admin") {
+                    return ProcessTurn::Admin;
+                }
+            }
+        }
+    }
+
+    ProcessTurn::User
+}
+
+/// Validate fields and compute what DB updates are needed to save a step.
+///
+/// Does NOT touch the database — returns a `SaveResult` for the caller to persist.
+pub fn validate_save(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+    fields_submitted: &[SaveFieldInput],
+    is_admin: bool,
+) -> Result<SaveResult, String> {
+    let info_map = build_step_info_map(template);
+    let statuses = compute_statuses(template, state);
+
+    let status = statuses
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not found", step_id))?;
+
+    let info = info_map
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not in template", step_id))?;
+
+    // Check step is editable
+    let is_parent_open = info
+        .parent_id
+        .and_then(|pid| statuses.get(&pid))
+        .map(|s| *s == StepStatus::Open)
+        .unwrap_or(false);
+
+    match status {
+        StepStatus::Open => {}
+        StepStatus::Completed if is_admin || is_parent_open => {}
+        StepStatus::PendingReview if is_admin => {}
+        _ => return Err("Step is not open for editing".to_string()),
+    }
+
+    // Validate each field and build the save list
+    let mut fields_to_save = Vec::new();
+    let mut updated_fields = state.fields.clone();
+
+    for submitted in fields_submitted {
+        let field_meta = info
+            .fields
+            .iter()
+            .find(|f| f.field_id == submitted.template_field_id)
+            .ok_or_else(|| {
+                format!(
+                    "Field ID {} does not belong to step {}",
+                    submitted.template_field_id, step_id
+                )
+            })?;
+
+        if field_meta.filled_by == "admin" && !is_admin {
+            return Err(format!(
+                "Field '{}' can only be filled by an admin",
+                field_meta.name
+            ));
+        }
+
+        crate::fields::validate_field(
+            &field_meta.r#type,
+            submitted.text_value.as_deref(),
+            submitted.document_id,
+            field_meta.is_optional,
+        )?;
+
+        updated_fields.insert(
+            submitted.template_field_id,
+            FieldState {
+                text_value: submitted.text_value.clone(),
+                document_id: submitted.document_id,
+            },
+        );
+
+        fields_to_save.push((
+            submitted.template_field_id,
+            submitted.text_value.clone(),
+            submitted.document_id,
+        ));
+    }
+
+    let target_completed = check_step_completed(step_id, &info_map, &updated_fields);
+    let mut steps_to_update = vec![(step_id, target_completed)];
+
+    // Propagate completion to parent (skip root)
+    if let Some(parent_id) = info.parent_id {
+        if parent_id != template.step_id {
+            if let Some(parent_info) = info_map.get(&parent_id) {
+                let all_siblings_completed = parent_info.substep_ids.iter().all(|&sub_id| {
+                    if sub_id == step_id {
+                        target_completed
+                    } else {
+                        state
+                            .steps
+                            .get(&sub_id)
+                            .map(|s| s.is_completed)
+                            .unwrap_or(false)
+                    }
+                });
+                steps_to_update.push((parent_id, all_siblings_completed));
+            }
+        }
+    }
+
+    let new_status = if target_completed {
+        if info.is_review_required {
+            StepStatus::PendingReview
+        } else {
+            StepStatus::Completed
+        }
+    } else {
+        StepStatus::Open
+    };
+
+    Ok(SaveResult {
+        steps_to_update,
+        fields_to_save,
+        new_status,
+    })
+}
+
+/// Compute step updates for an admin review (approve or reject).
+///
+/// Returns `(steps_to_update, is_step_completed)` where each update is
+/// `(template_step_id, is_completed)`.
+pub fn compute_review_updates(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+    is_approved: bool,
+) -> Result<(Vec<(i32, bool)>, bool), String> {
+    let statuses = compute_statuses(template, state);
+    let info_map = build_step_info_map(template);
+
+    let status = statuses
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not found", step_id))?;
+
+    if *status != StepStatus::PendingReview {
+        return Err("Step is not pending admin review".to_string());
+    }
+
+    let mut steps_to_update = Vec::new();
+
+    if is_approved {
+        steps_to_update.push((step_id, true));
+        Ok((steps_to_update, true))
+    } else {
+        steps_to_update.push((step_id, false));
+        // Walk up parent chain to reset completion
+        let mut curr = info_map.get(&step_id).unwrap();
+        while let Some(parent_id) = curr.parent_id {
+            if parent_id == template.step_id {
+                break;
+            }
+            steps_to_update.push((parent_id, false));
+            match info_map.get(&parent_id) {
+                Some(p) => curr = p,
+                None => break,
+            }
+        }
+        Ok((steps_to_update, false))
+    }
+}
+
+/// Compute which steps need to be reset when reopening a completed/pending step.
+///
+/// Returns the list of step IDs to reset (set is_completed = false).
+/// Also returns which of those are currently closed (need rejection reviews).
+pub fn compute_reopen_updates(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+) -> Result<Vec<i32>, String> {
+    let statuses = compute_statuses(template, state);
+    let info_map = build_step_info_map(template);
+
+    let status = statuses
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not found", step_id))?;
+
+    match status {
+        StepStatus::Completed | StepStatus::PendingReview => {}
+        _ => {
+            return Err(
+                "Step is not closed; only completed or pending review steps can be reopened"
+                    .to_string(),
+            )
+        }
+    }
+
+    let mut steps_to_reset = vec![step_id];
+    let mut curr = info_map.get(&step_id).unwrap();
+    while let Some(parent_id) = curr.parent_id {
+        if parent_id == template.step_id {
+            break;
+        }
+        steps_to_reset.push(parent_id);
+        match info_map.get(&parent_id) {
+            Some(p) => curr = p,
+            None => break,
+        }
+    }
+
+    Ok(steps_to_reset)
+}
+
+// ==========================================
+// Tests
+// ==========================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -587,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transition_save_step_and_completion() {
+    fn test_validate_save_and_completion() {
         let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
         let state = ProcessStateInput {
             steps: HashMap::new(),
@@ -595,21 +571,8 @@ mod tests {
             reviews: HashMap::new(),
         };
 
-        let workflow = Workflow::from_state(&template, &state);
-
-        // Try to save field in Locked step (Step 2 - step_id 7)
-        let step7_state = workflow.steps.get(&7).unwrap();
-        assert!(matches!(step7_state, StepState::Locked(_)));
-
-        // Save fields in substep 3 (Owner Documents)
-        let step3_state = workflow.steps.get(&3).unwrap();
-        let step3 = match step3_state {
-            StepState::Open(s) => s.clone(),
-            _ => panic!("Step 3 should be open"),
-        };
-
         let doc_id = Uuid::new_v4();
-        let fields_substep3 = vec![
+        let fields = vec![
             SaveFieldInput {
                 template_field_id: 101,
                 text_value: None,
@@ -637,27 +600,130 @@ mod tests {
             },
         ];
 
-        let step_info_map = build_step_info_map(&template);
-        let current_step_states: HashMap<i32, bool> = state
-            .steps
-            .iter()
-            .map(|(&k, v)| (k, v.is_completed))
-            .collect();
+        let result = validate_save(&template, &state, 3, &fields, false).unwrap();
 
-        let transition = step3
-            .save_fields(
-                &fields_substep3,
-                false,
-                &step_info_map,
-                &current_step_states,
-            )
-            .unwrap();
-        match transition {
-            SavedStepTransition::ToCompleted(_, res) => {
-                assert!(res.steps_to_update.contains(&(3, true)));
-                assert!(res.steps_to_update.contains(&(2, false)));
-            }
-            _ => panic!("Expected transition to Completed"),
+        assert_eq!(result.new_status, StepStatus::Completed);
+        assert!(result.steps_to_update.contains(&(3, true)));
+        // Parent step 2 not all siblings done yet
+        assert!(result.steps_to_update.contains(&(2, false)));
+    }
+
+    #[test]
+    fn test_determine_turn() {
+        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
+
+        // 1. Initial: user fields unfilled → User
+        let mut state = ProcessStateInput {
+            steps: HashMap::new(),
+            fields: HashMap::new(),
+            reviews: HashMap::new(),
+        };
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
+
+        // 2. Some substeps done, others have unfilled user fields → User
+        let doc_id = Uuid::new_v4();
+        for fid in [101, 102, 103, 105, 106] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(doc_id),
+                },
+            );
         }
+        state.steps.insert(
+            3,
+            StepStateDb {
+                is_completed: true,
+                started_at: None,
+            },
+        );
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
+
+        // 3. All substeps done, Step 1 is PendingReview → Admin
+        for fid in [107, 108, 109, 110] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(doc_id),
+                },
+            );
+        }
+        for sid in [4, 5, 6, 2] {
+            state.steps.insert(
+                sid,
+                StepStateDb {
+                    is_completed: true,
+                    started_at: None,
+                },
+            );
+        }
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+        // 4. Step 1 approved, Step 2 Open with admin field → Admin
+        state.reviews.insert(
+            2,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+        state.steps.insert(
+            7,
+            StepStateDb {
+                is_completed: false,
+                started_at: None,
+            },
+        );
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+        // 5. Step 2 completed+approved, Step 3 Open with admin field → Admin
+        state.fields.insert(
+            111,
+            FieldState {
+                text_value: Some("Done".into()),
+                document_id: None,
+            },
+        );
+        state.steps.insert(
+            7,
+            StepStateDb {
+                is_completed: true,
+                started_at: None,
+            },
+        );
+        state.reviews.insert(
+            7,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+        // 6. Step 3 done, Step 4 Open with user fields → User
+        state.fields.insert(
+            112,
+            FieldState {
+                text_value: None,
+                document_id: Some(doc_id),
+            },
+        );
+        state.steps.insert(
+            8,
+            StepStateDb {
+                is_completed: true,
+                started_at: None,
+            },
+        );
+        state.reviews.insert(
+            8,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+        assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
     }
 }

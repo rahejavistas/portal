@@ -28,6 +28,7 @@ pub struct AppConfig {
     pub forgot_password_expiry: std::time::Duration,
     pub telemetry: TelemetryConfig,
     pub rate_limit: RateLimitConfig,
+    pub log_reset_link: Option<bool>,
 }
 
 impl AppConfig {
