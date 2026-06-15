@@ -319,14 +319,31 @@ pub async fn setup_db_test_env() -> TestEnv {
 pub fn quick_setup_admin(env: &TestEnv) -> String {
     let url = env.server_url();
 
-    let forgot_resp = ureq::post(&format!("{}/api/v1/forgot-password", url))
+    let _ = ureq::post(&format!("{}/api/v1/forgot-password", url))
         .send_json(serde_json::json!({ "email": "admin@vistas.com" }))
         .expect("Failed to call forgot-password");
-    let forgot_val: serde_json::Value = forgot_resp.into_json().unwrap();
-    let reset_link = forgot_val["reset_link"]
-        .as_str()
-        .expect("reset_link missing");
-    let token = reset_link.split("token=").last().expect("token missing");
+
+    let options = (*env.db_pool.connect_options()).clone();
+    let token = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let pool = sqlx::postgres::PgPoolOptions::new().connect_with(options).await.unwrap();
+            let tok = sqlx::query_scalar::<_, String>(
+                "SELECT reset_token FROM user_credentials WHERE user_id = (SELECT user_id FROM users WHERE email = $1)"
+            )
+            .bind("admin@vistas.com")
+            .fetch_one(&pool)
+            .await
+            .expect("reset token not found in db");
+            pool.close().await;
+            tok
+        })
+    })
+    .join()
+    .unwrap();
 
     let _ = ureq::post(&format!("{}/api/v1/reset-password", url))
         .send_json(serde_json::json!({
@@ -375,12 +392,32 @@ pub fn quick_create_user(
 pub fn quick_onboard_user(env: &TestEnv, email: &str, password: &str) -> String {
     let url = env.server_url();
 
-    let forgot_resp = ureq::post(&format!("{}/api/v1/forgot-password", url))
+    let _ = ureq::post(&format!("{}/api/v1/forgot-password", url))
         .send_json(serde_json::json!({ "email": email }))
         .expect("Failed to trigger forgot password");
-    let forgot_val: serde_json::Value = forgot_resp.into_json().unwrap();
-    let reset_link = forgot_val["reset_link"].as_str().unwrap();
-    let token = reset_link.split("token=").last().unwrap();
+
+    let options = (*env.db_pool.connect_options()).clone();
+    let email_lowercase = email.trim().to_lowercase();
+    let token = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let pool = sqlx::postgres::PgPoolOptions::new().connect_with(options).await.unwrap();
+            let tok = sqlx::query_scalar::<_, String>(
+                "SELECT reset_token FROM user_credentials WHERE user_id = (SELECT user_id FROM users WHERE email = $1)"
+            )
+            .bind(&email_lowercase)
+            .fetch_one(&pool)
+            .await
+            .expect("reset token not found in db");
+            pool.close().await;
+            tok
+        })
+    })
+    .join()
+    .unwrap();
 
     let _ = ureq::post(&format!("{}/api/v1/reset-password", url))
         .send_json(serde_json::json!({

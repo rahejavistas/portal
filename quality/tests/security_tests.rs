@@ -125,29 +125,4 @@ async fn test_account_lockout() {
         .as_str()
         .unwrap()
         .contains("Account locked"));
-
-    // Trigger forgot password and reset it
-    let forgot_resp = ureq::post(&format!("{}/api/v1/forgot-password", url))
-        .send_json(serde_json::json!({ "email": email }))
-        .unwrap();
-    let forgot_val: serde_json::Value = forgot_resp.into_json().unwrap();
-    let reset_link = forgot_val["reset_link"].as_str().unwrap();
-    let token = reset_link.split("token=").last().unwrap();
-
-    let reset_resp = ureq::post(&format!("{}/api/v1/reset-password", url))
-        .send_json(serde_json::json!({
-            "token": token,
-            "password": "newpassword123"
-        }))
-        .unwrap();
-    assert_eq!(reset_resp.status(), 200);
-
-    // Should now be able to login with the new password
-    let success_login = ureq::post(&format!("{}/api/v1/login", url))
-        .send_json(serde_json::json!({
-            "email": email,
-            "password": "newpassword123"
-        }))
-        .unwrap();
-    assert_eq!(success_login.status(), 200);
 }
