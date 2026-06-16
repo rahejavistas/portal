@@ -29,6 +29,13 @@ async fn main() {
         .await
         .expect("Failed to create Postgres pool");
 
+    // Run database migrations automatically on startup (SQLx embeds them in the binary)
+    println!("Running database migrations...");
+    match sqlx::migrate!("../../infra/migrations").run(&pg_pool).await {
+        Ok(_) => println!("Database migrations ran successfully!"),
+        Err(e) => eprintln!("WARNING: Database migrations failed: {}", e),
+    }
+
     let s3_accessor = base::s3::S3Accessor::new(&config.s3).await;
 
     // Initialize PermissionsManager
@@ -60,110 +67,123 @@ async fn main() {
         log_reset_link: config.log_reset_link.unwrap_or(false),
     };
 
-    let admin_routes = Router::new()
-        .route("/users/list", post(handlers::admin::list_users))
-        .route("/users/create", post(handlers::admin::create_user))
-        .route("/users/roles", post(handlers::admin::update_role))
-        .route(
-            "/users/revoke-flat",
-            post(handlers::admin::admin_revoke_flat),
-        )
-        .route(
-            "/documents/list",
-            post(handlers::documents::admin_list_documents),
-        )
-        .route(
-            "/documents/create",
-            post(handlers::documents::admin_create_document),
-        )
-        .route(
-            "/documents/:id/get",
-            post(handlers::documents::admin_get_document),
-        )
-        .route(
-            "/documents/:id/update",
-            post(handlers::documents::admin_update_document),
-        )
-        .route(
-            "/documents/:id/delete",
-            post(handlers::documents::admin_delete_document),
-        )
-        .route(
-            "/process/review",
-            post(handlers::process::admin_review_step),
-        )
-        .route(
-            "/process/revoke",
-            post(handlers::process::admin_revoke_step),
-        )
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            middleware::admin_guard,
-        ));
+    macro_rules! make_app {
+        ($state:expr) => {{
+            let admin_routes = Router::new()
+                .route("/users/list", post(handlers::admin::list_users))
+                .route("/users/create", post(handlers::admin::create_user))
+                .route("/users/roles", post(handlers::admin::update_role))
+                .route(
+                    "/users/revoke-flat",
+                    post(handlers::admin::admin_revoke_flat),
+                )
+                .route(
+                    "/documents/list",
+                    post(handlers::documents::admin_list_documents),
+                )
+                .route(
+                    "/documents/create",
+                    post(handlers::documents::admin_create_document),
+                )
+                .route(
+                    "/documents/:id/get",
+                    post(handlers::documents::admin_get_document),
+                )
+                .route(
+                    "/documents/:id/update",
+                    post(handlers::documents::admin_update_document),
+                )
+                .route(
+                    "/documents/:id/delete",
+                    post(handlers::documents::admin_delete_document),
+                )
+                .route(
+                    "/process/review",
+                    post(handlers::process::admin_review_step),
+                )
+                .route(
+                    "/process/revoke",
+                    post(handlers::process::admin_revoke_step),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::admin_guard,
+                ));
 
-    let app = Router::new()
-        .route("/health", get(handlers::health::health_check))
-        .route("/api/v1/login", post(handlers::auth::login))
-        .route(
-            "/api/v1/forgot-password",
-            post(handlers::auth::forgot_password),
-        )
-        .route(
-            "/api/v1/reset-password",
-            post(handlers::auth::reset_password),
-        )
-        .route("/api/v1/profile", post(handlers::auth::profile))
-        .route(
-            "/api/v1/documents",
-            post(handlers::documents::list_documents),
-        )
-        .route(
-            "/api/v1/documents/:id",
-            post(handlers::documents::get_document),
-        )
-        .route(
-            "/api/v1/documents/upload",
-            post(handlers::documents::user_create_document),
-        )
-        .route(
-            "/api/v1/process/list",
-            post(handlers::process::list_user_processes),
-        )
-        .route(
-            "/api/v1/process/state",
-            post(handlers::process::get_process_state),
-        )
-        .route(
-            "/api/v1/process/save-step",
-            post(handlers::process::save_process_step),
-        )
-        .route(
-            "/api/v1/process/upload",
-            post(handlers::process::process_upload_document),
-        )
-        .route(
-            "/api/v1/process/download-url",
-            post(handlers::process::process_download_url),
-        )
-        .nest("/api/v1/admin", admin_routes)
-        // Standard CORS and custom security headers middleware
-        .layer(axum_middleware::from_fn_with_state(
-            state.clone(),
-            middleware::rate_limit_middleware,
-        ))
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 + 10 * 1024 * 1024)) // 1GB + 10MB overhead
-        .layer(axum_middleware::from_fn(middleware::add_security_headers))
-        .layer(axum_middleware::from_fn(middleware::log_request))
-        .layer(middleware::get_cors_layer())
-        .with_state(state);
+            Router::new()
+                .route("/health", get(handlers::health::health_check))
+                .route("/api/v1/login", post(handlers::auth::login))
+                .route(
+                    "/api/v1/forgot-password",
+                    post(handlers::auth::forgot_password),
+                )
+                .route(
+                    "/api/v1/reset-password",
+                    post(handlers::auth::reset_password),
+                )
+                .route("/api/v1/profile", post(handlers::auth::profile))
+                .route(
+                    "/api/v1/documents",
+                    post(handlers::documents::list_documents),
+                )
+                .route(
+                    "/api/v1/documents/:id",
+                    post(handlers::documents::get_document),
+                )
+                .route(
+                    "/api/v1/documents/upload",
+                    post(handlers::documents::user_create_document),
+                )
+                .route(
+                    "/api/v1/process/list",
+                    post(handlers::process::list_user_processes),
+                )
+                .route(
+                    "/api/v1/process/state",
+                    post(handlers::process::get_process_state),
+                )
+                .route(
+                    "/api/v1/process/save-step",
+                    post(handlers::process::save_process_step),
+                )
+                .route(
+                    "/api/v1/process/upload",
+                    post(handlers::process::process_upload_document),
+                )
+                .route(
+                    "/api/v1/process/download-url",
+                    post(handlers::process::process_download_url),
+                )
+                .nest("/api/v1/admin", admin_routes)
+                // Standard CORS and custom security headers middleware
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::rate_limit_middleware,
+                ))
+                .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 + 10 * 1024 * 1024)) // 1GB + 10MB overhead
+                .layer(axum_middleware::from_fn(middleware::add_security_headers))
+                .layer(axum_middleware::from_fn(middleware::log_request))
+                .layer(middleware::get_cors_layer())
+                .with_state($state)
+        }};
+    }
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    println!("Server running on http://{}", addr);
+    let is_lambda = std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok();
 
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
-        .await
-        .unwrap();
+    if is_lambda {
+        println!("Starting in AWS Lambda mode");
+        let app = make_app!(state);
+        lambda_http::run(app).await.unwrap();
+    } else {
+        let app = make_app!(state);
+        let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
+        println!("Server running locally on http://{}", addr);
+
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await
+            .unwrap();
+    }
 }
 
 /// Helper function to programmatically seed the admin user on startup if they don't exist.

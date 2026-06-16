@@ -14,6 +14,8 @@ pub struct PostgresConfig {
     pub database: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    // TODO: remove this
+    pub database_url: Option<String>,
 }
 
 fn default_host() -> String {

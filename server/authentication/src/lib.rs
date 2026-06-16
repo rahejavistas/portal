@@ -84,6 +84,11 @@ impl PermissionsManager {
         Self { pool }
     }
 
+    /// Exposes the inner database connection pool.
+    pub fn pool(&self) -> &Pool<Postgres> {
+        &self.pool
+    }
+
     /// Checks if a user is authenticated by their email and password.
     /// Returns an AuthResult indicating success, invalid credentials, or account lockout.
     pub async fn check_authenticated(

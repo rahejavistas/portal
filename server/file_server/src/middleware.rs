@@ -37,16 +37,23 @@ impl RateLimiters {
 
 pub async fn rate_limit_middleware<B>(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    connect_info: Option<ConnectInfo<SocketAddr>>,
     mut req: Request<B>,
     next: Next<B>,
 ) -> Result<Response, StatusCode> {
-    if state
-        .rate_limiters
-        .ip_limiter
-        .check_key(&addr.ip())
-        .is_err()
-    {
+    let ip = if let Some(ConnectInfo(addr)) = connect_info {
+        addr.ip()
+    } else {
+        // Check X-Forwarded-For header if ConnectInfo is not present (e.g. on AWS Lambda)
+        req.headers()
+            .get("x-forwarded-for")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.trim().parse::<IpAddr>().ok())
+            .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
+    };
+
+    if state.rate_limiters.ip_limiter.check_key(&ip).is_err() {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
