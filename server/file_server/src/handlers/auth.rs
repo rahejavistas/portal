@@ -99,7 +99,6 @@ pub struct ForgotPasswordPayload {
 #[derive(serde::Serialize)]
 pub struct ForgotPasswordResponse {
     status: String,
-    reset_link: String,
     message: String,
 }
 
@@ -171,23 +170,23 @@ pub async fn forgot_password(
         ),
     };
 
-    // Log the reset link in server logs for testing/recovery
-    tracing::info!(
-        "Generated password setup/reset link for '{}': {}",
-        email,
-        reset_link
-    );
+    // Log the reset link in server logs for testing/recovery only if configured
+    if state.log_reset_link {
+        println!(
+            "Generated password setup/reset link for '{}': {}",
+            email, reset_link
+        );
+    }
 
     // Call the generic email carrier, but don't fail the request if it fails
     if let Err(e) = email::send_email(&email_payload).await {
-        tracing::error!("Email send error: {}", e);
+        eprintln!("Email send error: {}", e);
     }
 
     (
         StatusCode::OK,
         Json(ForgotPasswordResponse {
             status: "success".to_string(),
-            reset_link,
             message: "Password setup/reset link generated successfully".to_string(),
         }),
     )

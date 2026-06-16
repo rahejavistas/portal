@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -455,6 +456,7 @@
                 <nav class="nav-menu">
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile')">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents')">Documents</button>
+                    <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;">Processes</a>
                 </nav>
             </div>
 
@@ -474,7 +476,6 @@
             <!-- Profile Info -->
             <section id="panel-profile">
                 <h2>Profile</h2>
-                <p class="section-desc">Your resident identity and administrative registration details.</p>
 
                 <div class="card">
                     <div class="profile-table">
@@ -499,7 +500,7 @@
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 16px;">
                     <div>
                         <h2 style="margin-top: 0;">Documents</h2>
-                        <p class="section-desc" style="margin-bottom: 0;">Search, filter, and download securely stored building records.</p>
+                        <p class="section-desc" style="margin-bottom: 0;">Search, filter, and download stored building records.</p>
                     </div>
                     <button class="download-btn" onclick="openUploadModal()">Upload Document</button>
                 </div>
@@ -542,7 +543,7 @@
                 <button onclick="closeUploadModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground);">&times;</button>
                 <h3 style="margin-top: 0;">Upload Document</h3>
                 <p style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 24px;">
-                    Securely upload personal documents (max 10MB). They will be automatically linked to your flat and kept private.
+                    Upload personal documents (max 10MB). They will be automatically linked to your flat and kept private.
                 </p>
                 <form id="user-upload-form" onsubmit="handleUserUpload(event)" style="display: flex; flex-direction: column; gap: 16px;">
                     <div>
@@ -611,7 +612,8 @@
             }
 
             if (isAdminUser) {
-                document.getElementById('admin-link').style.display = 'block';
+                window.location.replace('/admin');
+                return;
             } else {
                 document.getElementById('admin-link').style.display = 'none';
             }
@@ -654,6 +656,10 @@
             window.location.href = '/login';
         });
 
+        // Parse URL params for initial tab
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialTab = urlParams.get('tab') || 'profile';
+
         // Tabs switcher
         function switchTab(tabName) {
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -692,6 +698,9 @@
                 document.getElementById('doc-rows-target').innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--foreground); font-weight: 600;">Connection error loading documents.</td></tr>';
             }
         }
+
+        // Apply initial tab
+        switchTab(initialTab);
 
         const SUB_CATEGORIES = {
             'RESIDENT_SPECIFIC': [

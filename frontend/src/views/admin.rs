@@ -134,6 +134,26 @@ pub const ADMIN_HTML: &str = r#"
             background-color: var(--muted);
             transform: scale(1.03);
         }
+        .logout-btn {
+            background-color: var(--background);
+            border: 2px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--foreground);
+            padding: 12px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            width: 100%;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+        .logout-btn:hover {
+            background-color: #FEE2E2;
+            border-color: #FCA5A5;
+            color: #EF4444;
+            transform: scale(1.03);
+        }
 
         /* Category filter bar and chips */
         .category-filter-bar {
@@ -531,11 +551,14 @@ pub const ADMIN_HTML: &str = r#"
                     <button class="nav-item" id="suite-btn-documents" onclick="switchSuite('documents')">
                         Documents
                     </button>
+                    <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;">
+                        Processes
+                    </a>
                 </nav>
             </div>
 
             <div>
-                <a href="/dashboard" class="back-btn">&larr; Exit Admin Room</a>
+                <button class="logout-btn" id="logout-btn">Log Out</button>
             </div>
         </aside>
 
@@ -846,6 +869,11 @@ pub const ADMIN_HTML: &str = r#"
                 }
             }
             refreshProfile();
+
+            document.getElementById('logout-btn').addEventListener('click', () => {
+                localStorage.clear();
+                window.location.href = '/login';
+            });
         }
 
         // Category Type Mapping
@@ -906,6 +934,15 @@ pub const ADMIN_HTML: &str = r#"
 
         // Initialize category dynamic selection
         handleCategoryChange();
+
+        // Suite initialization from URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialTab = urlParams.get('tab');
+        if (initialTab === 'documents') {
+            switchSuite('documents');
+        } else {
+            switchSuite('residents');
+        }
 
         // High Level Suite Toggle
         function switchSuite(suiteName) {
@@ -976,9 +1013,14 @@ pub const ADMIN_HTML: &str = r#"
                     });
                     const resetData = await resetResp.json();
                     if (resetResp.ok && resetData.status === 'success') {
-                        let finalLink = resetData.reset_link.replace('3000', '4000').replace('localhost:4000', window.location.host);
-                        newSetupLink.textContent = finalLink;
-                        linkAlert.style.display = 'block';
+                        if (resetData.reset_link) {
+                            let finalLink = resetData.reset_link.replace('3000', '4000').replace('localhost:4000', window.location.host);
+                            newSetupLink.textContent = finalLink;
+                            linkAlert.style.display = 'block';
+                        } else {
+                            newSetupLink.textContent = 'Check the server logs or email for the setup link.';
+                            linkAlert.style.display = 'block';
+                        }
                     }
 
                     loadUsers();

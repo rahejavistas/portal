@@ -31,6 +31,10 @@ async fn serve_admin() -> impl IntoResponse {
     Html(views::admin::ADMIN_HTML)
 }
 
+async fn serve_process() -> impl IntoResponse {
+    Html(views::process::PROCESS_HTML)
+}
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
@@ -39,7 +43,8 @@ async fn main() {
         .route("/forgot-password", get(serve_forgot_password))
         .route("/reset-password", get(serve_reset_password))
         .route("/dashboard", get(serve_dashboard))
-        .route("/admin", get(serve_admin));
+        .route("/admin", get(serve_admin))
+        .route("/process", get(serve_process));
 
     let port = std::env::var("PORT")
         .unwrap_or_else(|_| "4000".to_string())

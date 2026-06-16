@@ -85,18 +85,18 @@ async fn test_state_auto_init_returns_valid_process() {
 }
 
 #[tokio::test]
-async fn test_state_idempotent_no_duplicate_process() {
+async fn test_state_creates_new_process_each_time() {
     let env = setup_api_test_env(3111).await;
     let url = env.server_url();
     let (pid1, res_auth, _) = setup_process(&url, &env);
 
-    // Call again with template_id — should return same process, not create a new one
+    // Call again with template_id — should create a new process as per recent changes
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
         .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
-    assert_eq!(val["process_id"].as_str().unwrap(), pid1);
+    assert_ne!(val["process_id"].as_str().unwrap(), pid1);
 }
 
 #[tokio::test]

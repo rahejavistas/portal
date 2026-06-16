@@ -7,8 +7,9 @@ use axum::{
     Json,
 };
 use process::db::{
-    find_process_by_ownership_and_template, get_active_ownerships_for_user, get_field_history,
-    get_process_info, get_process_reviews, ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo,
+    get_active_ownerships_for_user, get_field_history, get_flat_label_for_ownership,
+    get_process_info, get_process_reviews, get_user_active_flats, list_processes_for_user,
+    ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -83,7 +84,9 @@ pub struct StepResponse {
 pub struct ProcessStateResponse {
     pub process_id: Uuid,
     pub template_id: String,
+    pub process_name: String,
     pub ownership_id: Option<i32>,
+    pub flat_label: Option<String>,
     pub is_completed: bool,
     pub next_actions: Vec<NextActionInfo>,
     pub reviews: Vec<ReviewHistoryInfo>,
@@ -132,6 +135,19 @@ pub struct AdminReviewResponse {
     pub is_completed: bool,
 }
 
+#[derive(Deserialize)]
+pub struct AdminRevokeRequest {
+    pub process_id: Uuid,
+    pub template_step_id: i32,
+    pub notes: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct AdminRevokeResponse {
+    pub status: String,
+    pub message: String,
+}
+
 // ==========================================
 // Shared helpers
 // ==========================================
@@ -166,6 +182,34 @@ async fn load_authorized_process(
     })?;
 
     Ok((info, template))
+}
+
+fn find_step_name(template: &process::ProcessTemplate, step_id: i32) -> String {
+    if template.step_id == step_id {
+        return template.name.clone();
+    }
+    if let Some(ref subs) = template.substeps {
+        for sub in subs {
+            if let Some(name) = find_step_name_recursive(sub, step_id) {
+                return name;
+            }
+        }
+    }
+    format!("Step {}", step_id)
+}
+
+fn find_step_name_recursive(step: &process::ProcessStepTemplate, step_id: i32) -> Option<String> {
+    if step.step_id == step_id {
+        return Some(step.name.clone());
+    }
+    if let Some(ref subs) = step.substeps {
+        for sub in subs {
+            if let Some(name) = find_step_name_recursive(sub, step_id) {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 /// For a resident user, resolve which ownership to use and find-or-create a process instance.
@@ -209,38 +253,23 @@ async fn resolve_or_init_process(
         }
     };
 
-    // Find existing process for this ownership + template
-    let existing_pid =
-        find_process_by_ownership_and_template(conn, selected_ownership, user.user_id, template_id)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    // Always initialize a new process if none was explicitly passed (as requested by user)
+    let template = process::ProcessTemplate::load_by_version(template_id).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(format!("Template error: {}", e)),
+        )
+    })?;
 
-    match existing_pid {
-        Some(pid) => Ok((pid, template_id.to_string(), selected_ownership)),
-        None => {
-            // Auto-initialize a new process
-            let template = process::ProcessTemplate::load_by_version(template_id).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Template error: {}", e)),
-                )
-            })?;
-
-            let ctx = process::db::ProcessContext::new(conn, user.user_id, &template)
-                .with_ownership(selected_ownership);
-            let executor = ctx.init().await.map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(format!("Failed to initialize process: {}", e)),
-                )
-            })?;
-            Ok((
-                executor.process_id,
-                template_id.to_string(),
-                selected_ownership,
-            ))
-        }
-    }
+    let process_id = process::db::init_process(conn, user.user_id, &template, selected_ownership)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(format!("Failed to initialize process: {}", e)),
+            )
+        })?;
+    Ok((process_id, template_id.to_string(), selected_ownership))
 }
 
 /// Parse a process-specific multipart upload. Returns (process_id, title, file_bytes, content_type).
@@ -351,15 +380,15 @@ async fn parse_process_upload(
 /// Recursively map step templates to the response structure.
 fn map_step_template(
     step_tpl: &process::ProcessStepTemplate,
-    workflow: &process::state_machine::Workflow,
+    statuses: &HashMap<i32, process::state_machine::StepStatus>,
     field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
     latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
     doc_title_map: &HashMap<Uuid, String>,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
-    let step_state = workflow.steps.get(&step_id);
-    let status = step_state
-        .map(|s| s.status())
+    let status = statuses
+        .get(&step_id)
+        .copied()
         .unwrap_or(process::state_machine::StepStatus::Locked);
 
     let mut fields = Vec::new();
@@ -398,7 +427,7 @@ fn map_step_template(
         for sub in sub_tpls {
             substeps.push(map_step_template(
                 sub,
-                workflow,
+                statuses,
                 field_history_map,
                 latest_field_states,
                 doc_title_map,
@@ -439,6 +468,71 @@ fn build_step_name_map(template: &process::ProcessTemplate) -> HashMap<i32, Stri
 // ==========================================
 // Route handlers
 // ==========================================
+
+#[derive(Serialize)]
+pub struct ProcessListResponse {
+    pub processes: Vec<process::db::ProcessListItem>,
+    pub flats: Vec<UserFlatResponse>,
+}
+
+/// POST /api/v1/process/list
+pub async fn list_user_processes(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+) -> Result<Json<ProcessListResponse>, ApiError> {
+    let mut conn = state
+        .document_manager
+        .pg_pool
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let is_admin = user.has_role(authentication::UserRole::Admin);
+    let mut items = if is_admin {
+        process::db::list_all_processes(&mut conn).await
+    } else {
+        list_processes_for_user(&mut conn, user.user_id).await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    // Evaluate accurate overall status for each process
+    for item in items.iter_mut() {
+        let mut resolved = false;
+        if let Ok(template) = process::ProcessTemplate::load_by_version(&item.template_id) {
+            if let Ok(turn) =
+                process::db::get_process_turn(&mut conn, item.process_id, &template).await
+            {
+                item.status = Some(match turn {
+                    process::state_machine::ProcessTurn::None => "COMPLETED".to_string(),
+                    process::state_machine::ProcessTurn::Admin => {
+                        "ADMIN_REVIEW_REQUIRED".to_string()
+                    }
+                    process::state_machine::ProcessTurn::User => "USER_INPUT_REQUIRED".to_string(),
+                });
+                resolved = true;
+            }
+        }
+
+        if !resolved {
+            // Fallback
+            if item.steps_total > 0 && item.steps_completed == item.steps_total {
+                item.status = Some("COMPLETED".to_string());
+            } else {
+                item.status = Some("USER_INPUT_REQUIRED".to_string());
+            }
+        }
+    }
+
+    // Load active flats for the user (empty for Admin if they don't have flats, but normal for user)
+    let flats_db = get_user_active_flats(&mut conn, user.user_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let flats = flats_db.into_iter().map(UserFlatResponse::from).collect();
+
+    Ok(Json(ProcessListResponse {
+        processes: items,
+        flats,
+    }))
+}
 
 /// POST /api/v1/process/state
 pub async fn get_process_state(
@@ -486,15 +580,10 @@ pub async fn get_process_state(
         )
     })?;
 
-    let ctx = process::db::ProcessContext::new(&mut tx, user.user_id, &template);
-    let executor = ctx.load(process_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to load process: {}", e)),
-        )
-    })?;
-
-    let workflow = executor.workflow;
+    let proc_state = process::db::load_state(&mut tx, process_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
     // --- Fetch documents (titles only), reviews, field history ---
     let docs = state
@@ -553,12 +642,12 @@ pub async fn get_process_state(
     let step_names = build_step_name_map(&template);
     let mut next_actions = Vec::new();
 
-    for (&step_id, step_state) in &workflow.steps {
+    for (&step_id, &status) in &statuses {
         if let Some(info) = step_info_map.get(&step_id) {
             if info.fields.is_empty() {
                 continue;
             }
-            match step_state.status() {
+            match status {
                 process::state_machine::StepStatus::PendingReview => {
                     next_actions.push(NextActionInfo {
                         template_step_id: step_id,
@@ -567,35 +656,16 @@ pub async fn get_process_state(
                     });
                 }
                 process::state_machine::StepStatus::Open => {
-                    let mut user_action = false;
-                    let mut admin_action = false;
-                    for f in &info.fields {
-                        let is_filled = if let Some(f_state) = latest_field_states.get(&f.field_id)
-                        {
-                            process::fields::is_field_filled(
-                                &f.r#type,
-                                f_state.text_value.as_deref(),
-                                f_state.document_id,
-                            )
-                        } else {
-                            false
-                        };
-                        if !is_filled {
-                            if f.filled_by == "user" {
-                                user_action = true;
-                            } else if f.filled_by == "admin" {
-                                admin_action = true;
-                            }
-                        }
-                    }
-                    if user_action {
+                    let has_admin = info.fields.iter().any(|f| f.filled_by == "admin");
+                    let has_user = info.fields.iter().any(|f| f.filled_by == "user");
+                    if has_user {
                         next_actions.push(NextActionInfo {
                             template_step_id: step_id,
                             name: step_names.get(&step_id).cloned().unwrap_or_default(),
                             assigned_to: "user".to_string(),
                         });
                     }
-                    if admin_action {
+                    if has_admin {
                         next_actions.push(NextActionInfo {
                             template_step_id: step_id,
                             name: step_names.get(&step_id).cloned().unwrap_or_default(),
@@ -614,7 +684,7 @@ pub async fn get_process_state(
         for top_step in top_steps {
             steps_res.push(map_step_template(
                 top_step,
-                &workflow,
+                &statuses,
                 &field_history_map,
                 &latest_field_states,
                 &doc_title_map,
@@ -622,10 +692,16 @@ pub async fn get_process_state(
         }
     }
 
-    let root_step_state = workflow.steps.get(&template.step_id);
-    let is_completed = root_step_state
-        .map(|s| s.status() == process::state_machine::StepStatus::Completed)
-        .unwrap_or(false);
+    let flat_label: Option<String> = if let Some(oid) = ownership_id {
+        get_flat_label_for_ownership(&mut tx, oid)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+    } else {
+        None
+    };
+
+    let is_completed =
+        statuses.get(&template.step_id) == Some(&process::state_machine::StepStatus::Completed);
 
     // Commit transaction — needed for the auto-init path which may create a new process
     tx.commit()
@@ -635,7 +711,9 @@ pub async fn get_process_state(
     Ok(Json(ProcessStateResponse {
         process_id,
         template_id: template.template_id.clone(),
+        process_name: template.name.clone(),
         ownership_id,
+        flat_label,
         is_completed,
         next_actions,
         reviews,
@@ -657,17 +735,22 @@ pub async fn save_process_step(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
     let is_admin = user.has_role(authentication::UserRole::Admin);
-    let (_, template) =
+    let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
-    // Validate document ownership
+    // Validate and associate document ownership
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
+            // Check if document is valid (either already belongs to this process, or is a general document of the process owner)
             let is_valid: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM documents WHERE document_id = $1 AND process_id = $2 AND NOT is_deleted)"
+                "SELECT EXISTS(
+                    SELECT 1 
+                    FROM documents d
+                    WHERE d.document_id = $1 
+                      AND NOT d.is_deleted
+                )",
             )
             .bind(doc_id)
-            .bind(payload.process_id)
             .fetch_one(&mut *tx)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
@@ -681,16 +764,18 @@ pub async fn save_process_step(
                     )),
                 ));
             }
+
+            // Link the general document to this process
+            sqlx::query(
+                "UPDATE documents SET process_id = $1 WHERE document_id = $2 AND process_id IS NULL"
+            )
+            .bind(payload.process_id)
+            .bind(doc_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
         }
     }
-
-    let ctx = process::db::ProcessContext::new(&mut tx, user.user_id, &template);
-    let mut executor = ctx.load(payload.process_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to load process: {}", e)),
-        )
-    })?;
 
     let fields_submitted: Vec<process::state_machine::SaveFieldInput> = payload
         .fields
@@ -702,21 +787,57 @@ pub async fn save_process_step(
         })
         .collect();
 
-    executor
-        .save_step_fields(payload.template_step_id, &fields_submitted, is_admin)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+    let step_status = process::db::save_step(
+        &mut tx,
+        payload.process_id,
+        &template,
+        payload.template_step_id,
+        &fields_submitted,
+        is_admin,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
-    let step_state = executor.workflow.steps.get(&payload.template_step_id);
-    let is_completed = step_state
-        .map(|s| s.status() == process::state_machine::StepStatus::Completed)
-        .unwrap_or(false);
+    let is_completed = step_status == process::state_machine::StepStatus::Completed;
 
     // Commit transaction — all field inserts + step updates are atomic
-    drop(executor);
     tx.commit()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    {
+        let step_name = find_step_name(&template, payload.template_step_id);
+        match step_status {
+            process::state_machine::StepStatus::PendingReview => {
+                process::notification::notify_admin(
+                    payload.process_id,
+                    info.user_id,
+                    payload.template_step_id,
+                    &step_name,
+                    "A step has been submitted by the resident and is now pending admin review.",
+                );
+            }
+            process::state_machine::StepStatus::Open => {
+                process::notification::notify_user(
+                    payload.process_id,
+                    info.user_id,
+                    payload.template_step_id,
+                    &step_name,
+                    "Step inputs saved. You still need to fill out the remaining fields to complete this step.",
+                );
+            }
+            process::state_machine::StepStatus::Completed => {
+                process::notification::notify_user(
+                    payload.process_id,
+                    info.user_id,
+                    payload.template_step_id,
+                    &step_name,
+                    "This step has been successfully completed.",
+                );
+            }
+            _ => {}
+        }
+    }
 
     Ok(Json(SaveStepResponse {
         status: "success".to_string(),
@@ -741,30 +862,20 @@ pub async fn admin_review_step(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let (_, template) = load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
+    let (info, template) =
+        load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
 
-    let ctx = process::db::ProcessContext::new(&mut tx, user.user_id, &template);
-    let mut executor = ctx.load(payload.process_id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to load process: {}", e)),
-        )
-    })?;
-
-    executor
-        .review_step(
-            payload.template_step_id,
-            Some(user.user_id),
-            payload.is_approved,
-            payload.notes.as_deref(),
-        )
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
-
-    let step_state = executor.workflow.steps.get(&payload.template_step_id);
-    let is_completed = step_state
-        .map(|s| s.status() == process::state_machine::StepStatus::Completed)
-        .unwrap_or(false);
+    let is_completed = process::db::review_step(
+        &mut tx,
+        payload.process_id,
+        &template,
+        payload.template_step_id,
+        Some(user.user_id),
+        payload.is_approved,
+        payload.notes.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
     let message = if payload.is_approved {
         "Review recorded successfully. Step is marked as completed.".to_string()
@@ -772,16 +883,81 @@ pub async fn admin_review_step(
         "Review recorded successfully. Step is marked as incomplete.".to_string()
     };
 
-    // Commit transaction — review insert + step updates are atomic
-    drop(executor);
     tx.commit()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let step_name = find_step_name(&template, payload.template_step_id);
+    if payload.is_approved {
+        process::notification::notify_user(
+            payload.process_id,
+            info.user_id,
+            payload.template_step_id,
+            &step_name,
+            "This step has been reviewed and approved by the Admin.",
+        );
+    } else {
+        process::notification::notify_user(
+            payload.process_id,
+            info.user_id,
+            payload.template_step_id,
+            &step_name,
+            &format!(
+                "This step has been rejected by the Admin. Notes: {}",
+                payload.notes.as_deref().unwrap_or("None")
+            ),
+        );
+    }
 
     Ok(Json(AdminReviewResponse {
         status: "success".to_string(),
         message,
         is_completed,
+    }))
+}
+
+/// POST /api/v1/admin/process/revoke
+pub async fn admin_revoke_step(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<AdminRevokeRequest>,
+) -> Result<Json<AdminRevokeResponse>, ApiError> {
+    let mut tx = state
+        .document_manager
+        .pg_pool
+        .begin()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let (info, template) =
+        load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
+
+    process::db::reopen_step(
+        &mut tx,
+        payload.process_id,
+        &template,
+        payload.template_step_id,
+        user.user_id,
+        payload.notes.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+    tx.commit()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let step_name = find_step_name(&template, payload.template_step_id);
+    process::notification::notify_user(
+        payload.process_id,
+        info.user_id,
+        payload.template_step_id,
+        &step_name,
+        "An administrator has reopened this step. Additional action may be required.",
+    );
+
+    Ok(Json(AdminRevokeResponse {
+        status: "success".to_string(),
+        message: "Step revoked successfully".to_string(),
     }))
 }
 
@@ -862,22 +1038,17 @@ pub async fn process_download_url(
     load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
 
     // Verify document belongs to this process
-    let doc: Document = sqlx::query_as(
-        "SELECT document_id, title, description, category, document_type, access_level, \
-         restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, process_id \
-         FROM documents WHERE document_id = $1 AND process_id = $2 AND NOT is_deleted",
-    )
-    .bind(payload.document_id)
-    .bind(payload.process_id)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
-    .ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json("Document not found or does not belong to this process".to_string()),
-        )
-    })?;
+    let doc: Document = state
+        .document_manager
+        .get_process_document(payload.document_id, payload.process_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json("Document not found or does not belong to this process".to_string()),
+            )
+        })?;
 
     let url = state
         .document_manager
@@ -886,4 +1057,21 @@ pub async fn process_download_url(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
 
     Ok(Json(DocumentUrlResponse { download_url: url }))
+}
+
+#[derive(Serialize)]
+pub struct UserFlatResponse {
+    pub flat_id: i32,
+    pub wing: String,
+    pub flat_number: String,
+}
+
+impl From<UserFlatInfo> for UserFlatResponse {
+    fn from(f: UserFlatInfo) -> Self {
+        Self {
+            flat_id: f.flat_id,
+            wing: f.wing,
+            flat_number: f.flat_number,
+        }
+    }
 }

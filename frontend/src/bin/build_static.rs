@@ -60,6 +60,11 @@ fn main() {
         process_html(views::admin::ADMIN_HTML, &api_base),
     )
     .unwrap();
+    fs::write(
+        dist_dir.join("process.html"),
+        process_html(views::process::PROCESS_HTML, &api_base),
+    )
+    .unwrap();
 
     println!("Static files generated in dist/ directory.");
 }

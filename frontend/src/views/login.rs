@@ -4,7 +4,7 @@ pub const LOGIN_HTML: &str = r#"
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vistas Portal - Secure Login</title>
+    <title>Vistas Portal - Login</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
@@ -202,12 +202,11 @@ pub const LOGIN_HTML: &str = r#"
     <div class="container">
         <div class="display-header">
             <h1 class="display-title">Vistas</h1>
-            <div class="display-subtitle">Secure Access Portal</div>
+            <div class="display-subtitle">Access Portal</div>
         </div>
         
         <div class="login-card">
             <h2>Sign In</h2>
-            <div class="subtitle">Enter your credentials to securely access your Vistas documents portal.</div>
             <form id="login-form">
                 <div class="form-group">
                     <label for="email">Email Address</label>
@@ -222,8 +221,6 @@ pub const LOGIN_HTML: &str = r#"
             </form>
             <div class="helper-links">
                 <a href="/forgot-password">Reset Password</a>
-                <span style="color: var(--muted-foreground); opacity: 0.3;">|</span>
-                <code style="color: var(--muted-foreground); font-weight: 500;">admin@vistas.com</code>
             </div>
         </div>
     </div>

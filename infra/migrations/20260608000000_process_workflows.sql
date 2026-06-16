@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS process_steps (
     --          for this step and parent steps up the chain).
     is_completed BOOLEAN DEFAULT FALSE NOT NULL,
     
-    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE,
     completed_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     UNIQUE (process_id, template_step_id)
