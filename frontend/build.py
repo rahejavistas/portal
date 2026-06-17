@@ -39,6 +39,7 @@ process_file("forgot_password", "forgot-password.html")
 process_file("reset_password", "reset-password.html")
 process_file("dashboard", "dashboard.html")
 process_file("admin", "admin.html")
+process_file("process", "process.html")
 
 # Generate index.html redirect
 with open(f"{dist_dir}/index.html", "w") as f:
