@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -420,25 +419,7 @@
             background-color: #ECFDF5;
             color: #059669;
         }
-        .setup-link-alert {
-            margin-top: 20px;
-            background: #EFF6FF;
-            border: 2px dashed var(--primary);
-            padding: 16px;
-            border-radius: var(--radius-lg);
-        }
-        .link-text {
-            word-break: break-all;
-            background-color: var(--background);
-            padding: 8px 12px;
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            font-family: monospace;
-            font-size: 12px;
-            margin-top: 8px;
-            color: var(--primary);
-            font-weight: 600;
-        }
+
 
         /* Table */
         .table-container {
@@ -572,33 +553,55 @@
                 <h2>Residents</h2>
                 
                 <div class="split-grid">
-                    <!-- Left: Add Form -->
-                    <div class="card">
-                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Resident</h3>
-                        <form id="onboard-form">
-                            <div class="form-group">
-                                <label for="email">Email</label>
-                                <input type="email" id="email" required placeholder="e.g. resident@vistas.com">
-                            </div>
-                            <div class="form-group">
-                                <label for="wing">Wing</label>
-                                <input type="text" id="wing" required placeholder="e.g. A" maxlength="2">
-                            </div>
-                            <div class="form-group">
-                                <label for="flat">Flat</label>
-                                <input type="text" id="flat" required placeholder="e.g. 101">
-                            </div>
-                            <button type="submit" class="submit-btn">Add Resident</button>
-                        </form>
+                    <!-- Left: Add Form & Upload Form -->
+                    <div style="display: flex; flex-direction: column; gap: 32px;">
+                        <div class="card">
+                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Resident</h3>
+                            <form id="onboard-form">
+                                <div class="form-group">
+                                    <label for="email">Email</label>
+                                    <input type="email" id="email" required placeholder="e.g. resident@vistas.com">
+                                </div>
+                                <div class="form-group">
+                                    <label for="wing">Wing</label>
+                                    <input type="text" id="wing" required placeholder="e.g. A" maxlength="2">
+                                </div>
+                                <div class="form-group">
+                                    <label for="flat">Flat</label>
+                                    <input type="text" id="flat" required placeholder="e.g. 101">
+                                </div>
+                                <button type="submit" class="submit-btn">Add Resident</button>
+                            </form>
 
-                        <div class="feedback-box" id="feedback"></div>
+                            <div class="feedback-box" id="feedback"></div>
+                        </div>
 
-                        <div class="setup-link-alert" id="link-alert" style="display: none;">
-                            <strong style="color: var(--foreground); font-size: 13px;">Resident added!</strong>
-                            <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 5px; line-height: 1.4;">
-                                Password setup link:
+                        <div class="card">
+                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload CSV</h3>
+                            <form id="upload-csv-form">
+                                <div class="form-group">
+                                    <label for="csv-file">CSV File (Email, Wing, Flat)</label>
+                                    <input type="file" id="csv-file" accept=".csv" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
+                                </div>
+                                <button type="submit" class="submit-btn">Upload CSV</button>
+                            </form>
+                            <div class="feedback-box" id="upload-feedback"></div>
+                            <div id="upload-results" style="display: none; margin-top: 16px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-weight: 600;">
+                                    <span style="color: var(--success);">Success: <span id="upload-success-count">0</span></span>
+                                    <span style="color: var(--destructive);">Failed: <span id="upload-error-count">0</span></span>
+                                </div>
+                                <table style="font-size: 14px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="padding: 8px;">Email</th>
+                                            <th style="padding: 8px;">Error</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="upload-errors-target">
+                                    </tbody>
+                                </table>
                             </div>
-                            <div class="link-text" id="new-setup-link"></div>
                         </div>
                     </div>
 
@@ -975,13 +978,10 @@
         // Resident Onboarding Handling
         const onboardForm = document.getElementById('onboard-form');
         const feedback = document.getElementById('feedback');
-        const linkAlert = document.getElementById('link-alert');
-        const newSetupLink = document.getElementById('new-setup-link');
 
         onboardForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             feedback.style.display = 'none';
-            linkAlert.style.display = 'none';
 
             const email = document.getElementById('email').value.trim();
             const wing = document.getElementById('wing').value.trim();
@@ -1005,24 +1005,6 @@
                     feedback.style.display = 'block';
                     onboardForm.reset();
 
-                    // Retrieve reset/registration password setup link
-                    const resetResp = await fetch(`${API_BASE}/api/v1/forgot-password`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email })
-                    });
-                    const resetData = await resetResp.json();
-                    if (resetResp.ok && resetData.status === 'success') {
-                        if (resetData.reset_link) {
-                            let finalLink = resetData.reset_link.replace('3000', '4000').replace('localhost:4000', window.location.host);
-                            newSetupLink.textContent = finalLink;
-                            linkAlert.style.display = 'block';
-                        } else {
-                            newSetupLink.textContent = 'Check the server logs or email for the setup link.';
-                            linkAlert.style.display = 'block';
-                        }
-                    }
-
                     loadUsers();
                 } else {
                     feedback.textContent = data.message || 'Failed to onboard resident';
@@ -1033,6 +1015,67 @@
                 feedback.textContent = 'Failed to connect to backend server';
                 feedback.className = 'feedback-box error';
                 feedback.style.display = 'block';
+            }
+        });
+
+        // Bulk Upload Form
+        const uploadCsvForm = document.getElementById('upload-csv-form');
+        const uploadFeedback = document.getElementById('upload-feedback');
+        const uploadResultsSection = document.getElementById('upload-results');
+        const uploadSuccessCount = document.getElementById('upload-success-count');
+        const uploadErrorCount = document.getElementById('upload-error-count');
+        const uploadErrorsTarget = document.getElementById('upload-errors-target');
+
+        uploadCsvForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            uploadFeedback.style.display = 'none';
+            uploadResultsSection.style.display = 'none';
+
+            const fileInput = document.getElementById('csv-file');
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/users/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    uploadFeedback.textContent = `Processed ${data.total_rows} rows.`;
+                    uploadFeedback.className = 'feedback-box success';
+                    uploadFeedback.style.display = 'block';
+
+                    uploadResultsSection.style.display = 'block';
+                    uploadSuccessCount.textContent = data.successfully_onboarded;
+                    uploadErrorCount.textContent = data.failed_users.length;
+
+                    uploadErrorsTarget.innerHTML = '';
+                    for (const err of data.failed_users) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td style="padding: 8px;">${err.email}</td>
+                            <td style="padding: 8px; color: var(--destructive);">${err.reason}</td>
+                        `;
+                        uploadErrorsTarget.appendChild(tr);
+                    }
+
+                    fileInput.value = '';
+                    loadUsers();
+                } else {
+                    uploadFeedback.textContent = data.message || 'Failed to process CSV file';
+                    uploadFeedback.className = 'feedback-box error';
+                    uploadFeedback.style.display = 'block';
+                }
+            } catch (err) {
+                uploadFeedback.textContent = 'Failed to connect to backend server';
+                uploadFeedback.className = 'feedback-box error';
+                uploadFeedback.style.display = 'block';
             }
         });
 

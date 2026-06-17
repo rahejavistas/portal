@@ -60,6 +60,7 @@ async fn main() {
     let state = AppState {
         permissions_manager,
         document_manager,
+        pg_pool: pg_pool.clone(),
         jwt_secret: config.jwt_secret.clone(),
         jwt_expiry: config.jwt_expiry,
         forgot_password_expiry: config.forgot_password_expiry,

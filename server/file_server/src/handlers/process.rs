@@ -481,7 +481,6 @@ pub async fn list_user_processes(
     State(state): State<AppState>,
 ) -> Result<Json<ProcessListResponse>, ApiError> {
     let mut conn = state
-        .document_manager
         .pg_pool
         .acquire()
         .await
@@ -541,7 +540,6 @@ pub async fn get_process_state(
     Json(payload): Json<ProcessStateRequest>,
 ) -> Result<Json<ProcessStateResponse>, ApiError> {
     let mut tx = state
-        .document_manager
         .pg_pool
         .begin()
         .await
@@ -586,9 +584,7 @@ pub async fn get_process_state(
     let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
     // --- Fetch documents (titles only), reviews, field history ---
-    let docs = state
-        .document_manager
-        .get_documents_for_process(process_id)
+    let docs = crate::document::DocumentManager::get_documents_for_process(&mut *tx, process_id)
         .await
         .unwrap_or_default();
 
@@ -728,7 +724,6 @@ pub async fn save_process_step(
     Json(payload): Json<SaveStepRequest>,
 ) -> Result<Json<SaveStepResponse>, ApiError> {
     let mut tx = state
-        .document_manager
         .pg_pool
         .begin()
         .await
@@ -856,7 +851,6 @@ pub async fn admin_review_step(
     Json(payload): Json<AdminReviewRequest>,
 ) -> Result<Json<AdminReviewResponse>, ApiError> {
     let mut tx = state
-        .document_manager
         .pg_pool
         .begin()
         .await
@@ -923,7 +917,6 @@ pub async fn admin_revoke_step(
     Json(payload): Json<AdminRevokeRequest>,
 ) -> Result<Json<AdminRevokeResponse>, ApiError> {
     let mut tx = state
-        .document_manager
         .pg_pool
         .begin()
         .await
@@ -972,15 +965,16 @@ pub async fn process_upload_document(
         parse_process_upload(&mut multipart).await?;
 
     let is_admin = user.has_role(authentication::UserRole::Admin);
-    let mut conn = state
-        .document_manager
-        .pg_pool
-        .acquire()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-
     // Auth check
-    load_authorized_process(&mut conn, &user, process_id, is_admin).await?;
+    {
+        let mut conn = state
+            .pg_pool
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+        load_authorized_process(&mut conn, &user, process_id, is_admin).await?;
+    }
 
     // Create document record
     let result = state
@@ -1027,15 +1021,17 @@ pub async fn process_download_url(
     State(state): State<AppState>,
     Json(payload): Json<DocumentUrlRequest>,
 ) -> Result<Json<DocumentUrlResponse>, ApiError> {
-    let mut conn = state
-        .document_manager
-        .pg_pool
-        .acquire()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-
     let is_admin = user.has_role(authentication::UserRole::Admin);
-    load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+
+    // Auth check
+    {
+        let mut conn = state
+            .pg_pool
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+    }
 
     // Verify document belongs to this process
     let doc: Document = state

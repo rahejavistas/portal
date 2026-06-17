@@ -630,8 +630,8 @@ impl DocumentManager {
     }
 
     /// Fetches all non-deleted documents for a specific process.
-    pub async fn get_documents_for_process(
-        &self,
+    pub async fn get_documents_for_process<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+        executor: E,
         process_id: Uuid,
     ) -> Result<Vec<Document>, String> {
         sqlx::query_as(
@@ -640,7 +640,7 @@ impl DocumentManager {
              WHERE process_id = $1 AND NOT is_deleted"
         )
         .bind(process_id)
-        .fetch_all(&self.pg_pool)
+        .fetch_all(executor)
         .await
         .map_err(|e| e.to_string())
     }
