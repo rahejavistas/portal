@@ -78,6 +78,10 @@ async fn main() {
                     post(handlers::admin::admin_revoke_flat),
                 )
                 .route(
+                    "/users/upload",
+                    post(handlers::bulk_users_upload::upload_users),
+                )
+                .route(
                     "/documents/list",
                     post(handlers::documents::admin_list_documents),
                 )
@@ -163,7 +167,6 @@ async fn main() {
                 .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 + 10 * 1024 * 1024)) // 1GB + 10MB overhead
                 .layer(axum_middleware::from_fn(middleware::add_security_headers))
                 .layer(axum_middleware::from_fn(middleware::log_request))
-                .layer(middleware::get_cors_layer())
                 .with_state($state)
         }};
     }
@@ -173,11 +176,12 @@ async fn main() {
     if is_lambda {
         println!("Starting in AWS Lambda mode");
         let app = make_app!(state);
+        // Do NOT apply the Rust CORS layer in Lambda. AWS Function URL handles CORS!
         lambda_http::run(app).await.unwrap();
     } else {
-        let app = make_app!(state);
+        let app = make_app!(state).layer(middleware::get_cors_layer()); // Only apply CORS locally
         let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-        println!("Server running locally on http://{}", addr);
+        println!("Server running locally on http://0.0.0.0:{}", config.port);
 
         axum::Server::bind(&addr)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())

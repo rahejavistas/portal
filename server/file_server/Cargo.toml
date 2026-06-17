@@ -28,3 +28,4 @@ opentelemetry = { version = "0.21", features = ["metrics"] }
 telemetry = { version = "0.1.0", path = "../../telemetry" }
 governor = "0.6"
 lambda_http = "0.8"
+csv = "1.4.0"
