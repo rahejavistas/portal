@@ -1343,7 +1343,14 @@ pub const PROCESS_HTML: &str = r#"
                 `;
             } else if (stepStatus === 'OPEN') {
                 const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
-                const hasAdminFieldsOnly = selectedStep.fields && selectedStep.fields.length > 0 && selectedStep.fields.every(f => f.filled_by === 'admin');
+                // Collect all fields: direct + from substeps
+                let allStepFields = [...(selectedStep.fields || [])];
+                if (selectedStep.substeps) {
+                    selectedStep.substeps.forEach(sub => {
+                        allStepFields = allStepFields.concat(sub.fields || []);
+                    });
+                }
+                const hasAdminFieldsOnly = allStepFields.length > 0 && allStepFields.every(f => f.filled_by === 'admin');
                 
                 if (isCurrentAdmin || !hasAdminFieldsOnly) {
                     statusBanner = `
@@ -1393,8 +1400,16 @@ pub const PROCESS_HTML: &str = r#"
 
             let reviewsHtml = '';
             if (relevantReviews.length > 0) {
+                const latestReview = relevantReviews.reduce((latest, current) => {
+                    return (new Date(current.created_at) > new Date(latest.created_at)) ? current : latest;
+                });
+                const latestDateFormatted = formatDateMinimal(latestReview.created_at);
+
                 reviewsHtml = `
-                    <button class="btn btn-secondary" id="toggle-history-btn" style="margin-bottom: 24px; font-size: 0.875rem; padding: 10px 20px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer;" onclick="toggleReviewHistory()">View Review History</button>
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
+                        <button class="btn btn-secondary" id="toggle-history-btn" style="font-size: 0.875rem; padding: 10px 20px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer;" onclick="toggleReviewHistory()">View Review History (${relevantReviews.length})</button>
+                        <span style="font-size: 0.875rem; color: var(--muted-foreground);">Last review: <strong>${latestDateFormatted}</strong></span>
+                    </div>
                     <div id="review-history-container" style="display: none; margin-bottom: 32px;">
                         <h4 style="margin: 0 0 16px 0; font-size: 1.125rem; font-weight: 800; color: var(--foreground);">Admin Review Comments</h4>
                         <div style="display: flex; flex-direction: column; gap: 12px;">
