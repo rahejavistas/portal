@@ -1343,7 +1343,7 @@ pub const PROCESS_HTML: &str = r#"
                 `;
             } else if (stepStatus === 'OPEN') {
                 const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
-                const hasAdminFieldsOnly = selectedStep.fields && selectedStep.fields.every(f => f.filled_by === 'admin');
+                const hasAdminFieldsOnly = selectedStep.fields && selectedStep.fields.length > 0 && selectedStep.fields.every(f => f.filled_by === 'admin');
                 
                 if (isCurrentAdmin || !hasAdminFieldsOnly) {
                     statusBanner = `
