@@ -468,14 +468,43 @@ pub fn compute_review_updates(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not found", step_id))?;
 
-    if *status != StepStatus::PendingReview {
-        return Err("Step is not pending admin review".to_string());
+    // Allow admin to review steps that are PENDING_REVIEW or OPEN
+    // (e.g., admin can approve an OPEN step directly without requiring user re-submission)
+    match status {
+        StepStatus::PendingReview | StepStatus::Open => {}
+        _ => return Err("Step must be open or pending review for admin action".to_string()),
     }
 
     let mut steps_to_update = Vec::new();
 
     if is_approved {
+        // Mark step (and parent chain) as completed
         steps_to_update.push((step_id, true));
+
+        // If the step was OPEN (not yet completed), propagate completion to parent
+        if *status == StepStatus::Open {
+            if let Some(info) = info_map.get(&step_id) {
+                if let Some(parent_id) = info.parent_id {
+                    if parent_id != template.step_id {
+                        if let Some(parent_info) = info_map.get(&parent_id) {
+                            let all_siblings_completed =
+                                parent_info.substep_ids.iter().all(|&sub_id| {
+                                    if sub_id == step_id {
+                                        true
+                                    } else {
+                                        state
+                                            .steps
+                                            .get(&sub_id)
+                                            .map(|s| s.is_completed)
+                                            .unwrap_or(false)
+                                    }
+                                });
+                            steps_to_update.push((parent_id, all_siblings_completed));
+                        }
+                    }
+                }
+            }
+        }
         Ok((steps_to_update, true))
     } else {
         steps_to_update.push((step_id, false));
@@ -725,5 +754,87 @@ mod tests {
             }],
         );
         assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
+    }
+
+    #[test]
+    fn test_compute_review_updates_allows_open_steps() {
+        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
+        let doc_id = Uuid::new_v4();
+
+        // Build state: all Step 1 substeps completed, Step 1 (id=2) pending review
+        let mut state = ProcessStateInput {
+            steps: HashMap::new(),
+            fields: HashMap::new(),
+            reviews: HashMap::new(),
+        };
+        for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(doc_id),
+                },
+            );
+        }
+        for sid in [3, 4, 5, 6, 2] {
+            state.steps.insert(
+                sid,
+                StepStateDb {
+                    is_completed: true,
+                    started_at: None,
+                },
+            );
+        }
+
+        // 1. Classic path: approve PENDING_REVIEW step succeeds
+        let result = compute_review_updates(&template, &state, 2, true);
+        assert!(result.is_ok());
+        let (updates, completed) = result.unwrap();
+        assert!(completed);
+        assert!(updates.contains(&(2, true)));
+
+        // 2. Reject PENDING_REVIEW → step reopened
+        let result = compute_review_updates(&template, &state, 2, false);
+        assert!(result.is_ok());
+        let (updates, completed) = result.unwrap();
+        assert!(!completed);
+        assert!(updates.contains(&(2, false)));
+
+        // 3. After rejection, step 2 is now OPEN (simulate by clearing completion)
+        state.steps.insert(
+            2,
+            StepStateDb {
+                is_completed: false,
+                started_at: None,
+            },
+        );
+        // Verify step 2 is indeed OPEN now
+        let statuses = compute_statuses(&template, &state);
+        assert_eq!(statuses.get(&2), Some(&StepStatus::Open));
+
+        // 4. Admin can approve an OPEN step directly (no user re-submission needed)
+        let result = compute_review_updates(&template, &state, 2, true);
+        assert!(result.is_ok(), "Admin should be able to approve an OPEN step");
+        let (updates, completed) = result.unwrap();
+        assert!(completed);
+        assert!(updates.contains(&(2, true)));
+
+        // 5. Admin can also reject an OPEN step
+        let result = compute_review_updates(&template, &state, 2, false);
+        assert!(
+            result.is_ok(),
+            "Admin should be able to reject an OPEN step"
+        );
+        let (_updates, completed) = result.unwrap();
+        assert!(!completed);
+
+        // 6. LOCKED steps are still blocked
+        let result = compute_review_updates(&template, &state, 7, true);
+        assert!(result.is_err(), "LOCKED steps should not be reviewable");
+        assert!(result.unwrap_err().contains("open or pending review"));
+
+        // 7. COMPLETED steps are still blocked
+        let result = compute_review_updates(&template, &state, 3, true);
+        assert!(result.is_err(), "COMPLETED steps should not be reviewable");
     }
 }

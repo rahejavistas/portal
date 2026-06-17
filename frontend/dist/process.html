@@ -1342,7 +1342,14 @@
                 `;
             } else if (stepStatus === 'OPEN') {
                 const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
-                const hasAdminFieldsOnly = selectedStep.fields && selectedStep.fields.length > 0 && selectedStep.fields.every(f => f.filled_by === 'admin');
+                // Collect all fields: direct + from substeps
+                let allStepFields = [...(selectedStep.fields || [])];
+                if (selectedStep.substeps) {
+                    selectedStep.substeps.forEach(sub => {
+                        allStepFields = allStepFields.concat(sub.fields || []);
+                    });
+                }
+                const hasAdminFieldsOnly = allStepFields.length > 0 && allStepFields.every(f => f.filled_by === 'admin');
                 
                 if (isCurrentAdmin || !hasAdminFieldsOnly) {
                     statusBanner = `

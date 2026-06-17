@@ -532,17 +532,16 @@ async fn test_invalid_process_workflows_and_transitions() {
     .unwrap();
     assert_eq!(reviews_count, 0);
 
-    // 3. Review a step that is not PendingReview (step 2 is Open)
+    // 3. Review a step that is OPEN (step 2) — this is now allowed
     let review_open_res = exec
         .review_step(2, Some(user_id), true, Some("Approved"))
         .await;
-    assert!(review_open_res.is_err());
-    assert_eq!(
-        review_open_res.err().unwrap(),
-        "Step is not pending admin review"
+    assert!(
+        review_open_res.is_ok(),
+        "Admin should be able to review an OPEN step"
     );
 
-    // Verify still no reviews inserted
+    // Verify a review was inserted
     let reviews_count_after_review: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM process_step_reviews pr \
          JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
@@ -552,7 +551,18 @@ async fn test_invalid_process_workflows_and_transitions() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(reviews_count_after_review, 0);
+    assert_eq!(reviews_count_after_review, 1);
+
+    // 3b. Review a LOCKED step (step 7 is Locked) — this should still fail
+    //     Reset step 2 first so step 7 stays locked
+    exec.force_step_completion(2, false).await;
+    let review_locked_res = exec
+        .review_step(7, Some(user_id), true, Some("Bad"))
+        .await;
+    assert!(
+        review_locked_res.is_err(),
+        "LOCKED steps should not be reviewable"
+    );
 }
 
 #[tokio::test]
@@ -1684,13 +1694,13 @@ async fn test_comprehensive_failure_cases() {
         "Non-admin should not fill admin-only field"
     );
 
-    // 3. Cannot review a step that is not PendingReview
+    // 3. Cannot review a LOCKED step
     let result = exec
-        .review_step(7, Some(user_id), true, Some("Bad review"))
+        .review_step(8, Some(user_id), true, Some("Bad review"))
         .await;
     assert!(
         result.is_err(),
-        "Cannot review a step that is Open, not PendingReview"
+        "Cannot review a step that is Locked"
     );
 
     // 4. Cannot reopen a step that is still Open
