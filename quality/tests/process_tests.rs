@@ -556,9 +556,7 @@ async fn test_invalid_process_workflows_and_transitions() {
     // 3b. Review a LOCKED step (step 7 is Locked) — this should still fail
     //     Reset step 2 first so step 7 stays locked
     exec.force_step_completion(2, false).await;
-    let review_locked_res = exec
-        .review_step(7, Some(user_id), true, Some("Bad"))
-        .await;
+    let review_locked_res = exec.review_step(7, Some(user_id), true, Some("Bad")).await;
     assert!(
         review_locked_res.is_err(),
         "LOCKED steps should not be reviewable"
@@ -1537,14 +1535,13 @@ async fn test_access_control_and_cross_document_usage() {
     .await
     .unwrap();
 
-    // A document linked to User A's process specifically
+    // A document created by User A (not linked to any process by the DB — linkage is via process_fields)
     let doc_process = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, process_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, $2, 'process_doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
+         VALUES ($1, 'process_doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
     )
     .bind(doc_process)
-    .bind(process_a_id)
     .execute(&pool)
     .await
     .unwrap();
@@ -1563,7 +1560,7 @@ async fn test_access_control_and_cross_document_usage() {
         .await
         .unwrap();
 
-    // User A can also use the process-linked document
+    // User A can also use another independent document
     exec_a
         .save_step_fields(
             3,
@@ -1698,10 +1695,7 @@ async fn test_comprehensive_failure_cases() {
     let result = exec
         .review_step(8, Some(user_id), true, Some("Bad review"))
         .await;
-    assert!(
-        result.is_err(),
-        "Cannot review a step that is Locked"
-    );
+    assert!(result.is_err(), "Cannot review a step that is Locked");
 
     // 4. Cannot reopen a step that is still Open
     let result = exec.reopen_step(7, Some("Bad reopen")).await;
