@@ -1537,7 +1537,7 @@ pub const PROCESS_HTML: &str = r#"
             }
         }
 
-        // Upload a document for a process field
+        // Upload a document for a process field (presigned URL flow)
         async function uploadFieldDocument(stepId, fieldId) {
             const fileInput = document.getElementById(`file-input-${fieldId}`);
             const progressEl = document.getElementById(`upload-progress-${fieldId}`);
@@ -1552,65 +1552,99 @@ pub const PROCESS_HTML: &str = r#"
             }
 
             progressEl.style.color = 'var(--primary)';
-            progressEl.textContent = 'Uploading...';
+            progressEl.textContent = 'Requesting upload URL...';
 
             const processId = currentProcessDetails.process_id;
-            const formData = new FormData();
-            formData.append('process_id', processId);
-            formData.append('title', file.name);
-            formData.append('file', file);
 
             try {
-                const response = await fetch(`${API_BASE}/api/v1/process/upload`, {
+                // Step 1: Get presigned PUT URL
+                const urlRes = await fetch(`${API_BASE}/api/v1/process/upload-url`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
                     },
-                    body: formData
+                    body: JSON.stringify({
+                        process_id: processId,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    })
                 });
 
-                if (response.ok) {
-                    const docObj = await response.json();
-                    const docId = docObj.document ? docObj.document.document_id : docObj.document_id;
-                    
-                    // Call save step directly to attach the uploaded document to the field
-                    const payload = {
-                        process_id: processId,
-                        template_step_id: stepId,
-                        fields: [
-                            {
-                                template_field_id: fieldId,
-                                text_value: null,
-                                document_id: docId
-                            }
-                        ]
-                    };
+                if (!urlRes.ok) {
+                    const errText = await urlRes.text();
+                    progressEl.style.color = 'var(--danger)';
+                    progressEl.textContent = 'Failed.';
+                    alert(`Failed to get upload URL: ${errText}`);
+                    return;
+                }
 
-                    const saveRes = await fetch(`${API_BASE}/api/v1/process/save-step`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(payload)
-                    });
+                const { document_id, upload_url } = await urlRes.json();
 
-                    if (saveRes.ok) {
-                        progressEl.style.color = 'var(--secondary)';
-                        progressEl.textContent = 'Success!';
-                        // Reload state
-                        await viewProcessDetail(processId);
-                    } else {
-                        const err = await saveRes.text();
-                        progressEl.style.color = 'var(--danger)';
-                        progressEl.textContent = 'Save failed.';
-                        alert(`Failed to save step: ${err}`);
-                    }
-                } else {
-                    const errText = await response.text();
+                // Step 2: PUT directly to S3
+                progressEl.textContent = 'Uploading to storage...';
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+
+                if (!putRes.ok) {
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Upload failed.';
-                    alert(`Upload failed: ${errText}`);
+                    alert('Failed to upload file to storage.');
+                    return;
+                }
+
+                // Step 3: Confirm upload
+                progressEl.textContent = 'Confirming...';
+                const confirmRes = await fetch(`${API_BASE}/api/v1/process/confirm-upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ process_id: processId, document_id })
+                });
+
+                if (!confirmRes.ok) {
+                    const errText = await confirmRes.text();
+                    progressEl.style.color = 'var(--danger)';
+                    progressEl.textContent = 'Confirmation failed.';
+                    alert(`Confirmation failed: ${errText}`);
+                    return;
+                }
+
+                // Step 4: Attach to field via save-step
+                const payload = {
+                    process_id: processId,
+                    template_step_id: stepId,
+                    fields: [{
+                        template_field_id: fieldId,
+                        text_value: null,
+                        document_id: document_id
+                    }]
+                };
+
+                const saveRes = await fetch(`${API_BASE}/api/v1/process/save-step`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (saveRes.ok) {
+                    progressEl.style.color = 'var(--secondary)';
+                    progressEl.textContent = 'Success!';
+                    await viewProcessDetail(processId);
+                } else {
+                    const err = await saveRes.text();
+                    progressEl.style.color = 'var(--danger)';
+                    progressEl.textContent = 'Save failed.';
+                    alert(`Failed to save step: ${err}`);
                 }
             } catch(e) {
                 console.error(e);
@@ -1862,37 +1896,88 @@ pub const PROCESS_HTML: &str = r#"
                 return;
             }
             const file = fileInput.files[0];
-            
-            // Re-use existing upload logic
+
+            if (file.size > 10 * 1024 * 1024) {
+                alert('File size must be under 10MB.');
+                return;
+            }
+
             document.getElementById('docPickerModal').style.display = 'none';
-            const mockInput = document.createElement('input');
-            mockInput.type = 'file';
-            // We just call the logic
-            const formData = new FormData();
-            formData.append('process_id', currentProcessDetails.process_id);
-            formData.append('title', file.name);
-            formData.append('file', file);
-            
+
             const progressEl = document.getElementById(`upload-progress-${currentPickerFieldId}`);
-            if(progressEl) progressEl.textContent = 'Uploading...';
-            
+            if(progressEl) { progressEl.style.color = 'var(--primary)'; progressEl.textContent = 'Requesting upload URL...'; }
+
             try {
-                const response = await fetch(`${API_BASE}/api/v1/process/upload`, {
+                // Step 1: Get presigned PUT URL from server
+                const urlRes = await fetch(`${API_BASE}/api/v1/process/upload-url`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    body: formData
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        process_id: currentProcessDetails.process_id,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    })
                 });
-                if (response.ok) {
-                    const docObj = await response.json();
-                    const docId = docObj.document ? docObj.document.document_id : docObj.document_id;
-                    await attachDocumentToField(currentPickerStepId, currentPickerFieldId, docId, progressEl);
-                } else {
-                    alert('Upload failed: ' + await response.text());
-                    if(progressEl) progressEl.textContent = 'Failed';
+
+                if (!urlRes.ok) {
+                    const errText = await urlRes.text();
+                    alert('Failed to get upload URL: ' + errText);
+                    if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
+                    return;
                 }
+
+                const { document_id, upload_url } = await urlRes.json();
+
+                // Step 2: PUT file directly to S3 using presigned URL
+                if(progressEl) progressEl.textContent = 'Uploading to storage...';
+
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': file.type || 'application/octet-stream'
+                    },
+                    body: file
+                });
+
+                if (!putRes.ok) {
+                    alert('Failed to upload file to storage. Please try again.');
+                    if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Upload failed'; }
+                    return;
+                }
+
+                // Step 3: Confirm upload with server
+                if(progressEl) progressEl.textContent = 'Confirming upload...';
+
+                const confirmRes = await fetch(`${API_BASE}/api/v1/process/confirm-upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        process_id: currentProcessDetails.process_id,
+                        document_id: document_id
+                    })
+                });
+
+                if (!confirmRes.ok) {
+                    const errText = await confirmRes.text();
+                    alert('Upload confirmation failed: ' + errText);
+                    if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Confirmation failed'; }
+                    return;
+                }
+
+                // Step 4: Attach to field
+                await attachDocumentToField(currentPickerStepId, currentPickerFieldId, document_id, progressEl);
+
             } catch (e) {
+                console.error(e);
                 alert('Connection error during upload.');
-                if(progressEl) progressEl.textContent = 'Failed';
+                if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
             }
         }
 

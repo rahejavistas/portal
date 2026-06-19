@@ -134,4 +134,55 @@ impl S3Accessor {
 
         Ok(req.uri().to_string())
     }
+
+    /// Generates a presigned PUT URL for direct client-to-S3 uploads.
+    /// The URL is locked to the exact key and content type specified.
+    pub async fn create_presigned_put_url(
+        &self,
+        key: &str,
+        content_type: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let presigning_config = PresigningConfig::expires_in(self.presigned_expiry)?;
+
+        let req = self
+            .presigned_client
+            .put_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .content_type(content_type)
+            .presigned(presigning_config)
+            .await?;
+
+        let meter = opentelemetry::global::meter("s3_accessor");
+        let counter = meter
+            .u64_counter("s3_presigned_put_url_fetches_total")
+            .init();
+        counter.add(1, &[]);
+
+        Ok(req.uri().to_string())
+    }
+
+    /// Checks if an object exists at the given key by performing a HEAD request.
+    /// Returns the content length in bytes if found, or None if the key doesn't exist.
+    pub async fn head_object(&self, key: &str) -> Result<Option<i64>, Box<dyn std::error::Error>> {
+        use aws_sdk_s3::operation::head_object::HeadObjectError;
+
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(output) => Ok(Some(output.content_length().unwrap_or(0))),
+            Err(sdk_err) => {
+                let service_err = sdk_err.into_service_error();
+                match service_err {
+                    HeadObjectError::NotFound(_) => Ok(None),
+                    other => Err(Box::new(other) as Box<dyn std::error::Error>),
+                }
+            }
+        }
+    }
 }

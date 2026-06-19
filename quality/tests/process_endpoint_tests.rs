@@ -1,45 +1,45 @@
 use quality::{quick_create_user, quick_onboard_user, quick_setup_admin, setup_api_test_env};
 use uuid::Uuid;
 
-// Reuse multipart helper from process_api_tests
-fn multipart_body(boundary: &str, process_id: &str, title: &str, filename: &str) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"process_id\"\r\n\r\n");
-    body.extend_from_slice(process_id.as_bytes());
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"title\"\r\n\r\n");
-    body.extend_from_slice(title.as_bytes());
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
-            filename
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(b"Content-Type: application/pdf\r\n\r\n");
-    body.extend_from_slice(b"fake pdf content bytes");
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
-    body
-}
-
+/// Upload a document using the presigned URL flow:
+/// 1. POST /process/upload-url → get {document_id, upload_url}
+/// 2. PUT file bytes to the presigned S3 URL
+/// 3. POST /process/confirm-upload → confirm the upload
 fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String {
-    let boundary = "----Boundary";
-    let body = multipart_body(boundary, process_id, filename, filename);
-    let resp = ureq::post(&format!("{}/api/v1/process/upload", url))
+    // Step 1: Get presigned PUT URL
+    let url_resp = ureq::post(&format!("{}/api/v1/process/upload-url", url))
         .set("Authorization", auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&body)
-        .expect("upload failed");
-    let val: serde_json::Value = resp.into_json().unwrap();
-    val["document"]["document_id"].as_str().unwrap().to_string()
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "title": filename,
+            "filename": filename,
+            "content_type": "application/pdf"
+        }))
+        .expect("upload-url request failed");
+
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    // Step 2: PUT file directly to S3
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"fake pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    // Step 3: Confirm upload
+    let confirm_resp = ureq::post(&format!("{}/api/v1/process/confirm-upload", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "document_id": document_id
+        }))
+        .expect("confirm-upload request failed");
+
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
+
+    document_id
 }
 
 /// Helper: create a resident, init their process, return (process_id_str, resident_auth, admin_auth)

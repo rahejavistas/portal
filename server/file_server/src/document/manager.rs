@@ -122,7 +122,7 @@ impl DocumentManager {
         // C. Fetch the authorized document
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -152,7 +152,7 @@ impl DocumentManager {
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -196,6 +196,7 @@ impl DocumentManager {
             document_type,
             access_level,
             false,
+            true, // is_upload_confirmed: admin uploads are server-proxied
         )
         .await?;
 
@@ -316,6 +317,7 @@ impl DocumentManager {
             DocumentType::ResidentGeneral,
             DocumentAccessLevel::Private,
             true, // is_user_uploaded
+            true, // is_upload_confirmed: server-proxied upload
         )
         .await?;
 
@@ -345,12 +347,13 @@ impl DocumentManager {
         document_type: DocumentType,
         access_level: DocumentAccessLevel,
         is_user_uploaded: bool,
+        is_upload_confirmed: bool,
     ) -> Result<Document, String> {
         let empty_roles: Vec<UserRole> = vec![];
         let doc: Document = sqlx::query_as(
-            "INSERT INTO documents (title, description, category, document_type, access_level, restricted_committee_roles, is_user_uploaded) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7) \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded",
+            "INSERT INTO documents (title, description, category, document_type, access_level, restricted_committee_roles, is_user_uploaded, is_upload_confirmed) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed",
         )
         .bind(title)
         .bind(description)
@@ -359,6 +362,7 @@ impl DocumentManager {
         .bind(access_level)
         .bind(&empty_roles)
         .bind(is_user_uploaded)
+        .bind(is_upload_confirmed)
         .fetch_one(executor)
         .await
         .map_err(|e| e.to_string())?;
@@ -381,7 +385,7 @@ impl DocumentManager {
             "UPDATE documents \
              SET title = $1, description = $2, category = $3, document_type = $4, access_level = $5, restricted_committee_roles = $6 \
              WHERE document_id = $7 \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded",
+             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed",
         )
         .bind(title)
         .bind(description)
@@ -507,7 +511,7 @@ impl DocumentManager {
     ) -> Result<Option<DocumentWithMetadata>, String> {
         let mut doc_with_meta: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -530,7 +534,7 @@ impl DocumentManager {
     pub async fn admin_list_all_documents(&self) -> Result<Vec<DocumentWithMetadata>, String> {
         let all_docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, \
+                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -560,7 +564,7 @@ impl DocumentManager {
     ) -> Result<Vec<Document>, String> {
         sqlx::query_as(
             "SELECT DISTINCT d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, \
-             d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded \
+             d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed \
              FROM documents d \
              JOIN process_fields pf ON d.document_id = pf.document_id \
              JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
@@ -579,6 +583,115 @@ impl DocumentManager {
             .execute(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // ==========================================
+    // PRESIGNED UPLOAD FLOW
+    // ==========================================
+
+    /// Creates an unconfirmed document record in the DB and generates a presigned PUT URL
+    /// for direct client-to-S3 upload. The document is linked to the user's flat.
+    ///
+    /// Returns (DocumentWithMetadata, upload_url, s3_key).
+    pub async fn create_upload_intent(
+        &self,
+        user: &authentication::User,
+        title: &str,
+        content_type: &str,
+    ) -> Result<(DocumentWithMetadata, String, String), String> {
+        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Find the user's active flat_id
+        let flat_id_opt = user
+            .get_active_flat_id(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let flat_id =
+            flat_id_opt.ok_or_else(|| "User does not have an active flat ownership".to_string())?;
+
+        let doc = Self::insert_document(
+            &mut *tx,
+            title,
+            None,
+            DocumentCategory::ResidentSpecific,
+            DocumentType::ResidentGeneral,
+            DocumentAccessLevel::Private,
+            true,  // is_user_uploaded
+            false, // is_upload_confirmed: NOT confirmed until client finishes S3 upload
+        )
+        .await?;
+
+        // Link document to user's flat
+        sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
+            .bind(doc.document_id)
+            .bind(flat_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        // Generate presigned PUT URL for the exact S3 key
+        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let upload_url = self
+            .s3_accessor
+            .create_presigned_put_url(&key, content_type)
+            .await
+            .map_err(|e| format!("Failed to generate presigned PUT URL: {}", e))?;
+
+        Ok((
+            DocumentWithMetadata {
+                document: doc,
+                metadata: None,
+                download_url: None,
+            },
+            upload_url,
+            key,
+        ))
+    }
+
+    /// Confirms that a previously created upload intent was completed by checking
+    /// that the file actually exists on S3 via a HEAD request, then sets
+    /// `is_upload_confirmed = true` in the DB.
+    pub async fn confirm_upload(&self, document_id: Uuid) -> Result<(), String> {
+        // Verify the document exists and is unconfirmed
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT is_upload_confirmed FROM documents WHERE document_id = $1 AND NOT is_deleted",
+        )
+        .bind(document_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        match row {
+            None => return Err("Document not found".to_string()),
+            Some((true,)) => return Ok(()), // Already confirmed, idempotent
+            Some((false,)) => {}            // Proceed with confirmation
+        }
+
+        // HEAD the S3 object to verify the file landed
+        let key = super::derive_s3_key(DocumentAccessLevel::Private, document_id);
+        let head_result = self
+            .s3_accessor
+            .head_object(&key)
+            .await
+            .map_err(|e| format!("S3 HEAD check failed: {}", e))?;
+
+        if head_result.is_none() {
+            return Err("File not found on S3. Upload may not have completed.".to_string());
+        }
+
+        // Mark as confirmed
+        sqlx::query("UPDATE documents SET is_upload_confirmed = TRUE WHERE document_id = $1")
+            .bind(document_id)
+            .execute(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
         Ok(())
     }
 }

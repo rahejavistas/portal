@@ -156,6 +156,14 @@ async fn main() {
                     post(handlers::process::process_upload_document),
                 )
                 .route(
+                    "/api/v1/process/upload-url",
+                    post(handlers::process::process_upload_url),
+                )
+                .route(
+                    "/api/v1/process/confirm-upload",
+                    post(handlers::process::process_confirm_upload),
+                )
+                .route(
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),
                 )

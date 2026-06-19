@@ -148,6 +148,32 @@ pub struct AdminRevokeResponse {
     pub message: String,
 }
 
+#[derive(Deserialize)]
+pub struct UploadUrlRequest {
+    pub process_id: Uuid,
+    pub title: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct UploadUrlResponse {
+    pub document_id: Uuid,
+    pub upload_url: String,
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmUploadRequest {
+    pub process_id: Uuid,
+    pub document_id: Uuid,
+}
+
+#[derive(Serialize)]
+pub struct ConfirmUploadResponse {
+    pub status: String,
+    pub document_id: Uuid,
+}
+
 // ==========================================
 // Shared helpers
 // ==========================================
@@ -733,7 +759,7 @@ pub async fn save_process_step(
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
-    // Validate document ownership
+    // Validate document ownership and upload confirmation
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
             // Check if document is valid AND the user has permission to access it
@@ -743,14 +769,26 @@ pub async fn save_process_step(
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-            if doc_opt.is_none() {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(format!(
-                        "Document ID {} is invalid or you do not have permission to access it",
-                        doc_id
-                    )),
-                ));
+            match doc_opt {
+                None => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(format!(
+                            "Document ID {} is invalid or you do not have permission to access it",
+                            doc_id
+                        )),
+                    ));
+                }
+                Some(ref doc) if !doc.document.is_upload_confirmed => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(format!(
+                            "Document ID {} has not been uploaded yet. Please complete the upload first.",
+                            doc_id
+                        )),
+                    ));
+                }
+                _ => {}
             }
         }
     }
@@ -1040,6 +1078,130 @@ pub async fn process_download_url(
     })?;
 
     Ok(Json(DocumentUrlResponse { download_url: url }))
+}
+
+/// POST /api/v1/process/upload-url
+/// Returns a presigned PUT URL for direct client-to-S3 upload.
+/// Creates an unconfirmed document record in the DB first.
+pub async fn process_upload_url(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<UploadUrlRequest>,
+) -> Result<(StatusCode, Json<UploadUrlResponse>), ApiError> {
+    let is_admin = user.has_role(authentication::UserRole::Admin);
+
+    // Auth check: verify user owns the process
+    {
+        let mut conn = state
+            .pg_pool
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+    }
+
+    // Validate file extension
+    let ext = payload
+        .filename
+        .split('.')
+        .next_back()
+        .unwrap_or("")
+        .to_lowercase();
+    if !crate::handlers::documents::VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                "Invalid file type. Only PDF, Word, Excel, and Text files are allowed.".to_string(),
+            ),
+        ));
+    }
+
+    // Resolve content type
+    let content_type = payload.content_type.unwrap_or_else(|| {
+        match ext.as_str() {
+            "pdf" => "application/pdf",
+            "doc" => "application/msword",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xls" => "application/vnd.ms-excel",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "txt" => "text/plain",
+            _ => "application/octet-stream",
+        }
+        .to_string()
+    });
+
+    // Create document record + presigned PUT URL
+    let (result, upload_url, _key) = state
+        .document_manager
+        .create_upload_intent(&user, &payload.title, &content_type)
+        .await
+        .map_err(|e| {
+            if e == "User does not have an active flat ownership" {
+                (StatusCode::FORBIDDEN, Json(e))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(e))
+            }
+        })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(UploadUrlResponse {
+            document_id: result.document.document_id,
+            upload_url,
+        }),
+    ))
+}
+
+/// POST /api/v1/process/confirm-upload
+/// Confirms that a presigned upload completed successfully.
+/// Does a HEAD check on S3 and marks the document as confirmed.
+pub async fn process_confirm_upload(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<ConfirmUploadRequest>,
+) -> Result<Json<ConfirmUploadResponse>, ApiError> {
+    let is_admin = user.has_role(authentication::UserRole::Admin);
+
+    // Auth check: verify user owns the process
+    {
+        let mut conn = state
+            .pg_pool
+            .acquire()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+    }
+
+    // Verify user has access to this document (flat-based authorization)
+    let _doc = state
+        .document_manager
+        .get_document(payload.document_id, &user)
+        .await
+        .map_err(|e| {
+            if e == "FORBIDDEN" {
+                (StatusCode::FORBIDDEN, Json(e))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(e))
+            }
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json("Document not found".to_string()),
+            )
+        })?;
+
+    // Confirm the upload on S3
+    state
+        .document_manager
+        .confirm_upload(payload.document_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+
+    Ok(Json(ConfirmUploadResponse {
+        status: "confirmed".to_string(),
+        document_id: payload.document_id,
+    }))
 }
 
 #[derive(Serialize)]
