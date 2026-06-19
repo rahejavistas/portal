@@ -1,4 +1,4 @@
-use crate::document::{Document, DocumentAccessLevel};
+use crate::document::DocumentAccessLevel;
 use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{
@@ -733,42 +733,25 @@ pub async fn save_process_step(
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
-    // Validate and associate document ownership
+    // Validate document ownership
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
-            // Check if document is valid (either already belongs to this process, or is a general document of the process owner)
-            let is_valid: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
-                    SELECT 1 
-                    FROM documents d
-                    WHERE d.document_id = $1 
-                      AND NOT d.is_deleted
-                )",
-            )
-            .bind(doc_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+            // Check if document is valid AND the user has permission to access it
+            let doc_opt = state
+                .document_manager
+                .get_document(doc_id, &user)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-            if !is_valid {
+            if doc_opt.is_none() {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(format!(
-                        "Document ID {} is invalid or does not belong to this process",
+                        "Document ID {} is invalid or you do not have permission to access it",
                         doc_id
                     )),
                 ));
             }
-
-            // Link the general document to this process
-            sqlx::query(
-                "UPDATE documents SET process_id = $1 WHERE document_id = $2 AND process_id IS NULL"
-            )
-            .bind(payload.process_id)
-            .bind(doc_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
         }
     }
 
@@ -979,16 +962,13 @@ pub async fn process_upload_document(
     // Create document record
     let result = state
         .document_manager
-        .create_document_for_process_atomic(process_id, &title, None)
+        .user_create_document_atomic(&user, &title, None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
 
     // Upload to S3
-    let key = crate::document::derive_s3_key(
-        Some(process_id),
-        DocumentAccessLevel::Private,
-        result.document.document_id,
-    );
+    let key =
+        crate::document::derive_s3_key(DocumentAccessLevel::Private, result.document.document_id);
 
     if let Err(err) = state
         .document_manager
@@ -1033,24 +1013,31 @@ pub async fn process_download_url(
         load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
     }
 
-    // Verify document belongs to this process
-    let doc: Document = state
+    // Fetch the document using the centralized document manager which enforces authorization
+    let doc = state
         .document_manager
-        .get_process_document(payload.document_id, payload.process_id)
+        .get_document(payload.document_id, &user)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?
+        .map_err(|e| {
+            if e == "FORBIDDEN" {
+                (StatusCode::FORBIDDEN, Json(e))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(e))
+            }
+        })?
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
-                Json("Document not found or does not belong to this process".to_string()),
+                Json("Document not found".to_string()),
             )
         })?;
 
-    let url = state
-        .document_manager
-        .generate_presigned_url(&doc)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
+    let url = doc.download_url.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json("Failed to generate download URL".to_string()),
+        )
+    })?;
 
     Ok(Json(DocumentUrlResponse { download_url: url }))
 }

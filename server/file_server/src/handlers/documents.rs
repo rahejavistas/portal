@@ -178,11 +178,8 @@ pub async fn user_create_document(
         })?;
 
     // Derive S3 Key: {public/private}/{first_char_of_uuid_lowercase}/{document_uuid}
-    let key = crate::document::derive_s3_key(
-        result.document.process_id,
-        DocumentAccessLevel::Private,
-        result.document.document_id,
-    );
+    let key =
+        crate::document::derive_s3_key(DocumentAccessLevel::Private, result.document.document_id);
     let content_type = file_content_type.unwrap_or_else(|| "application/octet-stream".to_string());
 
     // Upload to S3
@@ -474,11 +471,7 @@ pub async fn admin_create_document(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
 
     // Derive S3 Key: {public/private}/{first_char_of_uuid_lowercase}/{document_uuid}
-    let key = crate::document::derive_s3_key(
-        result.document.process_id,
-        access_level,
-        result.document.document_id,
-    );
+    let key = crate::document::derive_s3_key(access_level, result.document.document_id);
     let content_type = file_content_type.unwrap_or_else(|| "application/octet-stream".to_string());
 
     // Upload to S3

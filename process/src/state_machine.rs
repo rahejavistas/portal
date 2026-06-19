@@ -814,7 +814,10 @@ mod tests {
 
         // 4. Admin can approve an OPEN step directly (no user re-submission needed)
         let result = compute_review_updates(&template, &state, 2, true);
-        assert!(result.is_ok(), "Admin should be able to approve an OPEN step");
+        assert!(
+            result.is_ok(),
+            "Admin should be able to approve an OPEN step"
+        );
         let (updates, completed) = result.unwrap();
         assert!(completed);
         assert!(updates.contains(&(2, true)));

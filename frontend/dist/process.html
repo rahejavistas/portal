@@ -1341,35 +1341,14 @@
                     </div>
                 `;
             } else if (stepStatus === 'OPEN') {
-                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
-                // Collect all fields: direct + from substeps
-                let allStepFields = [...(selectedStep.fields || [])];
-                if (selectedStep.substeps) {
-                    selectedStep.substeps.forEach(sub => {
-                        allStepFields = allStepFields.concat(sub.fields || []);
-                    });
-                }
-                const hasAdminFieldsOnly = allStepFields.length > 0 && allStepFields.every(f => f.filled_by === 'admin');
-                
-                if (isCurrentAdmin || !hasAdminFieldsOnly) {
-                    statusBanner = `
-                        <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
-                            <div>
-                                <strong style="color: #1E40AF; font-size: 1rem; display: block;">Active Stage</strong>
-                                <span style="font-size: 0.875rem; color: #1E40AF;">Please upload the required files or fill in the remarks below.</span>
-                            </div>
+                statusBanner = `
+                    <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
+                        <div>
+                            <strong style="color: #1E40AF; font-size: 1rem; display: block;">Active Stage</strong>
+                            <span style="font-size: 0.875rem; color: #1E40AF;">Please upload the required files or fill in the remarks below.</span>
                         </div>
-                    `;
-                } else {
-                    statusBanner = `
-                        <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
-                            <div>
-                                <strong style="color: #92400E; font-size: 1rem; display: block;">Under Admin Review</strong>
-                                <span style="font-size: 0.875rem; color: #92400E;">This stage is currently waiting for Admin action (remarks/completion).</span>
-                            </div>
-                        </div>
-                    `;
-                }
+                    </div>
+                `;
             } else if (stepStatus === 'PENDING_REVIEW') {
                 statusBanner = `
                     <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
