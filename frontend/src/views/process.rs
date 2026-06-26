@@ -1545,8 +1545,12 @@ pub const PROCESS_HTML: &str = r#"
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const maxSize = isCurrentAdmin ? 10 * 1024 * 1024 * 1024 : 100 * 1024 * 1024;
+            const maxSizeLabel = isCurrentAdmin ? '10GB' : '100MB';
+
+            if (file.size > maxSize) {
+                alert(`File size must be under ${maxSizeLabel}.`);
                 fileInput.value = '';
                 return;
             }
@@ -1930,8 +1934,12 @@ pub const PROCESS_HTML: &str = r#"
             }
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const maxSize = isCurrentAdmin ? 10 * 1024 * 1024 * 1024 : 100 * 1024 * 1024;
+            const maxSizeLabel = isCurrentAdmin ? '10GB' : '100MB';
+
+            if (file.size > maxSize) {
+                alert(`File size must be under ${maxSizeLabel}.`);
                 return;
             }
 

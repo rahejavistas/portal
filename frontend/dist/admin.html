@@ -1566,10 +1566,10 @@
             }
             const file = fileInput.files[0];
 
-            // Validate file size (Max 1GB)
-            const MAX_SIZE = 1024 * 1024 * 1024; // 1GB
+            // Validate file size (Max 10GB)
+            const MAX_SIZE = 10 * 1024 * 1024 * 1024; // 10GB
             if (file.size > MAX_SIZE) {
-                docFeedback.textContent = 'File size must be 1GB or less.';
+                docFeedback.textContent = 'File size must be 10GB or less.';
                 docFeedback.className = 'feedback-box error';
                 docFeedback.style.display = 'block';
                 return;

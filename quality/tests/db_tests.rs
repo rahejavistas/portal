@@ -168,6 +168,14 @@ async fn test_document_manager_visibility_resolution() {
         .expect("Failed to create Doc 2")
         .0;
 
+    // Confirm uploads directly in DB to bypass S3 checks in tests
+    sqlx::query("UPDATE documents SET is_upload_confirmed = TRUE WHERE document_id = $1 OR document_id = $2")
+        .bind(doc1.document.document_id)
+        .bind(doc2.document.document_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     let allowed_ids = dm.get_allowed_document_ids(&demoted_user).await.unwrap();
     assert!(allowed_ids.contains(&doc1.document.document_id));
     assert!(allowed_ids.contains(&doc2.document.document_id));

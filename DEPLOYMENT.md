@@ -116,6 +116,11 @@ To allow the frontend browser to upload and view documents via presigned S3 URLs
 ```
 5. Click **Save changes**.
 
+> **⚠️ CRITICAL: Lambda CORS vs S3 CORS**
+> Even if CORS is enabled on the AWS Lambda Function URL, you **MUST** configure CORS directly on the S3 bucket as shown above. The Lambda backend generates a presigned URL, but the actual file upload (`PUT` request) is made by the browser *directly* to S3, bypassing Lambda completely. If you encounter a CORS preflight failure during upload (e.g., `No 'Access-Control-Allow-Origin' header is present`), it means your frontend origin is missing from this S3 configuration block.
+> 
+> *Note: If you use dynamically generated Cloudflare Pages preview URLs or develop locally, you will need to add those specific origins to the `AllowedOrigins` array (e.g. `"http://localhost:3000"`, `"https://*.portal-015.pages.dev"`).*
+
 ---
 
 ## 4. Lambda IAM Execution Role Permissions

@@ -52,7 +52,7 @@ impl DocumentManager {
 
         // 1. Fetch all PUBLIC documents
         let public_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT document_id FROM documents WHERE access_level = 'PUBLIC' AND NOT is_deleted",
+            "SELECT document_id FROM documents WHERE access_level = 'PUBLIC' AND NOT is_deleted AND is_upload_confirmed = TRUE",
         )
         .fetch_all(&self.pg_pool)
         .await
@@ -65,6 +65,7 @@ impl DocumentManager {
                 "SELECT document_id FROM documents \
                  WHERE access_level = 'COMMITTEE_ONLY' \
                    AND NOT is_deleted \
+                   AND is_upload_confirmed = TRUE \
                    AND ( \
                        cardinality(restricted_committee_roles) = 0 \
                        OR restricted_committee_roles && $1 \
@@ -82,7 +83,10 @@ impl DocumentManager {
             "SELECT DISTINCT df.document_id \
              FROM document_flats df \
              JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
-             WHERE fo.user_id = $1 AND fo.is_active = TRUE",
+             JOIN documents d ON df.document_id = d.document_id \
+             WHERE fo.user_id = $1 AND fo.is_active = TRUE \
+               AND NOT d.is_deleted \
+               AND d.is_upload_confirmed = TRUE",
         )
         .bind(user.user_id)
         .fetch_all(&self.pg_pool)
@@ -652,6 +656,7 @@ impl DocumentManager {
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             WHERE d.is_upload_confirmed = TRUE \
              ORDER BY d.uploaded_date DESC",
         )
         .fetch_all(&self.pg_pool)

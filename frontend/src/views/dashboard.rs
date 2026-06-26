@@ -891,10 +891,10 @@ pub const DASHBOARD_HTML: &str = r#"
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            // 10MB limit
-            if (file.size > 10 * 1024 * 1024) {
+            // 100MB limit
+            if (file.size > 100 * 1024 * 1024) {
                 statusEl.style.color = '#EF4444';
-                statusEl.textContent = 'Error: File size must be under 10MB.';
+                statusEl.textContent = 'Error: File size must be under 100MB.';
                 return;
             }
 
