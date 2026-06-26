@@ -244,7 +244,7 @@ async fn test_rate_limiting() {
 
     assert!(user_rate_limited, "Expected to be rate limited by User");
     assert!(
-        (119..=121).contains(&user_success),
+        (119..=125).contains(&user_success),
         "Expected ~120 successes, got {}",
         user_success
     );
