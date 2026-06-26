@@ -883,7 +883,6 @@
         async function handleUserUpload(e) {
             e.preventDefault();
             const title = document.getElementById('upload-title').value.trim();
-            const desc = document.getElementById('upload-desc').value.trim();
             const fileInput = document.getElementById('upload-file');
             const statusEl = document.getElementById('upload-status');
             const submitBtn = document.getElementById('upload-submit-btn');
@@ -907,43 +906,75 @@
                 return;
             }
 
-            const payload = {
-                title: title,
-                description: desc ? desc : null
-            };
-
-            const formData = new FormData();
-            formData.append('payload', JSON.stringify(payload));
-            formData.append('file', file);
-
             submitBtn.disabled = true;
-            submitBtn.textContent = 'Uploading...';
+            submitBtn.textContent = 'Requesting URL...';
             statusEl.textContent = '';
 
             try {
-                const response = await fetch(`${API_BASE}/api/v1/documents/upload`, {
+                // Step 1: Get presigned PUT URL
+                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
                     },
-                    body: formData
+                    body: JSON.stringify({
+                        title: title,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    })
                 });
 
-                if (response.ok) {
-                    statusEl.style.color = '#10B981';
-                    statusEl.textContent = 'Document uploaded successfully!';
-                    
-                    // Reload docs
-                    loadResidentDocuments();
-                    
-                    setTimeout(() => {
-                        closeUploadModal();
-                    }, 1000);
-                } else {
-                    const errText = await response.text();
+                if (!urlRes.ok) {
+                    const errText = await urlRes.text();
                     statusEl.style.color = '#EF4444';
-                    statusEl.textContent = `Upload failed: ${errText}`;
+                    statusEl.textContent = `Failed: ${errText}`;
+                    return;
                 }
+
+                const { document_id, upload_url } = await urlRes.json();
+
+                // Step 2: PUT file directly to S3
+                submitBtn.textContent = 'Uploading...';
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+
+                if (!putRes.ok) {
+                    statusEl.style.color = '#EF4444';
+                    statusEl.textContent = 'Upload to storage failed. Please try again.';
+                    return;
+                }
+
+                // Step 3: Confirm upload
+                submitBtn.textContent = 'Confirming...';
+                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ document_id })
+                });
+
+                if (!confirmRes.ok) {
+                    const errText = await confirmRes.text();
+                    statusEl.style.color = '#EF4444';
+                    statusEl.textContent = `Confirmation failed: ${errText}`;
+                    return;
+                }
+
+                statusEl.style.color = '#10B981';
+                statusEl.textContent = 'Document uploaded successfully!';
+                
+                // Reload docs
+                loadResidentDocuments();
+                
+                setTimeout(() => {
+                    closeUploadModal();
+                }, 1000);
             } catch (err) {
                 statusEl.style.color = '#EF4444';
                 statusEl.textContent = 'Connection error during upload.';
