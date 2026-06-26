@@ -1558,18 +1558,32 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL
-                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
+                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const uploadEndpoint = isCurrentAdmin 
+                    ? `${API_BASE}/api/v1/admin/process/upload-url`
+                    : `${API_BASE}/api/v1/documents/upload-url`;
+                
+                const uploadBody = isCurrentAdmin 
+                    ? {
+                        process_id: processId,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    }
+                    : {
+                        process_id: processId,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    };
+
+                const urlRes = await fetch(uploadEndpoint, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        process_id: processId,
-                        title: file.name,
-                        filename: file.name,
-                        content_type: file.type || 'application/octet-stream'
-                    })
+                    body: JSON.stringify(uploadBody)
                 });
 
                 if (!urlRes.ok) {
@@ -1599,13 +1613,18 @@ pub const PROCESS_HTML: &str = r#"
 
                 // Step 3: Confirm upload
                 progressEl.textContent = 'Confirming...';
-                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
+                
+                const confirmEndpoint = isCurrentAdmin
+                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    : `${API_BASE}/api/v1/documents/confirm-upload`;
+
+                const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ process_id: processId, document_id })
+                    body: JSON.stringify({ document_id })
                 });
 
                 if (!confirmRes.ok) {
@@ -1849,11 +1868,25 @@ pub const PROCESS_HTML: &str = r#"
             currentPickerFieldId = fieldId;
             document.getElementById('docPickerModal').style.display = 'flex';
             document.getElementById('picker-new-upload').value = '';
-            document.getElementById('picker-existing-docs').innerHTML = '<p>Loading documents...</p>';
+            
+            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const libraryHeading = document.getElementById('picker-library-heading');
+            const libraryContainer = document.getElementById('picker-existing-docs');
+            
+            if (isCurrentAdmin) {
+                if (libraryHeading) libraryHeading.style.display = 'none';
+                if (libraryContainer) libraryContainer.style.display = 'none';
+                return; // Admins don't pick from existing docs to avoid confusion
+            } else {
+                if (libraryHeading) libraryHeading.style.display = 'block';
+                if (libraryContainer) {
+                    libraryContainer.style.display = 'flex';
+                    libraryContainer.innerHTML = '<p>Loading documents...</p>';
+                }
+            }
             
             try {
-                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
-                const url = isCurrentAdmin ? `${API_BASE}/api/v1/admin/documents/list` : `${API_BASE}/api/v1/documents`;
+                const url = `${API_BASE}/api/v1/documents`;
                 
                 const response = await fetch(url, {
                     method: 'POST',
@@ -1909,18 +1942,32 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL from server
-                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
+                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const uploadEndpoint = isCurrentAdmin 
+                    ? `${API_BASE}/api/v1/admin/process/upload-url`
+                    : `${API_BASE}/api/v1/documents/upload-url`;
+                
+                const uploadBody = isCurrentAdmin 
+                    ? {
+                        process_id: currentProcessDetails.process_id,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    }
+                    : {
+                        process_id: currentProcessDetails.process_id,
+                        title: file.name,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    };
+
+                const urlRes = await fetch(uploadEndpoint, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        process_id: currentProcessDetails.process_id,
-                        title: file.name,
-                        filename: file.name,
-                        content_type: file.type || 'application/octet-stream'
-                    })
+                    body: JSON.stringify(uploadBody)
                 });
 
                 if (!urlRes.ok) {
@@ -1951,17 +1998,18 @@ pub const PROCESS_HTML: &str = r#"
 
                 // Step 3: Confirm upload with server
                 if(progressEl) progressEl.textContent = 'Confirming upload...';
+                
+                const confirmEndpoint = isCurrentAdmin
+                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    : `${API_BASE}/api/v1/documents/confirm-upload`;
 
-                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
+                const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        process_id: currentProcessDetails.process_id,
-                        document_id: document_id
-                    })
+                    body: JSON.stringify({ document_id: document_id })
                 });
 
                 if (!confirmRes.ok) {
@@ -2039,7 +2087,7 @@ pub const PROCESS_HTML: &str = r#"
                     <button type="button" class="btn btn-primary" onclick="uploadNewDocumentFromPicker()">Upload & Select</button>
                 </div>
                 
-                <h4 style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>
+                <h4 id="picker-library-heading" style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>
                 <div id="picker-existing-docs" style="display: flex; flex-direction: column; gap: 8px;">
                     <!-- Populated dynamically -->
                 </div>

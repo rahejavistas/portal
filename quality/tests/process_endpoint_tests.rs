@@ -457,3 +457,78 @@ async fn test_user_cannot_access_other_users_process() {
         .send_json(serde_json::json!({"process_id": u1_pid}));
     assert!(err.is_err());
 }
+
+#[tokio::test]
+async fn test_admin_process_upload_creates_downloadable_document() {
+    let env = setup_api_test_env(3133).await;
+    let url = env.server_url();
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+
+    // 1. Admin uploads document to the process via the new endpoint
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/process/upload-url", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "title": "Admin SLA",
+            "filename": "admin_sla.pdf",
+            "content_type": "application/pdf"
+        }))
+        .expect("admin upload-url request failed");
+
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"admin pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    let confirm_resp = ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "document_id": document_id
+        }))
+        .expect("admin confirm-upload request failed");
+
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
+
+    // 2. Test the download as resident - Should succeed because the backend linked the flat!
+    let download_resp = ureq::post(&format!("{}/api/v1/process/download-url", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "document_id": document_id
+        }))
+        .expect("Resident download process document failed");
+
+    let download_val: serde_json::Value = download_resp.into_json().unwrap();
+    let s3_dl_url = download_val["download_url"].as_str().unwrap();
+    assert!(s3_dl_url.contains(&document_id));
+
+    // 3. Verify DB explicitly (Explicit ownership check)
+    let doc_uuid = uuid::Uuid::parse_str(&document_id).unwrap();
+    let flat_mapping: Option<i32> =
+        sqlx::query_scalar("SELECT flat_id FROM document_flats WHERE document_id = $1")
+            .bind(doc_uuid)
+            .fetch_optional(&env.db_pool)
+            .await
+            .expect("DB query failed");
+
+    assert!(
+        flat_mapping.is_some(),
+        "Document should be explicitly mapped to a flat in DB"
+    );
+
+    // Verify it's mapped to A-101
+    let (wing, flat_number): (String, String) =
+        sqlx::query_as("SELECT wing, flat_number FROM flats WHERE flat_id = $1")
+            .bind(flat_mapping.unwrap())
+            .fetch_one(&env.db_pool)
+            .await
+            .expect("Could not find mapped flat");
+
+    assert_eq!(wing, "A", "Mapped to wrong wing");
+    assert_eq!(flat_number, "0101", "Mapped to wrong flat number");
+}

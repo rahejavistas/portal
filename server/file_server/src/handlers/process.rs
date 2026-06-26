@@ -2,9 +2,9 @@ use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
-    get_active_ownerships_for_user, get_field_history, get_flat_label_for_ownership,
-    get_process_info, get_process_reviews, get_user_active_flats, list_processes_for_user,
-    ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
+    get_active_ownerships_for_user, get_field_history, get_flat_id_for_ownership,
+    get_flat_label_for_ownership, get_process_info, get_process_reviews, get_user_active_flats,
+    list_processes_for_user, ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -837,6 +837,99 @@ pub async fn admin_revoke_step(
         status: "success".to_string(),
         message: "Step revoked successfully".to_string(),
     }))
+}
+
+#[derive(Deserialize)]
+pub struct ProcessAdminUploadUrlRequest {
+    pub process_id: Uuid,
+    pub title: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProcessAdminUploadUrlResponse {
+    pub document_id: String,
+    pub upload_url: String,
+}
+
+/// POST /api/v1/admin/process/upload-url
+/// Creates an upload intent for a process document uploaded by an admin.
+/// The backend securely derives the flat and forces PROCESS_SPECIFIC + PRIVATE semantics.
+pub async fn process_admin_upload_url(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<ProcessAdminUploadUrlRequest>,
+) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
+    let is_admin = user.has_role(authentication::UserRole::Admin);
+    if !is_admin {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Only admins can use this endpoint".to_string()),
+        ));
+    }
+
+    let mut conn = state
+        .pg_pool
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+
+    let mut flat_id: Option<i32> = None;
+    if let Some(oid) = info.ownership_id {
+        flat_id = get_flat_id_for_ownership(&mut conn, oid)
+            .await
+            .unwrap_or(None);
+    }
+
+    // Validate file extension
+    let ext = payload
+        .filename
+        .split('.')
+        .next_back()
+        .unwrap_or("")
+        .to_lowercase();
+    if !crate::handlers::documents::VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(format!(
+                "Invalid file type '{}'. Allowed: {:?}",
+                ext,
+                crate::handlers::documents::VALID_UPLOAD_EXTENSIONS
+            )),
+        ));
+    }
+
+    let content_type = crate::handlers::documents::derive_content_type_from_ext(ext.as_str());
+
+    // flat_id is already an Option<i32>
+
+    use crate::document::{DocumentAccessLevel, DocumentCategory, DocumentType};
+
+    let (result, upload_url, _key) = state
+        .document_manager
+        .admin_create_upload_intent_by_id(
+            &payload.title,
+            None,
+            DocumentCategory::ProcessSpecific,
+            DocumentType::ProcessGeneral,
+            DocumentAccessLevel::Private,
+            flat_id,
+            None,
+            &content_type,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ProcessAdminUploadUrlResponse {
+            document_id: result.document.document_id.to_string(),
+            upload_url,
+        }),
+    ))
 }
 
 /// POST /api/v1/process/download-url

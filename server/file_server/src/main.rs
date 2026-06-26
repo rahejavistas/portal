@@ -110,6 +110,10 @@ async fn main() {
                     post(handlers::process::admin_review_step),
                 )
                 .route(
+                    "/process/upload-url",
+                    post(handlers::process::process_admin_upload_url),
+                )
+                .route(
                     "/process/revoke",
                     post(handlers::process::admin_revoke_step),
                 )

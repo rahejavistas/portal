@@ -234,6 +234,19 @@ Approves or rejects a process step that is pending admin review.
 ### POST `/api/v1/admin/process/revoke`
 Reopens an already-completed step for resident re-submission.
 
+### POST `/api/v1/admin/process/upload-url`
+Creates an upload intent for a process document uploaded by an admin. The backend securely derives the flat mapping and forces PROCESS_SPECIFIC and PRIVATE semantics.
+* **Used by:** Process page (Admin View) → Upload Field Document or Select New Document
+* **Request Body:**
+  ```json
+  {
+    "process_id": "uuid-...",
+    "title": "Admin SLA",
+    "filename": "admin_sla.pdf",
+    "content_type": "application/pdf"
+  }
+  ```
+
 </details>
 
 ---

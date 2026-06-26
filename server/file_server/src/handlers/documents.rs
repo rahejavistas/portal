@@ -13,6 +13,19 @@ use uuid::Uuid;
 
 pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &["pdf", "doc", "docx", "xls", "xlsx", "txt"];
 
+pub fn derive_content_type_from_ext(ext: &str) -> String {
+    match ext {
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
 // ==========================================
 // REGULAR RESIDENT / USER ENDPOINTS
 // ==========================================
@@ -117,16 +130,7 @@ pub async fn user_upload_url(
     }
 
     // SECURITY: Always derive content-type from validated extension
-    let content_type = match ext.as_str() {
-        "pdf" => "application/pdf",
-        "doc" => "application/msword",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls" => "application/vnd.ms-excel",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "txt" => "text/plain",
-        _ => "application/octet-stream",
-    }
-    .to_string();
+    let content_type = derive_content_type_from_ext(ext.as_str());
 
     let (result, upload_url, _key) = state
         .document_manager
@@ -363,16 +367,7 @@ pub async fn admin_upload_url(
     }
 
     // SECURITY: Derive content-type from the validated file extension
-    let content_type = match ext.as_str() {
-        "pdf" => "application/pdf",
-        "doc" => "application/msword",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls" => "application/vnd.ms-excel",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "txt" => "text/plain",
-        _ => "application/octet-stream",
-    }
-    .to_string();
+    let content_type = derive_content_type_from_ext(ext.as_str());
 
     // Validate category ↔ type combination before hitting DB
     validate_category_type(payload.category, payload.document_type)

@@ -243,6 +243,78 @@ impl DocumentManager {
         ))
     }
 
+    /// Atomically creates an unconfirmed document with optional flat ID assignment
+    /// and returns a presigned PUT URL for direct S3 upload.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn admin_create_upload_intent_by_id(
+        &self,
+        title: &str,
+        description: Option<&str>,
+        category: DocumentCategory,
+        document_type: DocumentType,
+        access_level: DocumentAccessLevel,
+        flat_id: Option<i32>,
+        metadata: Option<MetadataInput<'_>>,
+        content_type: &str,
+    ) -> Result<(DocumentWithMetadata, String, String), String> {
+        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let doc = Self::insert_document(
+            &mut *tx,
+            title,
+            description,
+            category,
+            document_type,
+            access_level,
+            false,
+            false,
+        )
+        .await?;
+
+        if let Some(fid) = flat_id {
+            Self::assign_flat_by_id_with_executor(&mut *tx, doc.document_id, fid).await?;
+        }
+
+        let meta = if let Some(m) = metadata {
+            Some(
+                Self::insert_metadata(
+                    &mut *tx,
+                    doc.document_id,
+                    m.subcategory,
+                    m.tags,
+                    m.document_date,
+                    m.valid_from,
+                    m.valid_until,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        // Generate presigned PUT URL for the exact S3 key
+        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let upload_url = self
+            .s3_accessor
+            .create_presigned_put_url(&key, content_type)
+            .await
+            .map_err(|e| format!("Failed to generate presigned PUT URL: {}", e))?;
+
+        Ok((
+            DocumentWithMetadata {
+                document: doc,
+                metadata: meta,
+                download_url: None,
+            },
+            upload_url,
+            key,
+        ))
+    }
+
     /// Atomically updates a document with flat re-assignment and metadata upsert in a single transaction.
     /// Note: soft-deletion is handled by the dedicated `admin_soft_delete_document` endpoint.
     #[allow(clippy::too_many_arguments)]
@@ -509,6 +581,34 @@ impl DocumentManager {
 
         if result.rows_affected() == 0 {
             return Err(format!("Flat not found: {}", flat));
+        }
+
+        Ok(())
+    }
+
+    /// Assigns a document to a flat using the flat's integer primary key directly
+    async fn assign_flat_by_id_with_executor<
+        'e,
+        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+    >(
+        executor: E,
+        document_id: Uuid,
+        flat_id: i32,
+    ) -> Result<(), String> {
+        let result = sqlx::query(
+            "INSERT INTO document_flats (document_id, flat_id) \
+             VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(document_id)
+        .bind(flat_id)
+        .execute(executor)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            // It either didn't exist or there was a conflict.
+            // But since flat_id is a foreign key, if it doesn't exist, it will violate FK constraint
+            // rather than affecting 0 rows. 0 rows affected here just means conflict (already exists).
         }
 
         Ok(())
