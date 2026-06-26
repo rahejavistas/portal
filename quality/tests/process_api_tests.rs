@@ -1,44 +1,45 @@
 use quality::{quick_create_user, quick_onboard_user, quick_setup_admin, setup_api_test_env};
 use uuid::Uuid;
 
-pub fn create_process_multipart_body(
-    boundary: &str,
-    process_id: &str,
-    title: &str,
-    file_bytes: &[u8],
-    filename: &str,
-    file_content_type: &str,
-) -> Vec<u8> {
-    let mut body = Vec::new();
+/// Upload a document via the presigned URL flow:
+/// 1. POST /process/upload-url → get {document_id, upload_url}
+/// 2. PUT file bytes to the presigned S3 URL
+/// 3. POST /process/confirm-upload → confirm the upload
+fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String {
+    // Step 1: Get presigned PUT URL
+    let url_resp = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "title": filename,
+            "filename": filename,
+            "content_type": "application/pdf"
+        }))
+        .expect("upload-url request failed");
 
-    // process_id
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"process_id\"\r\n\r\n");
-    body.extend_from_slice(process_id.as_bytes());
-    body.extend_from_slice(b"\r\n");
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
 
-    // title
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"title\"\r\n\r\n");
-    body.extend_from_slice(title.as_bytes());
-    body.extend_from_slice(b"\r\n");
+    // Step 2: PUT file directly to S3
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"Simulated PDF content bytes for testing")
+        .expect("S3 PUT upload failed");
 
-    // file
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
-            filename
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(format!("Content-Type: {}\r\n\r\n", file_content_type).as_bytes());
-    body.extend_from_slice(file_bytes);
-    body.extend_from_slice(b"\r\n");
+    // Step 3: Confirm upload
+    let confirm_resp = ureq::post(&format!("{}/api/v1/process/confirm-upload", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "document_id": document_id
+        }))
+        .expect("confirm-upload request failed");
 
-    body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
 
-    body
+    document_id
 }
 
 #[tokio::test]
@@ -98,55 +99,16 @@ async fn test_process_api_workflow_lifecycle() {
         }));
     assert!(save_err.is_err());
 
-    // 3. Upload a document specifically for the process (using admin to preserve resident rate-limiting)
-    let boundary = "----TestProcessUploadBoundary123";
-    let multipart_body = create_process_multipart_body(
-        boundary,
+    // 3. Upload documents using the presigned URL flow (resident has flat ownership)
+    let doc1_id_str = upload_doc(&url, &resident_auth, process_id_str, "sale_agreement.pdf");
+    let _doc1_id = Uuid::parse_str(&doc1_id_str).unwrap();
+
+    let doc2_id_str = upload_doc(
+        &url,
+        &resident_auth,
         process_id_str,
-        "Sale Agreement Copy",
-        b"Simulated PDF content for sale agreement document",
-        "sale_agreement.pdf",
-        "application/pdf",
-    );
-
-    let upload_resp = ureq::post(&format!("{}/api/v1/process/upload", url))
-        .set("Authorization", &admin_auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&multipart_body)
-        .expect("Process document upload failed");
-
-    assert_eq!(upload_resp.status(), 201);
-    let upload_val: serde_json::Value = upload_resp.into_json().unwrap();
-    let doc1_id_str = upload_val["document"]["document_id"]
-        .as_str()
-        .expect("document_id should be present");
-    let _doc1_id = Uuid::parse_str(doc1_id_str).unwrap();
-
-    // Upload possession letter document (field 102) using admin
-    let multipart_body2 = create_process_multipart_body(
-        boundary,
-        process_id_str,
-        "Possession Letter Copy",
-        b"Possession letter PDF contents",
         "possession_letter.pdf",
-        "application/pdf",
     );
-    let upload_resp2 = ureq::post(&format!("{}/api/v1/process/upload", url))
-        .set("Authorization", &admin_auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&multipart_body2)
-        .expect("Possession upload failed");
-    let doc2_val: serde_json::Value = upload_resp2.into_json().unwrap();
-    let doc2_id_str = doc2_val["document"]["document_id"]
-        .as_str()
-        .unwrap()
-        .to_string();
 
     // 4. Save step 3 successfully by passing the uploaded documents
     let fields_to_submit = vec![
@@ -154,15 +116,15 @@ async fn test_process_api_workflow_lifecycle() {
         (102, doc2_id_str),
         (
             103,
-            quick_upload_doc(&url, &admin_auth, process_id_str, "Parking.pdf"),
+            upload_doc(&url, &resident_auth, process_id_str, "Parking.pdf"),
         ),
         (
             105,
-            quick_upload_doc(&url, &admin_auth, process_id_str, "KYC.pdf"),
+            upload_doc(&url, &resident_auth, process_id_str, "KYC.pdf"),
         ),
         (
             106,
-            quick_upload_doc(&url, &admin_auth, process_id_str, "ADDA.pdf"),
+            upload_doc(&url, &resident_auth, process_id_str, "ADDA.pdf"),
         ),
     ];
 
@@ -202,8 +164,8 @@ async fn test_process_api_workflow_lifecycle() {
     assert_eq!(admin_state_resp.status(), 200);
 
     // Complete the other substeps (4, 5, 6) of parent step 2 so it is marked PENDING_REVIEW
-    // Step 4: Tenant KYC (uploaded as admin)
-    let doc_tenant_kyc = quick_upload_doc(&url, &admin_auth, process_id_str, "TenantKYC.pdf");
+    // Step 4: Tenant KYC
+    let doc_tenant_kyc = upload_doc(&url, &resident_auth, process_id_str, "TenantKYC.pdf");
     ureq::post(&format!("{}/api/v1/process/save-step", url))
         .set("Authorization", &resident_auth)
         .send_json(serde_json::json!({
@@ -219,8 +181,8 @@ async fn test_process_api_workflow_lifecycle() {
         }))
         .unwrap();
 
-    // Step 5: Undertaking (uploaded as admin)
-    let doc_undertaking = quick_upload_doc(&url, &admin_auth, process_id_str, "Undertaking.pdf");
+    // Step 5: Undertaking
+    let doc_undertaking = upload_doc(&url, &resident_auth, process_id_str, "Undertaking.pdf");
     ureq::post(&format!("{}/api/v1/process/save-step", url))
         .set("Authorization", &resident_auth)
         .send_json(serde_json::json!({
@@ -236,9 +198,9 @@ async fn test_process_api_workflow_lifecycle() {
         }))
         .unwrap();
 
-    // Step 6: Payments (uploaded as admin)
-    let doc_noc = quick_upload_doc(&url, &admin_auth, process_id_str, "NOC.pdf");
-    let doc_shifting = quick_upload_doc(&url, &admin_auth, process_id_str, "Shifting.pdf");
+    // Step 6: Payments
+    let doc_noc = upload_doc(&url, &resident_auth, process_id_str, "NOC.pdf");
+    let doc_shifting = upload_doc(&url, &resident_auth, process_id_str, "Shifting.pdf");
     ureq::post(&format!("{}/api/v1/process/save-step", url))
         .set("Authorization", &resident_auth)
         .send_json(serde_json::json!({
@@ -305,26 +267,4 @@ async fn test_process_api_workflow_lifecycle() {
         reviews_list[0]["notes"].as_str().unwrap(),
         "Everything looks perfect!"
     );
-}
-
-fn quick_upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String {
-    let boundary = "----TestProcessUploadBoundary123";
-    let body = create_process_multipart_body(
-        boundary,
-        process_id,
-        filename,
-        b"Simulated document bytes",
-        filename,
-        "application/pdf",
-    );
-    let resp = ureq::post(&format!("{}/api/v1/process/upload", url))
-        .set("Authorization", auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&body)
-        .expect("Quick upload failed");
-    let val: serde_json::Value = resp.into_json().unwrap();
-    val["document"]["document_id"].as_str().unwrap().to_string()
 }

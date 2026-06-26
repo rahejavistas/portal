@@ -136,8 +136,12 @@ async fn main() {
                     post(handlers::documents::get_document),
                 )
                 .route(
-                    "/api/v1/documents/upload",
-                    post(handlers::documents::user_create_document),
+                    "/api/v1/documents/upload-url",
+                    post(handlers::documents::user_upload_url),
+                )
+                .route(
+                    "/api/v1/documents/confirm-upload",
+                    post(handlers::documents::user_confirm_upload),
                 )
                 .route(
                     "/api/v1/process/list",
@@ -150,10 +154,6 @@ async fn main() {
                 .route(
                     "/api/v1/process/save-step",
                     post(handlers::process::save_process_step),
-                )
-                .route(
-                    "/api/v1/process/upload",
-                    post(handlers::process::process_upload_document),
                 )
                 .route(
                     "/api/v1/process/upload-url",

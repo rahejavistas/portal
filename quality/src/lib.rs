@@ -229,8 +229,8 @@ presigned_expiry = "15m"
 [telemetry]
 
 [rate_limit]
-ip_per_min = 30
-user_per_min = 10
+ip_per_min = 300
+user_per_min = 120
 admin_per_min = 300
 "#
     );

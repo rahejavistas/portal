@@ -1100,6 +1100,15 @@ pub async fn process_upload_url(
         load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
     }
 
+    // Sanitize title: trim whitespace and limit length
+    let title = payload.title.trim().to_string();
+    if title.is_empty() || title.len() > 200 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("Title must be between 1 and 200 characters".to_string()),
+        ));
+    }
+
     // Validate file extension
     let ext = payload
         .filename
@@ -1116,24 +1125,24 @@ pub async fn process_upload_url(
         ));
     }
 
-    // Resolve content type
-    let content_type = payload.content_type.unwrap_or_else(|| {
-        match ext.as_str() {
-            "pdf" => "application/pdf",
-            "doc" => "application/msword",
-            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "xls" => "application/vnd.ms-excel",
-            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "txt" => "text/plain",
-            _ => "application/octet-stream",
-        }
-        .to_string()
-    });
+    // SECURITY: Always derive content-type from the validated extension.
+    // Never trust client-provided content_type to prevent MIME-confusion attacks
+    // (e.g. uploading text/html disguised as a .pdf).
+    let content_type = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
+    .to_string();
 
     // Create document record + presigned PUT URL
     let (result, upload_url, _key) = state
         .document_manager
-        .create_upload_intent(&user, &payload.title, &content_type)
+        .create_upload_intent(&user, &title, &content_type)
         .await
         .map_err(|e| {
             if e == "User does not have an active flat ownership" {

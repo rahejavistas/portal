@@ -131,9 +131,9 @@ async fn test_state_invalid_process_id_returns_404() {
 async fn test_upload_creates_document_for_process() {
     let env = setup_api_test_env(3114).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
     assert!(Uuid::parse_str(&doc_id).is_ok());
 }
 
@@ -226,13 +226,13 @@ async fn test_save_step_locked_step_fails() {
 async fn test_save_step_completes_substep() {
     let env = setup_api_test_env(3119).await;
     let url = env.server_url();
-    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
     // Upload docs and save step 3 (all required fields)
     let fields: Vec<serde_json::Value> = [101, 102, 103, 105, 106]
         .iter()
         .map(|fid| {
-            let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+            let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
             serde_json::json!({"template_field_id": fid, "document_id": doc})
         })
         .collect();
@@ -271,7 +271,7 @@ async fn test_review_approve_completes_step() {
         let fields: Vec<serde_json::Value> = field_ids
             .iter()
             .map(|fid| {
-                let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+                let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
                 serde_json::json!({"template_field_id": fid, "document_id": doc})
             })
             .collect();
@@ -347,7 +347,7 @@ async fn test_review_reject_reopens_step() {
         let fields: Vec<serde_json::Value> = field_ids
             .iter()
             .map(|fid| {
-                let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+                let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
                 serde_json::json!({"template_field_id": fid, "document_id": doc})
             })
             .collect();
@@ -392,9 +392,9 @@ async fn test_review_reject_reopens_step() {
 async fn test_download_url_returns_presigned_url() {
     let env = setup_api_test_env(3122).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
 
     let resp = ureq::post(&format!("{}/api/v1/process/download-url", url))
         .set("Authorization", &admin_auth)
@@ -410,9 +410,9 @@ async fn test_download_url_returns_presigned_url() {
 async fn test_download_url_wrong_process_returns_404() {
     let env = setup_api_test_env(3123).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
 
     // Use a random process_id — doc doesn't belong to it
     let err = ureq::post(&format!("{}/api/v1/process/download-url", url))

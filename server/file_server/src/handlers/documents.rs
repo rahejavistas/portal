@@ -69,105 +69,68 @@ pub async fn get_document(
 }
 
 #[derive(serde::Deserialize)]
-pub struct UserCreateDocumentPayload {
+pub struct UserUploadUrlRequest {
     pub title: String,
-    pub description: Option<String>,
+    pub filename: String,
+    /// Client-provided content_type is ignored for security; derived from filename extension.
+    pub content_type: Option<String>,
 }
 
-/// POST /api/v1/documents/upload
-/// Allows residents to upload a document linked to their flat (10MB limit).
-pub async fn user_create_document(
+#[derive(serde::Serialize)]
+pub struct UserUploadUrlResponse {
+    pub document_id: String,
+    pub upload_url: String,
+}
+
+/// POST /api/v1/documents/upload-url
+/// Returns a presigned PUT URL for direct client-to-S3 upload.
+/// Creates an unconfirmed document record in the DB first.
+pub async fn user_upload_url(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
-    mut multipart: axum::extract::Multipart,
-) -> Result<(StatusCode, Json<DocumentWithMetadata>), (StatusCode, Json<String>)> {
-    let mut file_data = None;
-    let mut file_content_type = None;
-    let mut file_name = None;
-    let mut payload: Option<UserCreateDocumentPayload> = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(format!("Multipart error: {}", e)),
-        )
-    })? {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            file_content_type = field.content_type().map(|c| c.to_string());
-            file_name = field.file_name().map(|f| f.to_string());
-            let data = field.bytes().await.map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Failed to read file: {}", e)),
-                )
-            })?;
-            file_data = Some(data);
-        } else if name == "payload" {
-            let text = field.text().await.map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Failed to read payload: {}", e)),
-                )
-            })?;
-            let p: UserCreateDocumentPayload = serde_json::from_str(&text).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Invalid JSON payload: {}", e)),
-                )
-            })?;
-            payload = Some(p);
-        }
-    }
-
-    let payload = payload.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing payload field in multipart request".to_string()),
-    ))?;
-
-    let file_bytes = file_data.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing file field in multipart request".to_string()),
-    ))?;
-
-    if file_bytes.is_empty() {
+    Json(payload): Json<UserUploadUrlRequest>,
+) -> Result<(StatusCode, Json<UserUploadUrlResponse>), (StatusCode, Json<String>)> {
+    // Sanitize title
+    let title = payload.title.trim().to_string();
+    if title.is_empty() || title.len() > 200 {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json("Uploaded file cannot be empty".to_string()),
+            Json("Title must be between 1 and 200 characters".to_string()),
         ));
     }
 
-    // 10MB max size validation for users
-    let max_size = 10 * 1024 * 1024;
-    if file_bytes.len() > max_size {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json("File size exceeds the 10MB limit".to_string()),
-        ));
-    }
-
-    // File type validation (PDF, Word, Excel, Text)
-    if let Some(name) = file_name {
-        let ext = name.split('.').next_back().unwrap_or("").to_lowercase();
-        if !VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    "Invalid file type. Only PDF, Word, Excel, and Text files are allowed."
-                        .to_string(),
-                ),
-            ));
-        }
-    } else {
+    // Validate file extension
+    let ext = payload
+        .filename
+        .split('.')
+        .next_back()
+        .unwrap_or("")
+        .to_lowercase();
+    if !VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json("File name is required to determine file type.".to_string()),
+            Json(format!(
+                "Invalid file type '{}'. Allowed: {:?}",
+                ext, VALID_UPLOAD_EXTENSIONS
+            )),
         ));
     }
 
-    let mut result = state
+    // SECURITY: Always derive content-type from validated extension
+    let content_type = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
+    }
+    .to_string();
+
+    let (result, upload_url, _key) = state
         .document_manager
-        .user_create_document_atomic(&user, &payload.title, payload.description.as_deref())
+        .create_upload_intent(&user, &title, &content_type)
         .await
         .map_err(|e| {
             if e == "User does not have an active flat ownership" {
@@ -177,44 +140,61 @@ pub async fn user_create_document(
             }
         })?;
 
-    // Derive S3 Key: {public/private}/{first_char_of_uuid_lowercase}/{document_uuid}
-    let key =
-        crate::document::derive_s3_key(DocumentAccessLevel::Private, result.document.document_id);
-    let content_type = file_content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok((
+        StatusCode::OK,
+        Json(UserUploadUrlResponse {
+            document_id: result.document.document_id.to_string(),
+            upload_url,
+        }),
+    ))
+}
 
-    // Upload to S3
-    if let Err(err) = state
+#[derive(serde::Deserialize)]
+pub struct UserConfirmUploadRequest {
+    pub document_id: Uuid,
+}
+
+#[derive(serde::Serialize)]
+pub struct UserConfirmUploadResponse {
+    pub status: String,
+}
+
+/// POST /api/v1/documents/confirm-upload
+/// Confirms that the client successfully uploaded the file to S3.
+pub async fn user_confirm_upload(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<UserConfirmUploadRequest>,
+) -> Result<Json<UserConfirmUploadResponse>, (StatusCode, Json<String>)> {
+    // Verify the document exists and belongs to this user
+    let _doc = state
         .document_manager
-        .s3_accessor
-        .upload_file(
-            &key,
-            aws_sdk_s3::primitives::ByteStream::from(file_bytes),
-            &content_type,
-        )
+        .get_document(payload.document_id, &user)
         .await
-    {
-        // Rollback/delete the created document from the DB on failure
-        let _ = state
-            .document_manager
-            .delete_document_permanently(result.document.document_id)
-            .await;
+        .map_err(|e| {
+            if e == "FORBIDDEN" {
+                (StatusCode::FORBIDDEN, Json("Access denied".to_string()))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(e))
+            }
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json("Document not found".to_string()),
+            )
+        })?;
 
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to upload document file to S3: {}", err)),
-        ));
-    }
-
-    // Generate presigned URL for the response
-    if let Ok(url) = state
+    // Confirm the upload (HEAD check + DB update)
+    state
         .document_manager
-        .generate_presigned_url(&result.document)
+        .confirm_upload(payload.document_id)
         .await
-    {
-        result.download_url = Some(url);
-    }
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
-    Ok((StatusCode::CREATED, Json(result)))
+    Ok(Json(UserConfirmUploadResponse {
+        status: "confirmed".to_string(),
+    }))
 }
 
 // ==========================================

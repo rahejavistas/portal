@@ -681,8 +681,17 @@ impl DocumentManager {
             .await
             .map_err(|e| format!("S3 HEAD check failed: {}", e))?;
 
-        if head_result.is_none() {
-            return Err("File not found on S3. Upload may not have completed.".to_string());
+        match head_result {
+            None => {
+                return Err("File not found on S3. Upload may not have completed.".to_string());
+            }
+            Some(size) if size > 10 * 1024 * 1024 => {
+                return Err(format!(
+                    "Uploaded file exceeds the 10MB limit ({} bytes). Upload rejected.",
+                    size
+                ));
+            }
+            Some(_) => {} // Size is within limits
         }
 
         // Mark as confirmed
