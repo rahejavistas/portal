@@ -7,7 +7,7 @@ use uuid::Uuid;
 /// 3. POST /process/confirm-upload → confirm the upload
 fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String {
     // Step 1: Get presigned PUT URL
-    let url_resp = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let url_resp = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", auth)
         .send_json(serde_json::json!({
             "process_id": process_id,
@@ -28,7 +28,7 @@ fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String
         .expect("S3 PUT upload failed");
 
     // Step 3: Confirm upload
-    let confirm_resp = ureq::post(&format!("{}/api/v1/process/confirm-upload", url))
+    let confirm_resp = ureq::post(&format!("{}/api/v1/documents/confirm-upload", url))
         .set("Authorization", auth)
         .send_json(serde_json::json!({
             "process_id": process_id,

@@ -9,53 +9,64 @@ async fn test_multipart_document_upload() {
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = format!("Bearer {}", admin_jwt);
 
-    // 1. Construct multipart payload
-    let boundary = "----WebKitFormBoundaryUploadTest123";
     let payload = serde_json::json!({
         "title": "S3 Upload Integration Test",
         "category": "GENERIC",
-        "document_type": "GENERIC_RULEBOOK"
-    })
-    .to_string();
+        "document_type": "GENERIC_RULEBOOK",
+        "filename": "hello.txt"
+    });
 
-    let mut body = Vec::new();
-
-    // Payload part
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"payload\"\r\n\r\n");
-    body.extend_from_slice(payload.as_bytes());
-    body.extend_from_slice(b"\r\n");
-
-    // File part
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(
-        b"Content-Disposition: form-data; name=\"file\"; filename=\"hello.txt\"\r\n",
-    );
-    body.extend_from_slice(b"Content-Type: text/plain\r\n\r\n");
-    body.extend_from_slice(b"Hello world, this is a test document uploaded via multipart!");
-    body.extend_from_slice(b"\r\n");
-
-    // End boundary
-    body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
-
-    // 2. Send request
-    let resp = ureq::post(&format!("{}/api/v1/admin/documents/create", url))
+    // Step 1: Get presigned URL
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/documents/upload-url", url))
         .set("Authorization", &admin_auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&body)
-        .expect("Failed to execute multipart upload");
+        .send_json(payload)
+        .expect("Failed to create upload url");
 
-    assert_eq!(resp.status(), 201);
+    assert_eq!(url_resp.status(), 201);
+    let val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = val["document_id"].as_str().unwrap().to_string();
+    let presigned_url = val["upload_url"].as_str().unwrap().to_string();
 
-    let resp_val: serde_json::Value = resp.into_json().unwrap();
+    // Step 2: PUT file directly to S3
+    let mock_bytes = b"Hello world, this is a test document uploaded via presigned URL!";
+    let put_resp = ureq::put(&presigned_url)
+        .set("Content-Type", "text/plain")
+        .send_bytes(mock_bytes)
+        .expect("Failed to PUT file to S3");
+
+    let status = put_resp.status();
+    let _body = put_resp.into_string().unwrap();
+    assert_eq!(status, 200);
+
+    let confirm_resp = ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "document_id": document_id
+        }));
+
+    if let Err(ureq::Error::Status(code, response)) = confirm_resp {
+        panic!(
+            "Failed to confirm upload: {} - {}",
+            code,
+            response.into_string().unwrap()
+        );
+    }
+
+    // Verify document details via GET
+    let get_resp = ureq::post(&format!(
+        "{}/api/v1/admin/documents/{}/get",
+        url, document_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({}))
+    .expect("Failed to get document");
+
+    let get_val: serde_json::Value = get_resp.into_json().unwrap();
     assert_eq!(
-        resp_val["document"]["title"].as_str().unwrap(),
+        get_val["document"]["title"].as_str().unwrap(),
         "S3 Upload Integration Test"
     );
-    assert!(resp_val["download_url"]
+    assert!(get_val["download_url"]
         .as_str()
         .unwrap()
         .starts_with("http"));

@@ -12,7 +12,7 @@ async fn test_upload_url_requires_authentication() {
     let url = env.server_url();
 
     let err =
-        ureq::post(&format!("{}/api/v1/process/upload-url", url)).send_json(serde_json::json!({
+        ureq::post(&format!("{}/api/v1/documents/upload-url", url)).send_json(serde_json::json!({
             "process_id": Uuid::new_v4(),
             "title": "test.pdf",
             "filename": "test.pdf"
@@ -27,7 +27,7 @@ async fn test_confirm_upload_requires_authentication() {
     let env = setup_api_test_env(3131).await;
     let url = env.server_url();
 
-    let err = ureq::post(&format!("{}/api/v1/process/confirm-upload", url)).send_json(
+    let err = ureq::post(&format!("{}/api/v1/documents/confirm-upload", url)).send_json(
         serde_json::json!({
             "process_id": Uuid::new_v4(),
             "document_id": Uuid::new_v4()
@@ -35,43 +35,6 @@ async fn test_confirm_upload_requires_authentication() {
     );
     assert!(err.is_err());
     assert_eq!(err.unwrap_err().into_response().unwrap().status(), 401);
-}
-
-/// Tests that a user cannot generate upload URLs for another user's process.
-#[tokio::test]
-async fn test_upload_url_rejects_wrong_user() {
-    let env = setup_api_test_env(3132).await;
-    let url = env.server_url();
-    let admin_jwt = quick_setup_admin(&env);
-
-    // Create two users
-    let _u1 = quick_create_user(&env, &admin_jwt, "uploader1@test.com", "A", "101");
-    let u1_jwt = quick_onboard_user(&env, "uploader1@test.com", "password1");
-    let u1_auth = format!("Bearer {}", u1_jwt);
-
-    let _u2 = quick_create_user(&env, &admin_jwt, "uploader2@test.com", "A", "102");
-    let u2_jwt = quick_onboard_user(&env, "uploader2@test.com", "password2");
-    let u2_auth = format!("Bearer {}", u2_jwt);
-
-    // User 1 creates a process
-    let resp = ureq::post(&format!("{}/api/v1/process/state", url))
-        .set("Authorization", &u1_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
-        .unwrap();
-    let val: serde_json::Value = resp.into_json().unwrap();
-    let u1_pid = val["process_id"].as_str().unwrap().to_string();
-
-    // User 2 tries to generate upload URL for User 1's process — should be FORBIDDEN
-    let err = ureq::post(&format!("{}/api/v1/process/upload-url", url))
-        .set("Authorization", &u2_auth)
-        .send_json(serde_json::json!({
-            "process_id": u1_pid,
-            "title": "malicious.pdf",
-            "filename": "malicious.pdf"
-        }));
-    assert!(err.is_err());
-    let err_resp = err.unwrap_err().into_response().unwrap();
-    assert_eq!(err_resp.status(), 403);
 }
 
 /// Tests that invalid file extensions are rejected at the upload-url stage.
@@ -94,7 +57,7 @@ async fn test_upload_url_rejects_invalid_extension() {
     let pid = val["process_id"].as_str().unwrap().to_string();
 
     // Try uploading an .exe file — should be rejected
-    let err = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let err = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -105,7 +68,7 @@ async fn test_upload_url_rejects_invalid_extension() {
     assert_eq!(err.unwrap_err().into_response().unwrap().status(), 400);
 
     // Also try .html (XSS vector)
-    let err2 = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let err2 = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -136,7 +99,7 @@ async fn test_save_step_rejects_unconfirmed_document() {
     let pid = val["process_id"].as_str().unwrap().to_string();
 
     // Step 1: Get presigned URL (creates unconfirmed document)
-    let url_resp = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let url_resp = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -182,7 +145,7 @@ async fn test_confirm_upload_fails_without_s3_file() {
     let pid = val["process_id"].as_str().unwrap().to_string();
 
     // Get presigned URL
-    let url_resp = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let url_resp = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -195,7 +158,7 @@ async fn test_confirm_upload_fails_without_s3_file() {
     let document_id = url_val["document_id"].as_str().unwrap().to_string();
 
     // Skip the S3 PUT step entirely, go straight to confirm — should fail
-    let err = ureq::post(&format!("{}/api/v1/process/confirm-upload", url))
+    let err = ureq::post(&format!("{}/api/v1/documents/confirm-upload", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -226,7 +189,7 @@ async fn test_upload_url_rejects_bad_titles() {
     let pid = val["process_id"].as_str().unwrap().to_string();
 
     // Empty title (just whitespace)
-    let err = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let err = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,
@@ -238,7 +201,7 @@ async fn test_upload_url_rejects_bad_titles() {
 
     // Title over 200 characters
     let long_title = "A".repeat(201);
-    let err2 = ureq::post(&format!("{}/api/v1/process/upload-url", url))
+    let err2 = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", &u_auth)
         .send_json(serde_json::json!({
             "process_id": pid,

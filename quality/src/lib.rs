@@ -241,8 +241,8 @@ admin_per_min = 300
         .env("APP_ENV", db_name.clone())
         .env("AWS_ACCESS_KEY_ID", "admin")
         .env("AWS_SECRET_ACCESS_KEY", "password")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("Failed to spawn file_server");
 
@@ -459,11 +459,11 @@ pub fn quick_create_document(
     flat: Option<(&str, &str)>,
 ) -> String {
     let url = env.server_url();
-    let boundary = "----TestBoundaryQuickHelperBoundary";
     let mock_bytes = b"Quick framework helper seeded file document bytes.";
 
     let mut payload = serde_json::json!({
         "title": title,
+        "filename": "seeded.txt",
         "description": "Programmatic helper seeded document",
         "category": category,
         "document_type": doc_type,
@@ -482,28 +482,42 @@ pub fn quick_create_document(
         });
     }
 
-    let body = create_multipart_body(
-        boundary,
-        &payload.to_string(),
-        mock_bytes,
-        "seeded.txt",
-        "text/plain",
-    );
-
-    let resp = ureq::post(&format!("{}/api/v1/admin/documents/create", url))
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/documents/upload-url", url))
         .set("Authorization", &format!("Bearer {}", admin_jwt))
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&body)
-        .expect("Failed to upload document");
+        .send_json(payload)
+        .expect("Failed to create upload url");
 
-    let val: serde_json::Value = resp.into_json().unwrap();
-    val["document"]["document_id"]
+    let val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = val["document_id"]
         .as_str()
         .expect("document_id missing")
-        .to_string()
+        .to_string();
+    let presigned_url = val["upload_url"]
+        .as_str()
+        .expect("upload_url missing")
+        .to_string();
+
+    let put_resp = ureq::put(&presigned_url)
+        .set("Content-Type", "text/plain")
+        .send_bytes(mock_bytes)
+        .expect("Failed to put bytes to presigned URL");
+    let _ = put_resp.into_string();
+
+    let confirm_resp = ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &format!("Bearer {}", admin_jwt))
+        .send_json(serde_json::json!({
+            "document_id": document_id
+        }));
+
+    if let Err(ureq::Error::Status(code, response)) = confirm_resp {
+        panic!(
+            "Failed to confirm upload: {} - {}",
+            code,
+            response.into_string().unwrap()
+        );
+    }
+
+    document_id
 }
 
 /// Helper function to construct a raw multipart/form-data body for uploading files via `ureq`

@@ -171,10 +171,10 @@ impl DocumentManager {
     // ADMIN API & CRUD OPERATIONS
     // ==========================================
 
-    /// Atomically creates a document with optional flat assignment and metadata in a single transaction.
-    /// If any step fails, everything is rolled back — no partial writes.
+    /// Atomically creates an unconfirmed document with optional flat assignment and metadata,
+    /// and returns a presigned PUT URL for direct S3 upload.
     #[allow(clippy::too_many_arguments)]
-    pub async fn admin_create_document_atomic(
+    pub async fn admin_create_upload_intent(
         &self,
         title: &str,
         description: Option<&str>,
@@ -183,7 +183,8 @@ impl DocumentManager {
         access_level: DocumentAccessLevel,
         flat: Option<&FlatIdentifier>,
         metadata: Option<MetadataInput<'_>>,
-    ) -> Result<DocumentWithMetadata, String> {
+        content_type: &str,
+    ) -> Result<(DocumentWithMetadata, String, String), String> {
         let mut tx = base::postgres::begin_transaction(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -196,7 +197,7 @@ impl DocumentManager {
             document_type,
             access_level,
             false,
-            true, // is_upload_confirmed: admin uploads are server-proxied
+            false, // is_upload_confirmed: admin uploads use presigned URLs now
         )
         .await?;
 
@@ -222,11 +223,24 @@ impl DocumentManager {
         };
 
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(DocumentWithMetadata {
-            document: doc,
-            metadata: meta,
-            download_url: None,
-        })
+
+        // Generate presigned PUT URL for the exact S3 key
+        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let upload_url = self
+            .s3_accessor
+            .create_presigned_put_url(&key, content_type)
+            .await
+            .map_err(|e| format!("Failed to generate presigned PUT URL: {}", e))?;
+
+        Ok((
+            DocumentWithMetadata {
+                document: doc,
+                metadata: meta,
+                download_url: None,
+            },
+            upload_url,
+            key,
+        ))
     }
 
     /// Atomically updates a document with flat re-assignment and metadata upsert in a single transaction.
@@ -659,22 +673,22 @@ impl DocumentManager {
     /// `is_upload_confirmed = true` in the DB.
     pub async fn confirm_upload(&self, document_id: Uuid) -> Result<(), String> {
         // Verify the document exists and is unconfirmed
-        let row: Option<(bool,)> = sqlx::query_as(
-            "SELECT is_upload_confirmed FROM documents WHERE document_id = $1 AND NOT is_deleted",
+        let row: Option<(bool, DocumentAccessLevel)> = sqlx::query_as(
+            "SELECT is_upload_confirmed, access_level FROM documents WHERE document_id = $1 AND NOT is_deleted",
         )
         .bind(document_id)
         .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
 
-        match row {
+        let access_level = match row {
             None => return Err("Document not found".to_string()),
-            Some((true,)) => return Ok(()), // Already confirmed, idempotent
-            Some((false,)) => {}            // Proceed with confirmation
-        }
+            Some((true, _)) => return Ok(()), // Already confirmed, idempotent
+            Some((false, level)) => level,    // Proceed with confirmation
+        };
 
         // HEAD the S3 object to verify the file landed
-        let key = super::derive_s3_key(DocumentAccessLevel::Private, document_id);
+        let key = super::derive_s3_key(access_level, document_id);
         let head_result = self
             .s3_accessor
             .head_object(&key)

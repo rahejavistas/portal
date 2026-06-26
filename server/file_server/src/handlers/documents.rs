@@ -306,98 +306,73 @@ pub async fn admin_get_document(
     }
 }
 
-/// POST /api/v1/admin/documents/create
-/// Creates a new document with optional flat mapping and metadata — atomically.
-pub async fn admin_create_document(
+#[derive(serde::Deserialize)]
+pub struct AdminUploadUrlRequest {
+    pub title: String,
+    pub description: Option<String>,
+    pub category: DocumentCategory,
+    pub document_type: DocumentType,
+    /// Optional access level override. Falls back to category default if not provided.
+    pub access_level: Option<DocumentAccessLevel>,
+    pub metadata: Option<CreateMetadataPayload>,
+    /// Flat mapping for RESIDENT_SPECIFIC documents (wing + flat_number).
+    pub flat: Option<FlatPayload>,
+    pub filename: String,
+    pub content_type: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct AdminUploadUrlResponse {
+    pub document_id: String,
+    pub upload_url: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct AdminConfirmUploadRequest {
+    pub document_id: Uuid,
+}
+
+#[derive(serde::Serialize)]
+pub struct AdminConfirmUploadResponse {
+    pub status: String,
+}
+
+/// POST /api/v1/admin/documents/upload-url
+/// Creates an unconfirmed document with optional flat mapping and metadata — atomically,
+/// and returns a presigned PUT URL for direct client-to-S3 upload.
+pub async fn admin_upload_url(
     _session_user: SessionUser,
     State(state): State<AppState>,
-    mut multipart: axum::extract::Multipart,
-) -> Result<(StatusCode, Json<DocumentWithMetadata>), (StatusCode, Json<String>)> {
-    let mut file_data = None;
-    let mut file_content_type = None;
-    let mut file_name = None;
-    let mut payload: Option<AdminCreateDocumentPayload> = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(format!("Multipart error: {}", e)),
-        )
-    })? {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "file" {
-            let content_type = field.content_type().map(|c| c.to_string());
-            file_name = field.file_name().map(|f| f.to_string());
-            let data = field.bytes().await.map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Failed to read file: {}", e)),
-                )
-            })?;
-            file_data = Some(data);
-            file_content_type = content_type;
-        } else if name == "payload" {
-            let text = field.text().await.map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Failed to read payload: {}", e)),
-                )
-            })?;
-            let p: AdminCreateDocumentPayload = serde_json::from_str(&text).map_err(|e| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(format!("Invalid JSON payload: {}", e)),
-                )
-            })?;
-            payload = Some(p);
-        }
-    }
-
-    let payload = payload.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing payload field in multipart request".to_string()),
-    ))?;
-
-    let file_bytes = file_data.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing file field in multipart request".to_string()),
-    ))?;
-
-    if file_bytes.is_empty() {
+    Json(payload): Json<AdminUploadUrlRequest>,
+) -> Result<(StatusCode, Json<AdminUploadUrlResponse>), (StatusCode, Json<String>)> {
+    // Validate file extension
+    let ext = payload
+        .filename
+        .split('.')
+        .next_back()
+        .unwrap_or("")
+        .to_lowercase();
+    if !VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json("Uploaded file cannot be empty".to_string()),
+            Json(format!(
+                "Invalid file type '{}'. Allowed: {:?}",
+                ext, VALID_UPLOAD_EXTENSIONS
+            )),
         ));
     }
 
-    // 1GB max size validation
-    let max_size = 1024 * 1024 * 1024;
-    if file_bytes.len() > max_size {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json("File size exceeds the 1GB limit".to_string()),
-        ));
+    // SECURITY: Derive content-type from the validated file extension
+    let content_type = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "txt" => "text/plain",
+        _ => "application/octet-stream",
     }
-
-    // File type validation (PDF, Word, Excel, Text)
-    if let Some(name) = file_name {
-        let ext = name.split('.').next_back().unwrap_or("").to_lowercase();
-        if !VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    "Invalid file type. Only PDF, Word, Excel, and Text files are allowed."
-                        .to_string(),
-                ),
-            ));
-        }
-    } else {
-        // Reject if no file name is provided to be safe
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json("File name is required to determine file type.".to_string()),
-        ));
-    }
+    .to_string();
 
     // Validate category ↔ type combination before hitting DB
     validate_category_type(payload.category, payload.document_type)
@@ -436,9 +411,9 @@ pub async fn admin_create_document(
         valid_until: m.valid_until,
     });
 
-    let mut result = state
+    let (result, upload_url, _key) = state
         .document_manager
-        .admin_create_document_atomic(
+        .admin_create_upload_intent(
             &payload.title,
             payload.description.as_deref(),
             payload.category,
@@ -446,47 +421,38 @@ pub async fn admin_create_document(
             access_level,
             flat_id.as_ref(),
             metadata,
+            &content_type,
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
 
-    // Derive S3 Key: {public/private}/{first_char_of_uuid_lowercase}/{document_uuid}
-    let key = crate::document::derive_s3_key(access_level, result.document.document_id);
-    let content_type = file_content_type.unwrap_or_else(|| "application/octet-stream".to_string());
+    Ok((
+        StatusCode::CREATED,
+        Json(AdminUploadUrlResponse {
+            document_id: result.document.document_id.to_string(),
+            upload_url,
+        }),
+    ))
+}
 
-    // Upload to S3
-    if let Err(err) = state
+/// POST /api/v1/admin/documents/confirm-upload
+/// Confirms that the client successfully uploaded the file to S3.
+pub async fn admin_confirm_upload(
+    _session_user: SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<AdminConfirmUploadRequest>,
+) -> Result<Json<AdminConfirmUploadResponse>, (StatusCode, Json<String>)> {
+    // Admin confirm upload just delegates to the document manager to do HEAD check.
+    // Ensure the document exists before confirming.
+    state
         .document_manager
-        .s3_accessor
-        .upload_file(
-            &key,
-            aws_sdk_s3::primitives::ByteStream::from(file_bytes),
-            &content_type,
-        )
+        .confirm_upload(payload.document_id)
         .await
-    {
-        // Rollback/delete the created document from the DB on failure
-        let _ = state
-            .document_manager
-            .delete_document_permanently(result.document.document_id)
-            .await;
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to upload document file to S3: {}", err)),
-        ));
-    }
-
-    // Generate presigned URL for the response
-    if let Ok(url) = state
-        .document_manager
-        .generate_presigned_url(&result.document)
-        .await
-    {
-        result.download_url = Some(url);
-    }
-
-    Ok((StatusCode::CREATED, Json(result)))
+    Ok(Json(AdminConfirmUploadResponse {
+        status: "confirmed".to_string(),
+    }))
 }
 
 /// POST /api/v1/admin/documents/:id/update

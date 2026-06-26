@@ -1558,7 +1558,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL
-                const urlRes = await fetch(`${API_BASE}/api/v1/process/upload-url`, {
+                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1599,7 +1599,7 @@ pub const PROCESS_HTML: &str = r#"
 
                 // Step 3: Confirm upload
                 progressEl.textContent = 'Confirming...';
-                const confirmRes = await fetch(`${API_BASE}/api/v1/process/confirm-upload`, {
+                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1909,7 +1909,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL from server
-                const urlRes = await fetch(`${API_BASE}/api/v1/process/upload-url`, {
+                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
@@ -1952,7 +1952,7 @@ pub const PROCESS_HTML: &str = r#"
                 // Step 3: Confirm upload with server
                 if(progressEl) progressEl.textContent = 'Confirming upload...';
 
-                const confirmRes = await fetch(`${API_BASE}/api/v1/process/confirm-upload`, {
+                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,

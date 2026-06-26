@@ -122,6 +122,9 @@ async fn test_document_manager_visibility_resolution() {
         .await
         .unwrap();
 
+    std::env::set_var("AWS_ACCESS_KEY_ID", "admin");
+    std::env::set_var("AWS_SECRET_ACCESS_KEY", "password");
+
     let s3_accessor = base::s3::S3Accessor::new(&base::config::S3Config {
         region: "us-east-1".to_string(),
         bucket_name: "vistas-files".to_string(),
@@ -136,7 +139,7 @@ async fn test_document_manager_visibility_resolution() {
     let flat_id = FlatIdentifier::new("A", "0101").unwrap();
 
     let doc1 = dm
-        .admin_create_document_atomic(
+        .admin_create_upload_intent(
             "Direct Crate Manual",
             Some("Test document"),
             file_server::document::DocumentCategory::Generic,
@@ -144,12 +147,14 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::DocumentAccessLevel::Public,
             None,
             None,
+            "application/pdf",
         )
         .await
-        .expect("Failed to create Doc 1");
+        .expect("Failed to create Doc 1")
+        .0;
 
     let doc2 = dm
-        .admin_create_document_atomic(
+        .admin_create_upload_intent(
             "Direct A-0101 deed",
             Some("Registry mapping"),
             file_server::document::DocumentCategory::ResidentSpecific,
@@ -157,9 +162,11 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::DocumentAccessLevel::Private,
             Some(&flat_id),
             None,
+            "application/pdf",
         )
         .await
-        .expect("Failed to create Doc 2");
+        .expect("Failed to create Doc 2")
+        .0;
 
     let allowed_ids = dm.get_allowed_document_ids(&demoted_user).await.unwrap();
     assert!(allowed_ids.contains(&doc1.document.document_id));
@@ -174,7 +181,7 @@ async fn test_document_manager_visibility_resolution() {
     .unwrap();
 
     let doc3 = dm
-        .admin_create_document_atomic(
+        .admin_create_upload_intent(
             "Direct B-0202 deed",
             Some("Unrelated flat registry"),
             file_server::document::DocumentCategory::ResidentSpecific,
@@ -182,9 +189,11 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::DocumentAccessLevel::Private,
             Some(&flat_b_id),
             None,
+            "application/pdf",
         )
         .await
-        .unwrap();
+        .unwrap()
+        .0;
 
     let allowed_ids_after = dm.get_allowed_document_ids(&demoted_user).await.unwrap();
     assert!(!allowed_ids_after.contains(&doc3.document.document_id));

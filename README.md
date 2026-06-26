@@ -173,29 +173,6 @@ Saves field values for a process step. Documents must be confirmed before use.
   }
   ```
 
-### POST `/api/v1/process/upload-url`
-Creates an unconfirmed document record scoped to a process and returns a presigned PUT URL.
-* **Used by:** Process page → Document upload (inline & picker modal)
-* **Request Body:**
-  ```json
-  {
-    "process_id": "uuid-...",
-    "title": "sale_agreement.pdf",
-    "filename": "sale_agreement.pdf"
-  }
-  ```
-
-### POST `/api/v1/process/confirm-upload`
-Verifies S3 upload and confirms the document for use in process steps.
-* **Used by:** Process page → After S3 PUT completes
-* **Request Body:**
-  ```json
-  {
-    "process_id": "uuid-...",
-    "document_id": "uuid-..."
-  }
-  ```
-
 ### POST `/api/v1/process/download-url`
 Returns a presigned download URL for a document within a process.
 * **Used by:** Process page → Document download links
@@ -222,9 +199,11 @@ Updates a resident's access role (Resident, Committee, Admin).
 ### POST `/api/v1/admin/documents/list`
 Lists all documents (including soft-deleted ones) with no filters.
 
-### POST `/api/v1/admin/documents/create`
-Creates a new document via multipart upload (up to 1GB). Admin-only, server-proxied.
-* **Note:** This is the only endpoint that still uses server-side streaming, since admin uploads may be up to 1GB.
+### POST `/api/v1/admin/documents/upload-url`
+Creates an unconfirmed document and returns a presigned URL.
+
+### POST `/api/v1/admin/documents/confirm-upload`
+Confirms the admin upload landing in S3.
 
 ### POST `/api/v1/admin/documents/:id/get`
 Fetches details of any specific document (including deleted ones).
