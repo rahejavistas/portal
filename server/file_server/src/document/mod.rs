@@ -105,6 +105,7 @@ pub struct Document {
     pub uploaded_date: DateTime<Utc>,
     pub is_deleted: bool,
     pub is_user_uploaded: bool,
+    pub is_upload_confirmed: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

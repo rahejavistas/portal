@@ -17,6 +17,40 @@ docker compose down -v
 
 ---
 
+## Architecture
+
+### Document Upload Flow (Presigned URLs)
+
+All user-facing document uploads use a secure **direct-to-S3 presigned URL** mechanism. The server never streams file bytes — the client uploads directly to S3.
+
+```
+┌─────────┐      1. POST /upload-url        ┌──────────┐
+│  Client  │ ──────────────────────────────► │  Server  │
+│ (Browser)│ ◄────────────────────────────── │  (API)   │
+│          │    { document_id, upload_url }   │          │
+│          │                                 │          │
+│          │      2. PUT (binary)            │          │      ┌──────┐
+│          │ ───────────────────────────────────────────────►  │  S3  │
+│          │ ◄─────────────────────────────────────────────── │      │
+│          │        200 OK                   │          │      └──────┘
+│          │                                 │          │
+│          │      3. POST /confirm-upload    │          │
+│          │ ──────────────────────────────► │          │
+│          │ ◄────────────────────────────── │          │
+│          │     { status: "confirmed" }     │          │
+└─────────┘                                 └──────────┘
+```
+
+**Security constraints enforced:**
+- JWT authentication + user authorization on every API call
+- File extension whitelist (pdf, doc, docx, xls, xlsx, txt)
+- Content-type derived from extension (client-provided value ignored)
+- Presigned URL locked to exact S3 key and content-type
+- `is_upload_confirmed` gate prevents unconfirmed files from being used in workflows
+- Server-side file size validation via S3 HEAD check during confirmation (10MB max)
+
+---
+
 ## Authentication
 
 Authentication is stateless and uses JWT (JSON Web Tokens).
@@ -50,62 +84,15 @@ All application endpoints are accessed via **POST** (except `/health` which uses
 
 ### POST `/api/v1/login`
 Authenticates a user and returns a JWT.
-* **Request Body:**
-  ```json
-  {
-    "email": "resident@vistas.com",
-    "password": "password"
-  }
-  ```
-* **Response (200 OK):**
-  ```json
-  {
-    "status": "success",
-    "user": {
-      "user_id": 1,
-      "email": "resident@vistas.com",
-      "name": "John Doe",
-      "wing": "A",
-      "flat_number": "101",
-      "roles": ["Resident"]
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }
-  ```
 
 ### POST `/api/v1/forgot-password`
 Generates a secure password setup / reset link for the given email.
-* **Request Body:**
-  ```json
-  {
-    "email": "resident@vistas.com"
-  }
-  ```
-* **Response (200 OK):**
-  ```json
-  {
-    "status": "success",
-    "reset_link": "http://localhost:4000/reset-password?token=a1b2c3d4...",
-    "message": "Password setup/reset link generated successfully"
-  }
-  ```
 
 ### POST `/api/v1/reset-password`
 Completes password setup/reset using a valid database token.
-* **Request Body:**
-  ```json
-  {
-    "token": "a1b2c3d4...",
-    "password": "newpassword123"
-  }
-  ```
-* **Response (200 OK):**
-  ```json
-  {
-    "status": "success",
-    "message": "Password updated successfully"
-  }
-  ```
+
+### POST `/api/v1/profile`
+Returns the authenticated user's profile (email, wing, flat, roles).
 
 </details>
 
@@ -114,106 +101,95 @@ Completes password setup/reset using a valid database token.
 
 ### POST `/api/v1/documents`
 Lists visible active documents for the authenticated user.
-* **Request Headers:** `Authorization: Bearer <token>`
-* **Response (200 OK):**
-  ```json
-  [
-    {
-      "document": {
-        "document_id": "8f8e8d8c...",
-        "title": "Meeting Minutes May 2026",
-        "description": "General body minutes",
-        "category": "MEETING_MINUTES",
-        "document_type": "GENERAL_BODY_MEETING",
-        "access_level": "PUBLIC",
-        "is_deleted": false
-      },
-      "metadata": {
-        "subcategory": "General",
-        "tags": ["meeting", "minutes"],
-        "document_date": "2026-05-19"
-      }
-    }
-  ]
-  ```
+* **Used by:** Dashboard → Documents tab
 
 ### POST `/api/v1/documents/:id`
-Retrieves a specific document.
-* **Request Headers:** `Authorization: Bearer <token>`
+Retrieves a specific document with a presigned download URL.
+* **Used by:** Dashboard → Download button
+
+### POST `/api/v1/documents/upload-url`
+Creates an unconfirmed document record and returns a presigned PUT URL for direct S3 upload.
+* **Used by:** Dashboard → Upload Document modal
+* **Request Body:**
+  ```json
+  {
+    "title": "Sale Agreement",
+    "filename": "sale_agreement.pdf"
+  }
+  ```
 * **Response (200 OK):**
   ```json
   {
-    "document": {
-      "document_id": "8f8e8d8c...",
-      "title": "Meeting Minutes May 2026"
-    },
-    "metadata": {}
+    "document_id": "a1b2c3d4-...",
+    "upload_url": "https://s3.amazonaws.com/bucket/key?X-Amz-Signature=..."
   }
+  ```
+
+### POST `/api/v1/documents/confirm-upload`
+Verifies the file exists on S3 (HEAD check) and marks the document as confirmed.
+* **Used by:** Dashboard → Upload Document modal (after S3 PUT succeeds)
+* **Request Body:**
+  ```json
+  { "document_id": "a1b2c3d4-..." }
+  ```
+* **Response (200 OK):**
+  ```json
+  { "status": "confirmed" }
   ```
 
 </details>
 
 <details>
-<summary><b>Admin Users APIs</b></summary>
+<summary><b>Process Workflow APIs</b></summary>
+
+### POST `/api/v1/process/list`
+Lists all processes belonging to the authenticated user.
+* **Used by:** Process page → Process list view
+
+### POST `/api/v1/process/state`
+Retrieves or initializes a process. Pass `template_id` to create new; `process_id` to fetch existing.
+* **Used by:** Process page → Process detail view
+* **Request Body:**
+  ```json
+  { "template_id": "tenant_onboarding_v1" }
+  ```
+  or
+  ```json
+  { "process_id": "uuid-..." }
+  ```
+
+### POST `/api/v1/process/save-step`
+Saves field values for a process step. Documents must be confirmed before use.
+* **Used by:** Process page → Save Step Inputs button
+* **Request Body:**
+  ```json
+  {
+    "process_id": "uuid-...",
+    "template_step_id": 3,
+    "fields": [
+      { "template_field_id": 101, "document_id": "uuid-..." },
+      { "template_field_id": 102, "text_value": "some text" }
+    ]
+  }
+  ```
+
+### POST `/api/v1/process/download-url`
+Returns a presigned download URL for a document within a process.
+* **Used by:** Process page → Document download links
+
+</details>
+
+<details>
+<summary><b>Admin User Management APIs</b></summary>
 
 ### POST `/api/v1/admin/users/list`
 Lists all residents in the system.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Response (200 OK):**
-  ```json
-  [
-    {
-      "user_id": 1,
-      "email": "resident@vistas.com",
-      "name": "John Doe",
-      "wing": "A",
-      "flat_number": "101",
-      "roles": ["Resident"]
-    }
-  ]
-  ```
 
 ### POST `/api/v1/admin/users/create`
 Adds a new resident to the system.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Request Body:**
-  ```json
-  {
-    "email": "newuser@vistas.com",
-    "name": "Jane Smith",
-    "wing": "B",
-    "flat_number": "202"
-  }
-  ```
-* **Response (201 Created):**
-  ```json
-  {
-    "user_id": 2,
-    "email": "newuser@vistas.com",
-    "name": "Jane Smith",
-    "wing": "B",
-    "flat_number": "202",
-    "roles": ["Resident"]
-  }
-  ```
 
 ### POST `/api/v1/admin/users/roles`
 Updates a resident's access role (Resident, Committee, Admin).
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Request Body:**
-  ```json
-  {
-    "user_id": 2,
-    "target_role": "Committee"
-  }
-  ```
-* **Response (200 OK):**
-  ```json
-  {
-    "status": "success",
-    "message": "User role updated successfully."
-  }
-  ```
 
 </details>
 
@@ -222,45 +198,54 @@ Updates a resident's access role (Resident, Committee, Admin).
 
 ### POST `/api/v1/admin/documents/list`
 Lists all documents (including soft-deleted ones) with no filters.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Response (200 OK):** List of document objects.
 
-### POST `/api/v1/admin/documents/create`
-Creates a new document, registering metadata and S3 references.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Request Body:**
-  ```json
-  {
-    "title": "Vendor Contract",
-    "description": "Paint contract",
-    "category": "OPERATIONAL",
-    "document_type": "OPERATIONAL_VENDOR_CONTRACT",
-    "access_level": "PUBLIC",
-    "flat": null,
-    "metadata": {
-      "subcategory": "Paint",
-      "tags": ["contract", "vendor"],
-      "document_date": "2026-05-19"
-    }
-  }
-  ```
-* **Response (201 Created):** Document object with created metadata.
+### POST `/api/v1/admin/documents/upload-url`
+Creates an unconfirmed document and returns a presigned URL.
+
+### POST `/api/v1/admin/documents/confirm-upload`
+Confirms the admin upload landing in S3.
 
 ### POST `/api/v1/admin/documents/:id/get`
 Fetches details of any specific document (including deleted ones).
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Response (200 OK):** Document details.
 
 ### POST `/api/v1/admin/documents/:id/update`
 Updates an existing document's properties.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Request Body:** Same schema as document creation.
-* **Response (200 OK):** Updated document details.
 
 ### POST `/api/v1/admin/documents/:id/delete`
 Toggles the soft-deleted state of a document.
-* **Request Headers:** `Authorization: Bearer <token>` (Admin required)
-* **Response (204 No Content)**
+
+</details>
+
+<details>
+<summary><b>Admin Process Review APIs</b></summary>
+
+### POST `/api/v1/admin/process/review`
+Approves or rejects a process step that is pending admin review.
+* **Request Body:**
+  ```json
+  {
+    "process_id": "uuid-...",
+    "template_step_id": 2,
+    "is_approved": true,
+    "notes": "Looks good"
+  }
+  ```
+
+### POST `/api/v1/admin/process/revoke`
+Reopens an already-completed step for resident re-submission.
+
+### POST `/api/v1/admin/process/upload-url`
+Creates an upload intent for a process document uploaded by an admin. The backend securely derives the flat mapping and forces PROCESS_SPECIFIC and PRIVATE semantics.
+* **Used by:** Process page (Admin View) → Upload Field Document or Select New Document
+* **Request Body:**
+  ```json
+  {
+    "process_id": "uuid-...",
+    "title": "Admin SLA",
+    "filename": "admin_sla.pdf",
+    "content_type": "application/pdf"
+  }
+  ```
 
 </details>
 

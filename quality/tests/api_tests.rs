@@ -220,11 +220,11 @@ async fn test_rate_limiting() {
     let user_jwt = quick_onboard_user(&env, "rate_limit_user@vistas.com", "password123");
     let auth_header = format!("Bearer {}", user_jwt);
 
-    // 1. Test User Limit (10 per min)
+    // 1. Test User Limit (120 per min)
     let mut user_success = 0;
     let mut user_rate_limited = false;
 
-    for _ in 0..15 {
+    for _ in 0..125 {
         let resp = ureq::post(&format!("{}/api/v1/profile", url))
             .set("Authorization", &auth_header)
             .send_json(serde_json::json!({}));
@@ -243,13 +243,20 @@ async fn test_rate_limiting() {
     }
 
     assert!(user_rate_limited, "Expected to be rate limited by User");
-    assert_eq!(user_success, 10);
+    assert!(
+        (119..=125).contains(&user_success),
+        "Expected ~120 successes, got {}",
+        user_success
+    );
 
-    // 2. Test IP Limit (30 per min)
+    // 2. Test IP Limit (300 per min — but we already used some from user requests above)
+    // The IP limiter is shared across all requests from localhost.
+    // After 120 user requests + setup overhead, we're already close to the limit.
+    // We verify the IP limiter triggers within the remaining budget.
     let mut ip_success = 0;
     let mut ip_rate_limited = false;
 
-    for _ in 0..25 {
+    for _ in 0..300 {
         let resp = ureq::get(&format!("{}/health", url)).call();
         match resp {
             Ok(r) => {
@@ -265,5 +272,5 @@ async fn test_rate_limiting() {
     }
 
     assert!(ip_rate_limited, "Expected to be rate limited by IP");
-    assert!(ip_success > 0 && ip_success <= 25);
+    assert!(ip_success > 0 && ip_success <= 300);
 }

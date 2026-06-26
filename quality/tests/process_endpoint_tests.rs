@@ -1,45 +1,45 @@
 use quality::{quick_create_user, quick_onboard_user, quick_setup_admin, setup_api_test_env};
 use uuid::Uuid;
 
-// Reuse multipart helper from process_api_tests
-fn multipart_body(boundary: &str, process_id: &str, title: &str, filename: &str) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"process_id\"\r\n\r\n");
-    body.extend_from_slice(process_id.as_bytes());
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(b"Content-Disposition: form-data; name=\"title\"\r\n\r\n");
-    body.extend_from_slice(title.as_bytes());
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
-    body.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n",
-            filename
-        )
-        .as_bytes(),
-    );
-    body.extend_from_slice(b"Content-Type: application/pdf\r\n\r\n");
-    body.extend_from_slice(b"fake pdf content bytes");
-    body.extend_from_slice(b"\r\n");
-    body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
-    body
-}
-
+/// Upload a document using the presigned URL flow:
+/// 1. POST /process/upload-url → get {document_id, upload_url}
+/// 2. PUT file bytes to the presigned S3 URL
+/// 3. POST /process/confirm-upload → confirm the upload
 fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String {
-    let boundary = "----Boundary";
-    let body = multipart_body(boundary, process_id, filename, filename);
-    let resp = ureq::post(&format!("{}/api/v1/process/upload", url))
+    // Step 1: Get presigned PUT URL
+    let url_resp = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
         .set("Authorization", auth)
-        .set(
-            "Content-Type",
-            &format!("multipart/form-data; boundary={}", boundary),
-        )
-        .send_bytes(&body)
-        .expect("upload failed");
-    let val: serde_json::Value = resp.into_json().unwrap();
-    val["document"]["document_id"].as_str().unwrap().to_string()
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "title": filename,
+            "filename": filename,
+            "content_type": "application/pdf"
+        }))
+        .expect("upload-url request failed");
+
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    // Step 2: PUT file directly to S3
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"fake pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    // Step 3: Confirm upload
+    let confirm_resp = ureq::post(&format!("{}/api/v1/documents/confirm-upload", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "document_id": document_id
+        }))
+        .expect("confirm-upload request failed");
+
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
+
+    document_id
 }
 
 /// Helper: create a resident, init their process, return (process_id_str, resident_auth, admin_auth)
@@ -131,9 +131,9 @@ async fn test_state_invalid_process_id_returns_404() {
 async fn test_upload_creates_document_for_process() {
     let env = setup_api_test_env(3114).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
     assert!(Uuid::parse_str(&doc_id).is_ok());
 }
 
@@ -226,13 +226,13 @@ async fn test_save_step_locked_step_fails() {
 async fn test_save_step_completes_substep() {
     let env = setup_api_test_env(3119).await;
     let url = env.server_url();
-    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
     // Upload docs and save step 3 (all required fields)
     let fields: Vec<serde_json::Value> = [101, 102, 103, 105, 106]
         .iter()
         .map(|fid| {
-            let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+            let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
             serde_json::json!({"template_field_id": fid, "document_id": doc})
         })
         .collect();
@@ -271,7 +271,7 @@ async fn test_review_approve_completes_step() {
         let fields: Vec<serde_json::Value> = field_ids
             .iter()
             .map(|fid| {
-                let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+                let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
                 serde_json::json!({"template_field_id": fid, "document_id": doc})
             })
             .collect();
@@ -347,7 +347,7 @@ async fn test_review_reject_reopens_step() {
         let fields: Vec<serde_json::Value> = field_ids
             .iter()
             .map(|fid| {
-                let doc = upload_doc(&url, &admin_auth, &pid, &format!("f{}.pdf", fid));
+                let doc = upload_doc(&url, &res_auth, &pid, &format!("f{}.pdf", fid));
                 serde_json::json!({"template_field_id": fid, "document_id": doc})
             })
             .collect();
@@ -392,9 +392,9 @@ async fn test_review_reject_reopens_step() {
 async fn test_download_url_returns_presigned_url() {
     let env = setup_api_test_env(3122).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
 
     let resp = ureq::post(&format!("{}/api/v1/process/download-url", url))
         .set("Authorization", &admin_auth)
@@ -410,9 +410,9 @@ async fn test_download_url_returns_presigned_url() {
 async fn test_download_url_wrong_process_returns_404() {
     let env = setup_api_test_env(3123).await;
     let url = env.server_url();
-    let (pid, _, admin_auth) = setup_process(&url, &env);
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
-    let doc_id = upload_doc(&url, &admin_auth, &pid, "test.pdf");
+    let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
 
     // Use a random process_id — doc doesn't belong to it
     let err = ureq::post(&format!("{}/api/v1/process/download-url", url))
@@ -456,4 +456,79 @@ async fn test_user_cannot_access_other_users_process() {
         .set("Authorization", &u2_auth)
         .send_json(serde_json::json!({"process_id": u1_pid}));
     assert!(err.is_err());
+}
+
+#[tokio::test]
+async fn test_admin_process_upload_creates_downloadable_document() {
+    let env = setup_api_test_env(3133).await;
+    let url = env.server_url();
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+
+    // 1. Admin uploads document to the process via the new endpoint
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/process/upload-url", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "title": "Admin SLA",
+            "filename": "admin_sla.pdf",
+            "content_type": "application/pdf"
+        }))
+        .expect("admin upload-url request failed");
+
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"admin pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    let confirm_resp = ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "document_id": document_id
+        }))
+        .expect("admin confirm-upload request failed");
+
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
+
+    // 2. Test the download as resident - Should succeed because the backend linked the flat!
+    let download_resp = ureq::post(&format!("{}/api/v1/process/download-url", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "document_id": document_id
+        }))
+        .expect("Resident download process document failed");
+
+    let download_val: serde_json::Value = download_resp.into_json().unwrap();
+    let s3_dl_url = download_val["download_url"].as_str().unwrap();
+    assert!(s3_dl_url.contains(&document_id));
+
+    // 3. Verify DB explicitly (Explicit ownership check)
+    let doc_uuid = uuid::Uuid::parse_str(&document_id).unwrap();
+    let flat_mapping: Option<i32> =
+        sqlx::query_scalar("SELECT flat_id FROM document_flats WHERE document_id = $1")
+            .bind(doc_uuid)
+            .fetch_optional(&env.db_pool)
+            .await
+            .expect("DB query failed");
+
+    assert!(
+        flat_mapping.is_some(),
+        "Document should be explicitly mapped to a flat in DB"
+    );
+
+    // Verify it's mapped to A-101
+    let (wing, flat_number): (String, String) =
+        sqlx::query_as("SELECT wing, flat_number FROM flats WHERE flat_id = $1")
+            .bind(flat_mapping.unwrap())
+            .fetch_one(&env.db_pool)
+            .await
+            .expect("Could not find mapped flat");
+
+    assert_eq!(wing, "A", "Mapped to wrong wing");
+    assert_eq!(flat_number, "0101", "Mapped to wrong flat number");
 }

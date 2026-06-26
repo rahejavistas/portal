@@ -1,15 +1,10 @@
-use crate::document::DocumentAccessLevel;
 use crate::extractors::SessionUser;
 use crate::state::AppState;
-use axum::{
-    extract::{Multipart, State},
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
-    get_active_ownerships_for_user, get_field_history, get_flat_label_for_ownership,
-    get_process_info, get_process_reviews, get_user_active_flats, list_processes_for_user,
-    ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
+    get_active_ownerships_for_user, get_field_history, get_flat_id_for_ownership,
+    get_flat_label_for_ownership, get_process_info, get_process_reviews, get_user_active_flats,
+    list_processes_for_user, ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -270,111 +265,6 @@ async fn resolve_or_init_process(
             )
         })?;
     Ok((process_id, template_id.to_string(), selected_ownership))
-}
-
-/// Parse a process-specific multipart upload. Returns (process_id, title, file_bytes, content_type).
-async fn parse_process_upload(
-    multipart: &mut Multipart,
-) -> Result<(Uuid, String, axum::body::Bytes, String), ApiError> {
-    let mut file_data = None;
-    let mut file_content_type = None;
-    let mut file_name = None;
-    let mut process_id = None;
-    let mut title = None;
-
-    while let Some(field) = multipart.next_field().await.map_err(|e| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(format!("Multipart error: {}", e)),
-        )
-    })? {
-        let name = field.name().unwrap_or("").to_string();
-        match name.as_str() {
-            "file" => {
-                file_content_type = field.content_type().map(|c| c.to_string());
-                file_name = field.file_name().map(|f| f.to_string());
-                let data = field.bytes().await.map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(format!("Failed to read file: {}", e)),
-                    )
-                })?;
-                file_data = Some(data);
-            }
-            "process_id" => {
-                let text = field.text().await.map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(format!("Failed to read process_id: {}", e)),
-                    )
-                })?;
-                process_id = Some(Uuid::parse_str(&text).map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(format!("Invalid process_id UUID: {}", e)),
-                    )
-                })?);
-            }
-            "title" => {
-                let text = field.text().await.map_err(|e| {
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(format!("Failed to read title: {}", e)),
-                    )
-                })?;
-                title = Some(text);
-            }
-            _ => {}
-        }
-    }
-
-    let process_id = process_id.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing process_id field in multipart request".to_string()),
-    ))?;
-
-    let file_bytes = file_data.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("Missing file field in multipart request".to_string()),
-    ))?;
-
-    let file_name = file_name.ok_or((
-        StatusCode::BAD_REQUEST,
-        Json("File name is required to determine file type.".to_string()),
-    ))?;
-
-    let title = title.unwrap_or_else(|| file_name.clone());
-
-    if file_bytes.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json("Uploaded file cannot be empty".to_string()),
-        ));
-    }
-
-    if file_bytes.len() > 10 * 1024 * 1024 {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json("File size exceeds the 10MB limit".to_string()),
-        ));
-    }
-
-    let ext = file_name
-        .split('.')
-        .next_back()
-        .unwrap_or("")
-        .to_lowercase();
-    if !crate::handlers::documents::VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                "Invalid file type. Only PDF, Word, Excel, and Text files are allowed.".to_string(),
-            ),
-        ));
-    }
-
-    let content_type = file_content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-    Ok((process_id, title, file_bytes, content_type))
 }
 
 /// Recursively map step templates to the response structure.
@@ -733,7 +623,7 @@ pub async fn save_process_step(
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
-    // Validate document ownership
+    // Validate document ownership and upload confirmation
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
             // Check if document is valid AND the user has permission to access it
@@ -743,14 +633,26 @@ pub async fn save_process_step(
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-            if doc_opt.is_none() {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json(format!(
-                        "Document ID {} is invalid or you do not have permission to access it",
-                        doc_id
-                    )),
-                ));
+            match doc_opt {
+                None => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(format!(
+                            "Document ID {} is invalid or you do not have permission to access it",
+                            doc_id
+                        )),
+                    ));
+                }
+                Some(ref doc) if !doc.document.is_upload_confirmed => {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(format!(
+                            "Document ID {} has not been uploaded yet. Please complete the upload first.",
+                            doc_id
+                        )),
+                    ));
+                }
+                _ => {}
             }
         }
     }
@@ -937,61 +839,97 @@ pub async fn admin_revoke_step(
     }))
 }
 
-/// POST /api/v1/process/upload
-pub async fn process_upload_document(
+#[derive(Deserialize)]
+pub struct ProcessAdminUploadUrlRequest {
+    pub process_id: Uuid,
+    pub title: String,
+    pub filename: String,
+    pub content_type: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ProcessAdminUploadUrlResponse {
+    pub document_id: String,
+    pub upload_url: String,
+}
+
+/// POST /api/v1/admin/process/upload-url
+/// Creates an upload intent for a process document uploaded by an admin.
+/// The backend securely derives the flat and forces PROCESS_SPECIFIC + PRIVATE semantics.
+pub async fn process_admin_upload_url(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> Result<(StatusCode, Json<crate::document::DocumentWithMetadata>), ApiError> {
-    // Parse and validate the multipart upload
-    let (process_id, title, file_bytes, content_type) =
-        parse_process_upload(&mut multipart).await?;
-
+    Json(payload): Json<ProcessAdminUploadUrlRequest>,
+) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
     let is_admin = user.has_role(authentication::UserRole::Admin);
-    // Auth check
-    {
-        let mut conn = state
-            .pg_pool
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-
-        load_authorized_process(&mut conn, &user, process_id, is_admin).await?;
-    }
-
-    // Create document record
-    let result = state
-        .document_manager
-        .user_create_document_atomic(&user, &title, None)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
-
-    // Upload to S3
-    let key =
-        crate::document::derive_s3_key(DocumentAccessLevel::Private, result.document.document_id);
-
-    if let Err(err) = state
-        .document_manager
-        .s3_accessor
-        .upload_file(
-            &key,
-            aws_sdk_s3::primitives::ByteStream::from(file_bytes),
-            &content_type,
-        )
-        .await
-    {
-        let _ = state
-            .document_manager
-            .delete_document_permanently(result.document.document_id)
-            .await;
-
+    if !is_admin {
         return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to upload document file to S3: {}", err)),
+            StatusCode::FORBIDDEN,
+            Json("Only admins can use this endpoint".to_string()),
         ));
     }
 
-    Ok((StatusCode::CREATED, Json(result)))
+    let mut conn = state
+        .pg_pool
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+
+    let mut flat_id: Option<i32> = None;
+    if let Some(oid) = info.ownership_id {
+        flat_id = get_flat_id_for_ownership(&mut conn, oid)
+            .await
+            .unwrap_or(None);
+    }
+
+    // Validate file extension
+    let ext = payload
+        .filename
+        .split('.')
+        .next_back()
+        .unwrap_or("")
+        .to_lowercase();
+    if !crate::handlers::documents::VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(format!(
+                "Invalid file type '{}'. Allowed: {:?}",
+                ext,
+                crate::handlers::documents::VALID_UPLOAD_EXTENSIONS
+            )),
+        ));
+    }
+
+    let content_type = crate::handlers::documents::derive_content_type_from_ext(ext.as_str());
+
+    // flat_id is already an Option<i32>
+
+    use crate::document::{DocumentAccessLevel, DocumentCategory, DocumentType};
+
+    let (result, upload_url, _key) = state
+        .document_manager
+        .admin_create_upload_intent_by_id(
+            &payload.title,
+            None,
+            DocumentCategory::ProcessSpecific,
+            DocumentType::ProcessGeneral,
+            DocumentAccessLevel::Private,
+            flat_id,
+            None,
+            &content_type,
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ProcessAdminUploadUrlResponse {
+            document_id: result.document.document_id.to_string(),
+            upload_url,
+        }),
+    ))
 }
 
 /// POST /api/v1/process/download-url

@@ -54,7 +54,6 @@ async fn main() {
         config.rate_limit.user_per_min,
         config.rate_limit.admin_per_min,
     ));
-    println!("DEBUG user_per_min = {}", config.rate_limit.user_per_min);
 
     // Initialize shared application state (completely stateless!)
     let state = AppState {
@@ -87,8 +86,12 @@ async fn main() {
                     post(handlers::documents::admin_list_documents),
                 )
                 .route(
-                    "/documents/create",
-                    post(handlers::documents::admin_create_document),
+                    "/documents/upload-url",
+                    post(handlers::documents::admin_upload_url),
+                )
+                .route(
+                    "/documents/confirm-upload",
+                    post(handlers::documents::admin_confirm_upload),
                 )
                 .route(
                     "/documents/:id/get",
@@ -105,6 +108,10 @@ async fn main() {
                 .route(
                     "/process/review",
                     post(handlers::process::admin_review_step),
+                )
+                .route(
+                    "/process/upload-url",
+                    post(handlers::process::process_admin_upload_url),
                 )
                 .route(
                     "/process/revoke",
@@ -136,8 +143,12 @@ async fn main() {
                     post(handlers::documents::get_document),
                 )
                 .route(
-                    "/api/v1/documents/upload",
-                    post(handlers::documents::user_create_document),
+                    "/api/v1/documents/upload-url",
+                    post(handlers::documents::user_upload_url),
+                )
+                .route(
+                    "/api/v1/documents/confirm-upload",
+                    post(handlers::documents::user_confirm_upload),
                 )
                 .route(
                     "/api/v1/process/list",
@@ -151,10 +162,7 @@ async fn main() {
                     "/api/v1/process/save-step",
                     post(handlers::process::save_process_step),
                 )
-                .route(
-                    "/api/v1/process/upload",
-                    post(handlers::process::process_upload_document),
-                )
+
                 .route(
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),

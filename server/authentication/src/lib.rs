@@ -235,11 +235,6 @@ impl PermissionsManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        println!(
-            "DEBUG: email='{}', existing_user_row={:?}",
-            email, existing_user_row
-        );
-
         let user_id = if let Some((id, _)) = existing_user_row {
             sqlx::query(&format!(
                 "UPDATE {} SET is_active = TRUE, updated_at = NOW() WHERE user_id = $1",

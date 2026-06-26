@@ -140,16 +140,6 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
     let uri = req.uri().clone();
     let path = uri.path().to_string();
     let method_str = method.to_string();
-    let headers = req.headers().clone();
-
-    println!("--> {} {}", method, uri);
-    for (name, value) in headers.iter() {
-        if name == "authorization" {
-            println!("  {}: [REDACTED]", name);
-        } else {
-            println!("  {}: {:?}", name, value);
-        }
-    }
 
     let start = Instant::now();
     let response = next.run(req).await;
@@ -177,7 +167,6 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
         ],
     );
 
-    println!("<-- {} {} | Status: {}", method, uri, response.status());
     response
 }
 

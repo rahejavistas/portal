@@ -353,6 +353,16 @@ pub async fn get_flat_label_for_ownership(
     .await
 }
 
+pub async fn get_flat_id_for_ownership(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: i32,
+) -> Result<Option<i32>, sqlx::Error> {
+    sqlx::query_scalar("SELECT flat_id FROM flat_ownerships WHERE ownership_id = $1")
+        .bind(ownership_id)
+        .fetch_optional(conn)
+        .await
+}
+
 pub async fn get_active_ownerships_for_user(
     conn: &mut sqlx::PgConnection,
     user_id: i32,

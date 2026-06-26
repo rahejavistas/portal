@@ -1587,31 +1587,73 @@ pub const ADMIN_HTML: &str = r#"
                 return;
             }
 
-            const formData = new FormData();
-            formData.append('payload', JSON.stringify(payload));
-            formData.append('file', file);
-
             try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/documents/create`, {
+                // Step 1: Get presigned PUT URL
+                const urlRes = await fetch(`${API_BASE}/api/v1/admin/documents/upload-url`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
                     },
-                    body: formData
+                    body: JSON.stringify({
+                        ...payload,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    })
                 });
 
-                if (response.ok) {
-                    docFeedback.textContent = '✓ Document added!';
-                    docFeedback.className = 'feedback-box success';
-                    docFeedback.style.display = 'block';
-                    regDocForm.reset();
-                    handleCategoryChange();
-                } else {
-                    const errorMsg = await response.text();
-                    docFeedback.textContent = `Error: ${errorMsg}`;
+                if (!urlRes.ok) {
+                    const errText = await urlRes.text();
+                    docFeedback.textContent = `Error: ${errText}`;
                     docFeedback.className = 'feedback-box error';
                     docFeedback.style.display = 'block';
+                    return;
                 }
+
+                const { document_id, upload_url } = await urlRes.json();
+
+                // Step 2: PUT file directly to S3
+                docFeedback.textContent = 'Uploading file...';
+                docFeedback.className = 'feedback-box';
+                docFeedback.style.display = 'block';
+
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+
+                if (!putRes.ok) {
+                    docFeedback.textContent = 'Upload to storage failed. Please try again.';
+                    docFeedback.className = 'feedback-box error';
+                    return;
+                }
+
+                // Step 3: Confirm upload
+                docFeedback.textContent = 'Confirming upload...';
+                
+                const confirmRes = await fetch(`${API_BASE}/api/v1/admin/documents/confirm-upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ document_id })
+                });
+
+                if (!confirmRes.ok) {
+                    const errText = await confirmRes.text();
+                    docFeedback.textContent = `Confirmation failed: ${errText}`;
+                    docFeedback.className = 'feedback-box error';
+                    return;
+                }
+
+                docFeedback.textContent = '✓ Document added!';
+                docFeedback.className = 'feedback-box success';
+                regDocForm.reset();
+                handleCategoryChange();
+                loadAdminDocuments();
+                
             } catch (err) {
                 docFeedback.textContent = 'Connection error.';
                 docFeedback.className = 'feedback-box error';
