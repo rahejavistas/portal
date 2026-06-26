@@ -54,7 +54,6 @@ async fn main() {
         config.rate_limit.user_per_min,
         config.rate_limit.admin_per_min,
     ));
-    println!("DEBUG user_per_min = {}", config.rate_limit.user_per_min);
 
     // Initialize shared application state (completely stateless!)
     let state = AppState {
