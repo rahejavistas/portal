@@ -9,6 +9,11 @@
         * {
             box-sizing: border-box;
             font-family: 'Outfit', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        html {
+            overflow-x: hidden;
         }
         :root {
             --background: #FFFFFF;
@@ -31,30 +36,31 @@
             padding: 0;
             min-height: 100vh;
             overflow-x: hidden;
+            width: 100%;
         }
 
         .layout-container {
             display: flex;
             width: 100%;
             min-height: 100vh;
-            position: relative;
         }
 
         .bg-shape-top-right {
-            position: absolute;
-            width: 600px;
-            height: 600px;
+            position: fixed;
+            width: 500px;
+            height: 500px;
             border-radius: 50%;
             background: radial-gradient(circle, rgba(59, 130, 246, 0.04) 0%, rgba(59, 130, 246, 0) 70%);
-            top: -150px;
-            right: -150px;
-            z-index: 1;
+            top: -100px;
+            right: -100px;
+            z-index: 0;
             pointer-events: none;
         }
 
         /* Sidebar */
         .sidebar {
             width: 260px;
+            min-width: 260px;
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
@@ -64,8 +70,65 @@
             height: 100vh;
             left: 0;
             top: 0;
-            z-index: 100;
+            z-index: 150;
             background-color: var(--background);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: transform;
+        }
+
+        /* Mobile Top Bar */
+        .mobile-topbar {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 56px;
+            background-color: var(--background);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 200;
+        }
+        .mobile-topbar-brand {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            text-transform: uppercase;
+            color: var(--primary);
+        }
+        .hamburger-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .hamburger-btn:hover { background-color: var(--muted); }
+        .hamburger-btn span {
+            display: block;
+            width: 22px;
+            height: 2px;
+            background-color: var(--foreground);
+            border-radius: 2px;
+        }
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.45);
+            z-index: 149;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .sidebar-overlay.open {
+            display: block;
+            opacity: 1;
         }
         .sidebar-brand h1 {
             font-size: 2.25rem;
@@ -164,43 +227,109 @@
             z-index: 10;
         }
 
-        @media (max-width: 992px) {
-            .layout-container {
-                flex-direction: column;
-            }
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
             .sidebar {
-                width: 100%;
-                height: auto;
-                position: relative;
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-                padding: 24px;
+                transform: translateX(-100%);
+                width: min(280px, 85vw);
+                min-width: unset;
+                padding: 24px 20px;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
-            .sidebar-brand {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-            }
-            .sidebar-brand p {
-                margin-bottom: 20px;
-            }
-            .nav-menu {
-                flex-direction: row;
-                justify-content: center;
-                width: 100%;
-                gap: 8px;
-            }
-            .nav-item {
-                flex: 1;
-                text-align: center;
-                padding: 10px;
-            }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-brand p { display: none; }
             .workspace {
                 margin-left: 0 !important;
-                padding: 40px 24px;
+                padding: 72px 16px 32px 16px;
                 width: 100%;
+                min-width: 0;
+                max-width: 100vw;
+                overflow-x: hidden;
             }
+            h2 { font-size: 1.75rem; }
+            .section-desc { font-size: 0.9375rem; }
+            /* Process details: step sidebar as full-width accordion on mobile */
+            .process-workspace { flex-direction: column; gap: 16px; }
+            .process-sidebar { width: 100%; }
+            .step-stages-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                background: var(--background);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 14px 16px;
+                font-weight: 700;
+                font-size: 0.9375rem;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 8px;
+            }
+            .process-sidebar-steps {
+                display: none;
+            }
+            .process-sidebar-steps.expanded {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            /* Hide table columns on small screens */
+            .process-table-col-flat { display: none; }
+            .process-table-col-date { display: none; }
+            /* Transform process list table into cards on mobile */
+            #screen-list .table-container {
+                overflow: visible;
+                background: transparent;
+                max-height: none;
+                border-radius: 0;
+            }
+            #screen-list table { display: block; min-width: unset; width: 100%; }
+            #screen-list thead { display: none; }
+            #screen-list tbody { display: flex; flex-direction: column; gap: 10px; }
+            #screen-list tr {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                background: var(--background);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 14px 16px;
+            }
+            #screen-list tr:hover { background: #F9FAFB; }
+            #screen-list td {
+                display: block;
+                border: none;
+                padding: 0;
+                font-size: 0.875rem;
+            }
+            /* Name cell takes remaining space */
+            #screen-list td:first-child { flex: 1; min-width: 0; }
+            /* State cell stays compact on right */
+            #screen-list td:nth-child(3) { flex-shrink: 0; }
+            /* Process title fits within card */
+            #screen-list .process-title {
+                font-size: 0.9375rem;
+                max-width: 100%;
+                -webkit-line-clamp: 2;
+            }
+            /* Content panel: remove max-height constraint on mobile */
+            .process-content-panel {
+                max-height: none;
+                padding: 20px 16px;
+            }
+        }
+        @media (min-width: 769px) {
+            .step-stages-toggle { display: none !important; }
+            .process-sidebar-steps { display: flex; flex-direction: column; gap: 12px; }
+        }
+        @media (max-width: 992px) and (min-width: 769px) {
+            .process-workspace {
+                flex-direction: column;
+                gap: 24px;
+            }
+            .process-sidebar { width: 100%; }
         }
 
         h2 {
@@ -260,14 +389,27 @@
         /* Tables */
         .table-container {
             overflow-x: auto;
+            overflow-y: auto;
+            max-height: 440px;
             border-radius: var(--radius-lg);
             background-color: var(--background);
             margin-top: 16px;
+            /* Custom scrollbar */
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
         }
+        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
+        .table-container::-webkit-scrollbar-track { background: transparent; }
+        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         table {
             width: 100%;
             border-collapse: collapse;
             text-align: left;
+        }
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
         th {
             background-color: #F8FAFC;
@@ -294,11 +436,17 @@
 
         .process-title {
             font-weight: 700;
-            font-size: 1.125rem;
+            font-size: 1rem;
             color: var(--primary);
             cursor: pointer;
             text-decoration: none;
             transition: color 0.15s ease;
+            /* Truncate long names with ellipsis */
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            max-width: 260px;
         }
         .process-title:hover {
             color: var(--primary-hover);
@@ -435,22 +583,33 @@
             flex-direction: column;
             gap: 12px;
         }
+        /* Step list scrolls independently — header and nav stay fixed */
+        .process-sidebar-steps {
+            max-height: calc(70vh - 80px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+            padding-right: 4px;
+        }
+        .process-sidebar-steps::-webkit-scrollbar { width: 4px; }
+        .process-sidebar-steps::-webkit-scrollbar-track { background: transparent; }
+        .process-sidebar-steps::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         .process-content-panel {
             flex-grow: 1;
             background-color: var(--background);
             border-radius: var(--radius-lg);
             padding: 32px;
             border: 1px solid var(--border);
+            max-height: calc(75vh - 60px);
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
         }
-        @media (max-width: 992px) {
-            .process-workspace {
-                flex-direction: column;
-                gap: 24px;
-            }
-            .process-sidebar {
-                width: 100%;
-            }
-        }
+        .process-content-panel::-webkit-scrollbar { width: 5px; }
+        .process-content-panel::-webkit-scrollbar-track { background: transparent; }
+        .process-content-panel::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
+        /* step-stages-toggle shown only on mobile via @media above */
+        .step-stages-toggle { display: none; }
 
         /* Step nav items (Sidebar) */
         .step-nav-item {
@@ -635,8 +794,19 @@
 </head>
 <body>
     <div class="bg-shape-top-right"></div>
+
+    <!-- Mobile Top Bar -->
+    <div class="mobile-topbar" id="mobile-topbar">
+        <span class="mobile-topbar-brand" id="mobile-brand-label">Vistas</span>
+        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+            <span></span><span></span><span></span>
+        </button>
+    </div>
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
     <div class="layout-container">
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand" id="sidebar-brand-container">
                 <!-- Dynamically populated based on user role -->
             </div>
@@ -682,9 +852,9 @@
                         <thead>
                             <tr>
                                 <th>Process Name</th>
-                                <th>Flat</th>
+                                <th class="process-table-col-flat">Flat</th>
                                 <th>State</th>
-                                <th>Started On</th>
+                                <th class="process-table-col-date">Started On</th>
                             </tr>
                         </thead>
                         <tbody id="process-rows-target">
@@ -700,22 +870,30 @@
 
             <!-- DETAILS VIEW SCREEN -->
             <section id="screen-details" style="display: none;">
+                <!-- Process Header -->
                 <div style="margin-bottom: 24px;">
-                    <button class="btn btn-secondary" onclick="showProcessListScreen()" style="margin-bottom: 16px; font-size: 1rem; padding: 10px 16px;">
-                        &larr; Back to Processes
+                    <button class="btn btn-secondary" onclick="showProcessListScreen()" style="margin-bottom: 12px; font-size: 0.875rem; padding: 8px 14px;">
+                        &larr; Back
                     </button>
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
-                        <div>
-                            <h2 id="details-process-title" style="margin-bottom: 4px; font-size: 1.75rem;">Process Details</h2>
-                            <p class="section-desc" id="details-process-subtitle" style="font-size: 0.95rem; margin-bottom: 0;">Loading...</p>
-                        </div>
+                    <h2 id="details-process-title" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
+                    <!-- Meta chips row: flat, ID, status -->
+                    <div id="details-process-meta" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                        <!-- Populated dynamically -->
                     </div>
                 </div>
 
                 <div class="process-workspace">
                     <!-- Step Navigation Sidebar -->
-                    <div class="process-sidebar" id="details-sidebar-target">
-                        <!-- Step list items will be rendered here -->
+                    <div class="process-sidebar" id="details-sidebar-target-wrapper">
+                        <!-- Mobile accordion toggle -->
+                        <button class="step-stages-toggle" id="stages-toggle-btn" onclick="toggleStagesSidebar()">
+                            <span id="stages-toggle-label">View All Stages</span>
+                            <span id="stages-toggle-icon">▼</span>
+                        </button>
+                        <!-- Steps list (shown always on desktop, toggled on mobile) -->
+                        <div class="process-sidebar-steps" id="details-sidebar-target">
+                            <!-- Step list items will be rendered here -->
+                        </div>
                     </div>
 
                     <!-- Selected Step Interaction Panel -->
@@ -764,6 +942,44 @@
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
 
+        // ---- Sidebar toggle (mobile) ----
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar.classList.contains('open')) {
+                closeSidebar();
+            } else {
+                sidebar.classList.add('open');
+                overlay.classList.add('open');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        // ---- Process step sidebar mobile accordion ----
+        let stagesExpanded = false;
+        function toggleStagesSidebar() {
+            stagesExpanded = !stagesExpanded;
+            const panel = document.getElementById('details-sidebar-target');
+            const icon = document.getElementById('stages-toggle-icon');
+            const label = document.getElementById('stages-toggle-label');
+            if (stagesExpanded) {
+                panel.classList.add('expanded');
+                icon.textContent = '▲';
+                label.textContent = 'Hide Stages';
+            } else {
+                panel.classList.remove('expanded');
+                icon.textContent = '▼';
+                label.textContent = 'View All Stages';
+            }
+        }
+
         // Redirect if not logged in
         if (!token || !user) {
             window.location.href = '/login';
@@ -772,15 +988,18 @@
         // Populate sidebar based on role
         const isAdmin = user.roles && user.roles.includes('Admin');
         const sidebarBrandContainer = document.getElementById('sidebar-brand-container');
+        // Set mobile brand label
+        const mobileBrandLabel = document.getElementById('mobile-brand-label');
+        if (mobileBrandLabel) mobileBrandLabel.textContent = isAdmin ? 'Admin' : 'Vistas';
         if (sidebarBrandContainer) {
             if (isAdmin) {
                 sidebarBrandContainer.innerHTML = `
                     <h1>Admin</h1>
                     <p>Raheja Vistas Admin Room</p>
                     <nav class="nav-menu">
-                        <a href="/admin" class="nav-item" style="text-decoration: none;">Residents</a>
-                        <a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;">Documents</a>
-                        <a href="/process" class="nav-item active" style="text-decoration: none;">Processes</a>
+                        <a href="/admin" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>
+                        <a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
+                        <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
                     </nav>
                 `;
             } else {
@@ -788,9 +1007,9 @@
                     <h1>Vistas</h1>
                     <p>Resident Portal</p>
                     <nav class="nav-menu">
-                        <a href="/dashboard" class="nav-item" style="text-decoration: none;">Profile</a>
-                        <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;">Documents</a>
-                        <a href="/process" class="nav-item active" style="text-decoration: none;">Processes</a>
+                        <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
+                        <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
+                        <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
                     </nav>
                 `;
             }
@@ -1104,7 +1323,7 @@
             showProcessDetailsScreen();
             
             document.getElementById('details-process-title').textContent = 'Loading Workflow...';
-            document.getElementById('details-process-subtitle').textContent = 'Fetching current step statuses and reviews from the backend.';
+            document.getElementById('details-process-meta').innerHTML = '';
             document.getElementById('details-sidebar-target').innerHTML = `
                 <div style="text-align: center; color: var(--muted-foreground); padding: 12px; font-size: 0.875rem;">
                     Loading stages...
@@ -1132,14 +1351,14 @@
                 } else {
                     const errText = await response.text();
                     document.getElementById('details-process-title').textContent = 'Error Loading Process';
-                    document.getElementById('details-process-subtitle').textContent = escapeHtml(errText);
+                    document.getElementById('details-process-meta').innerHTML = `<span style="font-size:0.8125rem;color:#EF4444;">${escapeHtml(errText)}</span>`;
                     document.getElementById('details-sidebar-target').innerHTML = '';
                     document.getElementById('details-content-target').innerHTML = '';
                 }
             } catch(e) {
                 console.error(e);
                 document.getElementById('details-process-title').textContent = 'Error Loading Process';
-                document.getElementById('details-process-subtitle').textContent = 'Connection error occurred.';
+                document.getElementById('details-process-meta').innerHTML = '<span style="font-size:0.8125rem;color:#EF4444;">Connection error occurred.</span>';
                 document.getElementById('details-sidebar-target').innerHTML = '';
                 document.getElementById('details-content-target').innerHTML = '';
             }
@@ -1150,11 +1369,19 @@
             if (!currentProcessDetails) return;
 
             const p = currentProcessDetails;
+            const metaContainer = document.getElementById('details-process-meta');
+
+            // Title
             document.getElementById('details-process-title').textContent = p.process_name || p.template_id;
-            
-            const completionBadge = p.is_completed ? '<span class="status-pill completed" style="margin-left: 12px;">Completed</span>' : '<span class="status-pill open" style="margin-left: 12px;">In Progress</span>';
-            document.getElementById('details-process-title').innerHTML += completionBadge;
-            document.getElementById('details-process-subtitle').textContent = `Flat: ${p.flat_label ? escapeHtml(p.flat_label) : 'TBD'} | ID: ${p.process_id.substring(0, 8)}`;
+
+            // Meta chips (flat, ID, status)
+            const statusChipClass = p.is_completed ? 'background:#D1FAE5;color:#065F46;' : 'background:#DBEAFE;color:#1E40AF;';
+            const statusText = p.is_completed ? 'Completed' : 'In Progress';
+            metaContainer.innerHTML = `
+                ${p.flat_label ? `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">Flat&nbsp;${escapeHtml(p.flat_label)}</span>` : ''}
+                <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">ID&nbsp;${p.process_id.substring(0, 8)}</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;${statusChipClass}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${statusText}</span>
+            `;
 
             // Render steps in the sidebar
             const sidebar = document.getElementById('details-sidebar-target');
@@ -1201,6 +1428,16 @@
 
         function selectStep(stepId) {
             currentSelectedStepId = stepId;
+            // Auto-collapse stages on mobile after selection
+            if (window.innerWidth <= 768) {
+                stagesExpanded = false;
+                const panel = document.getElementById('details-sidebar-target');
+                const icon = document.getElementById('stages-toggle-icon');
+                const label = document.getElementById('stages-toggle-label');
+                if (panel) panel.classList.remove('expanded');
+                if (icon) icon.textContent = '▼';
+                if (label) label.textContent = 'View All Stages';
+            }
             renderProcessDetails();
         }
 
@@ -1382,15 +1619,28 @@
                     return (new Date(current.created_at) > new Date(latest.created_at)) ? current : latest;
                 });
                 const latestDateFormatted = formatDateMinimal(latestReview.created_at);
+                const lastIsApproved = latestReview.is_approved;
+                const summaryBg = lastIsApproved ? '#ECFDF5' : '#FEF3C7';
+                const summaryColor = lastIsApproved ? '#065F46' : '#92400E';
+                const summaryIcon = lastIsApproved ? '✓' : '↩';
+                const summaryLabel = lastIsApproved ? 'Last review: Approved' : 'Last review: Revision required';
 
                 reviewsHtml = `
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 24px;">
-                        <button class="btn btn-secondary" id="toggle-history-btn" style="font-size: 0.875rem; padding: 10px 20px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer;" onclick="toggleReviewHistory()">View Review History (${relevantReviews.length})</button>
-                        <span style="font-size: 0.875rem; color: var(--muted-foreground);">Last review: <strong>${latestDateFormatted}</strong></span>
-                    </div>
-                    <div id="review-history-container" style="display: none; margin-bottom: 32px;">
-                        <h4 style="margin: 0 0 16px 0; font-size: 1.125rem; font-weight: 800; color: var(--foreground);">Admin Review Comments</h4>
-                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <div style="margin-bottom: 20px;">
+                        <button
+                            id="toggle-history-btn"
+                            onclick="toggleReviewHistory()"
+                            style="width:100%; text-align:left; display:flex; align-items:center; justify-content:space-between; gap:12px; background:${summaryBg}; border:none; border-radius:var(--radius-lg); padding:12px 16px; cursor:pointer; transition:opacity 0.2s;"
+                        >
+                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0;">
+                                <span style="font-size:1rem; font-weight:700; color:${summaryColor}; flex-shrink:0;">${summaryIcon} ${summaryLabel}</span>
+                                <span style="font-size:0.8125rem; color:${summaryColor}; opacity:0.8; white-space:nowrap;">${latestDateFormatted}</span>
+                            </div>
+                            <span style="font-size:0.75rem; font-weight:700; color:${summaryColor}; white-space:nowrap; flex-shrink:0; background:rgba(0,0,0,0.06); padding:3px 8px; border-radius:999px;">
+                                ${relevantReviews.length} review${relevantReviews.length > 1 ? 's' : ''} ▼
+                            </span>
+                        </button>
+                        <div id="review-history-container" style="display:none; margin-top:8px; flex-direction:column; gap:8px;">
                 `;
                 relevantReviews.forEach(r => {
                     const isApp = r.is_approved;
@@ -1400,17 +1650,17 @@
                     const borderLeftColor = isApp ? 'var(--secondary)' : 'var(--danger)';
 
                     reviewsHtml += `
-                        <div style="background-color: ${bgColor}; border-left: 4px solid ${borderLeftColor}; padding: 16px; border-radius: var(--radius-lg);">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
-                                <strong style="font-size: 0.95rem; color: ${labelColor};">
-                                    ${isApp ? 'Approved' : 'Revision Required'}
+                        <div style="background-color: ${bgColor}; border-left: 4px solid ${borderLeftColor}; padding: 14px 16px; border-radius: var(--radius-lg);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+                                <strong style="font-size: 0.875rem; color: ${labelColor};">
+                                    ${isApp ? '✓ Approved' : '↩ Revision Required'}
                                 </strong>
-                                <span style="font-size: 0.8125rem; color: var(--muted-foreground); font-weight: 600;">
+                                <span style="font-size: 0.75rem; color: var(--muted-foreground); font-weight: 600;">
                                     ${dateFormatted}
                                 </span>
                             </div>
-                            <p style="margin: 0; font-size: 0.9375rem; color: var(--foreground); line-height: 1.5;">
-                                ${r.notes ? escapeHtml(r.notes) : '<em>No comments provided</em>'}
+                            <p style="margin: 0; font-size: 0.875rem; color: var(--foreground); line-height: 1.5;">
+                                ${r.notes ? escapeHtml(r.notes) : '<em style="color:var(--muted-foreground);">No comments provided</em>'}
                             </p>
                         </div>
                     `;
@@ -1501,6 +1751,8 @@
             }
 
             contentPanel.innerHTML = html;
+            // Always scroll content panel to top when a step is selected
+            contentPanel.scrollTop = 0;
         }
 
         // Fetch presigned URL and download file
@@ -1845,14 +2097,15 @@
 
         function toggleReviewHistory() {
             const container = document.getElementById('review-history-container');
-            const btn = document.getElementById('toggle-history-btn');
-            if (!container || !btn) return;
-            if (container.style.display === 'none') {
-                container.style.display = 'block';
-                btn.textContent = 'Hide Review History';
+            const countBadge = document.querySelector('#toggle-history-btn span:last-child');
+            if (!container) return;
+            const isHidden = container.style.display === 'none' || container.style.display === '';
+            if (isHidden) {
+                container.style.display = 'flex';
+                if (countBadge) countBadge.innerHTML = countBadge.innerHTML.replace('▼', '▲');
             } else {
                 container.style.display = 'none';
-                btn.textContent = 'View Review History';
+                if (countBadge) countBadge.innerHTML = countBadge.innerHTML.replace('▲', '▼');
             }
         }
 
@@ -2087,7 +2340,7 @@
                 </div>
                 
                 <h4 id="picker-library-heading" style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>
-                <div id="picker-existing-docs" style="display: flex; flex-direction: column; gap: 8px;">
+                <div id="picker-existing-docs" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 4px;">
                     <!-- Populated dynamically -->
                 </div>
             </div>
