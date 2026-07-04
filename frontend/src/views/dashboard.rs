@@ -10,6 +10,11 @@ pub const DASHBOARD_HTML: &str = r#"
         * {
             box-sizing: border-box;
             font-family: 'Outfit', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        html {
+            overflow-x: hidden;
         }
         :root {
             --background: #FFFFFF;
@@ -31,6 +36,7 @@ pub const DASHBOARD_HTML: &str = r#"
             padding: 0;
             min-height: 100vh;
             overflow-x: hidden;
+            width: 100%;
         }
 
         /* Layout Container */
@@ -38,25 +44,85 @@ pub const DASHBOARD_HTML: &str = r#"
             display: flex;
             width: 100%;
             min-height: 100vh;
-            position: relative;
         }
 
-        /* Decorative Background Shapes */
+        /* Decorative Background Shapes — clipped to never overflow viewport */
         .bg-shape-top-right {
-            position: absolute;
-            width: 600px;
-            height: 600px;
+            position: fixed;
+            width: 500px;
+            height: 500px;
             border-radius: 50%;
             background: radial-gradient(circle, rgba(59, 130, 246, 0.04) 0%, rgba(59, 130, 246, 0) 70%);
-            top: -150px;
-            right: -150px;
-            z-index: 1;
+            top: -100px;
+            right: -100px;
+            z-index: 0;
             pointer-events: none;
+        }
+
+        /* Mobile Top Bar */
+        .mobile-topbar {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 56px;
+            background-color: var(--background);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 200;
+        }
+        .mobile-topbar-brand {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            text-transform: uppercase;
+            color: var(--primary);
+        }
+        .hamburger-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .hamburger-btn:hover { background-color: var(--muted); }
+        .hamburger-btn span {
+            display: block;
+            width: 22px;
+            height: 2px;
+            background-color: var(--foreground);
+            border-radius: 2px;
+            transition: all 0.3s ease;
+        }
+
+        /* Sidebar Overlay (mobile) */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.45);
+            z-index: 149;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .sidebar-overlay.open {
+            display: block;
+            opacity: 1;
         }
 
         /* Left Main Sidebar */
         .sidebar {
             width: 260px;
+            min-width: 260px;
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
@@ -66,8 +132,10 @@ pub const DASHBOARD_HTML: &str = r#"
             height: 100vh;
             left: 0;
             top: 0;
-            z-index: 100;
+            z-index: 150;
             background-color: var(--background);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: transform;
         }
         .sidebar-brand h1 {
             font-size: 2.25rem;
@@ -226,44 +294,64 @@ pub const DASHBOARD_HTML: &str = r#"
             z-index: 10;
         }
 
-        /* Responsive Mobile Layout adjustments */
-        @media (max-width: 992px) {
-            .layout-container {
-                flex-direction: column;
-            }
+        /* Responsive Mobile Layout */
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
             .sidebar {
-                width: 100%;
-                height: auto;
-                position: relative;
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-                padding: 24px;
+                transform: translateX(-100%);
+                width: min(280px, 85vw);
+                min-width: unset;
+                padding: 24px 20px;
+                top: 0;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
-            .sidebar-brand {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-            }
-            .sidebar-brand p {
-                margin-bottom: 20px;
-            }
-            .nav-menu {
-                flex-direction: row;
-                justify-content: center;
-                width: 100%;
-                gap: 8px;
-            }
-            .nav-item {
-                flex: 1;
-                text-align: center;
-                padding: 10px;
-            }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-brand p { display: none; }
             .main-content {
                 margin-left: 0 !important;
-                padding: 40px 24px;
+                padding: 72px 16px 32px 16px;
                 width: 100%;
+                min-width: 0;
+                max-width: 100vw;
             }
+            /* Document table -> card layout on mobile */
+            .doc-table-desktop { display: none; }
+            .doc-cards-mobile { display: flex !important; }
+            h2 { font-size: 1.75rem; }
+            .section-desc { font-size: 0.9375rem; }
+        }
+        @media (min-width: 769px) {
+            .doc-table-desktop { display: block; }
+            .doc-cards-mobile { display: none !important; }
+        }
+
+        /* Document card (mobile view) */
+        .doc-cards-mobile {
+            max-height: 480px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
+        }
+        .doc-cards-mobile::-webkit-scrollbar { width: 4px; }
+        .doc-cards-mobile::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
+        .doc-card-mobile {
+            background: var(--background);
+            border-radius: var(--radius-lg);
+            padding: 16px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .doc-card-mobile-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .doc-card-mobile-actions {
+            display: flex;
+            justify-content: flex-end;
         }
 
         h2 {
@@ -339,14 +427,27 @@ pub const DASHBOARD_HTML: &str = r#"
         /* Table Styles for Documents */
         .table-container {
             overflow-x: auto;
+            overflow-y: auto;
+            max-height: 480px;
             border-radius: var(--radius-lg);
             border: none;
             background-color: var(--background);
+            /* Custom scrollbar */
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
         }
+        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
+        .table-container::-webkit-scrollbar-track { background: transparent; }
+        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         table {
             width: 100%;
             border-collapse: collapse;
             text-align: left;
+        }
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
         th {
             background-color: #F8FAFC;
@@ -445,18 +546,28 @@ pub const DASHBOARD_HTML: &str = r#"
 <body>
     <div class="bg-shape-top-right"></div>
 
+    <!-- Mobile Top Bar -->
+    <div class="mobile-topbar" id="mobile-topbar">
+        <span class="mobile-topbar-brand">Vistas</span>
+        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+            <span></span><span></span><span></span>
+        </button>
+    </div>
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
     <div class="layout-container">
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
                 <h1>Vistas</h1>
                 <p>Resident Portal</p>
                 
                 <!-- Nav Tabs -->
                 <nav class="nav-menu">
-                    <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile')">Profile</button>
-                    <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents')">Documents</button>
-                    <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;">Processes</a>
+                    <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
+                    <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
+                    <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
                 </nav>
             </div>
 
@@ -518,7 +629,8 @@ pub const DASHBOARD_HTML: &str = r#"
                     <!-- Dynamically populated sub-category chips -->
                 </div>
 
-                <div class="table-container">
+                <!-- Desktop Table -->
+                <div class="table-container doc-table-desktop">
                     <table>
                         <thead>
                             <tr>
@@ -533,6 +645,10 @@ pub const DASHBOARD_HTML: &str = r#"
                             </tr>
                         </tbody>
                     </table>
+                </div>
+                <!-- Mobile Cards -->
+                <div class="doc-cards-mobile" id="doc-cards-mobile-target" style="flex-direction: column; gap: 12px; display: none;">
+                    <p style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</p>
                 </div>
             </section>
         </main>
@@ -570,6 +686,26 @@ pub const DASHBOARD_HTML: &str = r#"
     </div>
 
     <script>
+        // ---- Sidebar toggle (mobile) ----
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar.classList.contains('open')) {
+                closeSidebar();
+            } else {
+                sidebar.classList.add('open');
+                overlay.classList.add('open');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
         function escapeHtml(unsafe) {
             if (!unsafe) return '';
             return unsafe
@@ -813,18 +949,22 @@ pub const DASHBOARD_HTML: &str = r#"
 
         function renderResidentDocsTable(docsList) {
             const tbody = document.getElementById('doc-rows-target');
+            const cardsContainer = document.getElementById('doc-cards-mobile-target');
             tbody.innerHTML = '';
+            cardsContainer.innerHTML = '';
             
             if (docsList.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">No documents found matching the filter criteria.</td></tr>';
+                cardsContainer.innerHTML = '<p style="text-align: center; color: var(--muted-foreground); padding: 24px; font-weight: 500;">No documents found.</p>';
                 return;
             }
 
             docsList.forEach(docWithMeta => {
                 const doc = docWithMeta.document;
                 const meta = docWithMeta.metadata;
+
+                // --- Desktop table row ---
                 const tr = document.createElement('tr');
-                
                 let metaHtml = '';
                 if (meta) {
                     metaHtml = `
@@ -835,23 +975,34 @@ pub const DASHBOARD_HTML: &str = r#"
                         </div>
                     `;
                 }
-
                 tr.innerHTML = `
                     <td>
                         <div class="doc-title" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(doc.title)}</div>
-                        <div class="doc-desc">
-                            ${escapeHtml(doc.description) || 'No description provided.'}
-                        </div>
+                        <div class="doc-desc">${escapeHtml(doc.description) || 'No description provided.'}</div>
                         ${metaHtml}
                     </td>
-                    <td>
-                        <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span>
-                    </td>
-                    <td>
-                        <button class="download-btn" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">Download</button>
-                    </td>
+                    <td><span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span></td>
+                    <td><button class="download-btn" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">Download</button></td>
                 `;
                 tbody.appendChild(tr);
+
+                // --- Mobile card ---
+                const card = document.createElement('div');
+                card.className = 'doc-card-mobile';
+                card.innerHTML = `
+                    <div class="doc-card-mobile-header">
+                        <div style="flex:1; min-width:0;">
+                            <div class="doc-title" style="font-size:1rem;" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(doc.title)}</div>
+                            <div class="doc-desc" style="margin-top:4px;">${escapeHtml(doc.description) || 'No description.'}</div>
+                        </div>
+                        <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}" style="flex-shrink:0;">${formatCategory(doc.category)}</span>
+                    </div>
+                    ${meta ? `<div class="doc-meta" style="font-size:0.75rem;">${meta.document_date || ''}</div>` : ''}
+                    <div class="doc-card-mobile-actions">
+                        <button class="download-btn" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">Download</button>
+                    </div>
+                `;
+                cardsContainer.appendChild(card);
             });
         }
 

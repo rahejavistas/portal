@@ -121,9 +121,21 @@ pub async fn add_security_headers<B>(req: Request<B>, next: Next<B>) -> Response
         "X-XSS-Protection",
         HeaderValue::from_static("1; mode=block"),
     );
+    // CSP: inline scripts/styles are required for the current single-file HTML architecture.
+    // 'unsafe-inline' is intentional here. Migrate to external JS + nonces to harden further.
     headers.insert(
         "Content-Security-Policy",
-        HeaderValue::from_static("default-src 'self'"),
+        HeaderValue::from_static(
+            "default-src 'self'; \
+             script-src 'self' 'unsafe-inline'; \
+             style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+             font-src https://fonts.gstatic.com; \
+             img-src 'self' data:; \
+             connect-src 'self'; \
+             object-src 'none'; \
+             base-uri 'self'; \
+             form-action 'self'",
+        ),
     );
     headers.insert(
         "Strict-Transport-Security",

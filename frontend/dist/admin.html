@@ -9,6 +9,11 @@
         * {
             box-sizing: border-box;
             font-family: 'Outfit', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        html {
+            overflow-x: hidden;
         }
         :root {
             --background: #FFFFFF;
@@ -30,6 +35,7 @@
             padding: 0;
             min-height: 100vh;
             overflow-x: hidden;
+            width: 100%;
         }
 
         /* Layout Container */
@@ -37,25 +43,25 @@
             display: flex;
             width: 100%;
             min-height: 100vh;
-            position: relative;
         }
 
-        /* Decorative Background Shapes */
+        /* Decorative Background Shapes — clipped to never overflow viewport */
         .bg-shape-top-right {
-            position: absolute;
-            width: 600px;
-            height: 600px;
+            position: fixed;
+            width: 500px;
+            height: 500px;
             border-radius: 50%;
             background: radial-gradient(circle, rgba(59, 130, 246, 0.04) 0%, rgba(59, 130, 246, 0) 70%);
-            top: -150px;
-            right: -150px;
-            z-index: 1;
+            top: -100px;
+            right: -100px;
+            z-index: 0;
             pointer-events: none;
         }
 
         /* Left Main Sidebar */
         .sidebar {
             width: 260px;
+            min-width: 260px;
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
@@ -65,8 +71,65 @@
             height: 100vh;
             left: 0;
             top: 0;
-            z-index: 100;
+            z-index: 150;
             background-color: var(--background);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            will-change: transform;
+        }
+
+        /* Mobile Top Bar */
+        .mobile-topbar {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 56px;
+            background-color: var(--background);
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 200;
+        }
+        .mobile-topbar-brand {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            text-transform: uppercase;
+            color: var(--primary);
+        }
+        .hamburger-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .hamburger-btn:hover { background-color: var(--muted); }
+        .hamburger-btn span {
+            display: block;
+            width: 22px;
+            height: 2px;
+            background-color: var(--foreground);
+            border-radius: 2px;
+        }
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0,0,0,0.45);
+            z-index: 149;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        .sidebar-overlay.open {
+            display: block;
+            opacity: 1;
         }
         .sidebar-brand h1 {
             font-size: 2.25rem;
@@ -223,43 +286,47 @@
             z-index: 10;
         }
 
-        @media (max-width: 992px) {
-            .layout-container {
-                flex-direction: column;
-            }
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
             .sidebar {
-                width: 100%;
-                height: auto;
-                position: relative;
-                border-right: none;
-                border-bottom: 1px solid var(--border);
-                padding: 24px;
+                transform: translateX(-100%);
+                width: min(280px, 85vw);
+                min-width: unset;
+                padding: 24px 20px;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
-            .sidebar-brand {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                text-align: center;
-            }
-            .sidebar-brand p {
-                margin-bottom: 20px;
-            }
-            .nav-menu {
-                flex-direction: row;
-                justify-content: center;
-                width: 100%;
-                gap: 8px;
-            }
-            .nav-item {
-                flex: 1;
-                text-align: center;
-                padding: 10px;
-            }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-brand p { display: none; }
             .workspace {
                 margin-left: 0 !important;
-                padding: 40px 24px;
+                padding: 72px 16px 32px 16px;
                 width: 100%;
+                min-width: 0;
+                max-width: 100vw;
+                overflow-x: hidden;
             }
+            /* Reduce card padding so inner content fits */
+            .card { padding: 20px; margin-bottom: 20px; }
+            /* Collapse split grid immediately */
+            .split-grid { grid-template-columns: 1fr; gap: 0; }
+            /* Subtabs wrap instead of overflowing */
+            .subtab-bar { flex-wrap: wrap; gap: 8px; }
+            /* Category filter bar must not widen the page */
+            .category-filter-bar {
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            /* Table scrolls inside its container only */
+            .table-container {
+                max-height: 380px;
+            }
+            table {
+                min-width: 480px;
+            }
+            /* Hide least critical table columns on very small screens */
+            .admin-col-hide-mobile { display: none; }
+            h2 { font-size: 1.75rem; }
         }
 
         /* Typography */
@@ -328,6 +395,8 @@
             box-shadow: none;
             border: none;
             height: fit-content;
+            min-width: 0;
+            overflow: hidden;
         }
         .split-grid {
             display: grid;
@@ -424,13 +493,26 @@
         /* Table */
         .table-container {
             overflow-x: auto;
+            overflow-y: auto;
+            max-height: 520px;
             border-radius: var(--radius-lg);
             background-color: var(--background);
+            /* Custom scrollbar */
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
         }
+        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
+        .table-container::-webkit-scrollbar-track { background: transparent; }
+        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         table {
             width: 100%;
             border-collapse: collapse;
             text-align: left;
+        }
+        thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
         th {
             background-color: #F8FAFC;
@@ -518,21 +600,31 @@
 <body>
     <div class="bg-shape-top-right"></div>
 
+    <!-- Mobile Top Bar -->
+    <div class="mobile-topbar" id="mobile-topbar">
+        <span class="mobile-topbar-brand">Admin</span>
+        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+            <span></span><span></span><span></span>
+        </button>
+    </div>
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
     <div class="layout-container">
         <!-- Sidebar Navigation -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
                 <h1>Admin</h1>
                 <p>Raheja Vistas Admin Room</p>
                 
                 <nav class="nav-menu">
-                    <button class="nav-item active" id="suite-btn-residents" onclick="switchSuite('residents')">
+                    <button class="nav-item active" id="suite-btn-residents" onclick="switchSuite('residents'); closeSidebar()">
                         Residents
                     </button>
-                    <button class="nav-item" id="suite-btn-documents" onclick="switchSuite('documents')">
+                    <button class="nav-item" id="suite-btn-documents" onclick="switchSuite('documents'); closeSidebar()">
                         Documents
                     </button>
-                    <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;">
+                    <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
                     </a>
                 </nav>
@@ -703,7 +795,7 @@
 
                 <!-- Subtab 2: Register Document Form -->
                 <div class="subtab-panel" id="subtab-panel-register">
-                    <div class="card" style="max-width: 700px;">
+                    <div class="card" style="width: 100%; max-width: 700px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Document</h3>
                         <form id="register-doc-form">
                             <div class="form-group">
@@ -804,7 +896,7 @@
 
     <!-- Revoke Flat Modal -->
     <div id="revoke-flat-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
-        <div style="background:var(--background); padding:24px; border-radius:12px; width:400px; max-width:90%; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 style="margin-top:0; color:var(--foreground); font-size:18px;">Revoke Resident Flat</h3>
             <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px; line-height:1.5;">Select the flat mapping you want to revoke for this user.</p>
             
@@ -824,6 +916,26 @@
     </div>
 
     <script>
+        // ---- Sidebar toggle (mobile) ----
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar.classList.contains('open')) {
+                closeSidebar();
+            } else {
+                sidebar.classList.add('open');
+                overlay.classList.add('open');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
         function escapeHtml(unsafe) {
             if (!unsafe) return '';
             return unsafe
@@ -1156,14 +1268,14 @@
                 
                 if (response.ok) {
                     feedback.className = 'feedback-box success';
-                    feedback.innerHTML = `<span class="icon">✓</span> ${data.message}`;
+                    feedback.innerHTML = `<span class="icon">✓</span> ${escapeHtml(data.message)}`;
                     setTimeout(() => {
                         closeRevokeFlatModal();
                         loadUsers();
                     }, 1000);
                 } else {
                     feedback.className = 'feedback-box error';
-                    feedback.innerHTML = `<span class="icon">!</span> ${data.message || 'Failed to revoke flat.'}`;
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to revoke flat.')}`;
                 }
             } catch (err) {
                 feedback.className = 'feedback-box error';
