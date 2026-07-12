@@ -22,7 +22,7 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<Pool<Postgres>, sqlx
 
     PgPoolOptions::new()
         .max_connections(config.max_connections)
-        .acquire_timeout(Duration::from_secs(3))
+        .acquire_timeout(Duration::from_secs(config.acquire_timeout_secs))
         .connect_with(connect_options)
         .await
 }

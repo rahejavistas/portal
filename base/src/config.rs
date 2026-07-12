@@ -14,6 +14,8 @@ pub struct PostgresConfig {
     pub database: String,
     #[serde(default = "default_max_connections")]
     pub max_connections: u32,
+    #[serde(default = "default_acquire_timeout_secs")]
+    pub acquire_timeout_secs: u64,
     // TODO: remove this
     pub database_url: Option<String>,
 }
@@ -31,7 +33,10 @@ fn default_database() -> String {
     "postgres".to_string()
 }
 fn default_max_connections() -> u32 {
-    5
+    3
+}
+fn default_acquire_timeout_secs() -> u64 {
+    10
 }
 
 #[derive(Debug, Deserialize, Clone)]
