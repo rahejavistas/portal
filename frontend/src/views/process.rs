@@ -82,12 +82,12 @@ pub const PROCESS_HTML: &str = r#"
             display: none;
             position: fixed;
             top: 0; left: 0; right: 0;
-            height: 56px;
+            height: 48px;
             background-color: var(--background);
             border-bottom: 1px solid var(--border);
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px;
+            padding: 0 14px;
             z-index: 200;
         }
         .mobile-topbar-brand {
@@ -234,23 +234,31 @@ pub const PROCESS_HTML: &str = r#"
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 24px 20px;
+                padding: 64px 20px 24px 20px;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
             .sidebar-brand p { display: none; }
+            .sidebar-brand h1 { display: none; }
+            /* Hide standalone logout div on mobile — it's embedded in the nav instead */
+            .sidebar > div:last-child { display: none; }
             .workspace {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
                 width: 100%;
                 min-width: 0;
                 max-width: 100vw;
-                overflow-x: hidden;
+                box-sizing: border-box;
             }
-            h2 { font-size: 1.75rem; }
-            .section-desc { font-size: 0.9375rem; }
+            h2 { font-size: 1.5rem; }
+            .section-desc { font-size: 0.875rem; }
+            /* Ensure nothing wider than viewport */
+            .card, .table-container, .process-workspace, .subtab-bar, #filters-container {
+                max-width: 100%;
+                box-sizing: border-box;
+            }
             /* Process details: step sidebar as full-width accordion on mobile */
-            .process-workspace { flex-direction: column; gap: 16px; }
+            .process-workspace { flex-direction: column; }
             .process-sidebar { width: 100%; }
             .step-stages-toggle {
                 display: flex;
@@ -274,10 +282,7 @@ pub const PROCESS_HTML: &str = r#"
                 flex-direction: column;
                 gap: 8px;
             }
-            /* Hide table columns on small screens */
-            .process-table-col-flat { display: none; }
-            .process-table-col-date { display: none; }
-            /* Transform process list table into cards on mobile */
+            /* Process list: transform table into vertical cards on mobile */
             #screen-list .table-container {
                 overflow: visible;
                 background: transparent;
@@ -289,10 +294,9 @@ pub const PROCESS_HTML: &str = r#"
             #screen-list tbody { display: flex; flex-direction: column; gap: 10px; }
             #screen-list tr {
                 display: flex;
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-                gap: 12px;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
                 background: var(--background);
                 border: 1px solid var(--border);
                 border-radius: var(--radius-lg);
@@ -304,26 +308,41 @@ pub const PROCESS_HTML: &str = r#"
                 border: none;
                 padding: 0;
                 font-size: 0.875rem;
+                width: 100%;
             }
-            /* Name cell takes remaining space */
-            #screen-list td:first-child { flex: 1; min-width: 0; }
-            /* State cell stays compact on right */
-            #screen-list td:nth-child(3) { flex-shrink: 0; }
-            /* Process title fits within card */
+            /* Process title fits full width */
             #screen-list .process-title {
                 font-size: 0.9375rem;
                 max-width: 100%;
                 -webkit-line-clamp: 2;
             }
-            /* Content panel: remove max-height constraint on mobile */
+            /* Content panel: full height, no inner scroll — page scrolls */
             .process-content-panel {
-                max-height: none;
                 padding: 20px 16px;
             }
+            /* Details header: tighter on mobile */
+            #screen-details > div:first-child h2 {
+                font-size: 1.25rem;
+            }
+            /* Mobile step pill bar — same pattern as the working document filter bar */
+            .mobile-step-pill-bar {
+                display: flex !important;
+                overflow-x: auto;
+                width: 100%;
+                min-width: 0;
+                gap: 8px;
+                padding-bottom: 8px;
+                margin-bottom: 12px;
+                -webkit-overflow-scrolling: touch;
+            }
+            .mobile-step-pill-bar::-webkit-scrollbar { display: none; }
+            /* Hide the desktop sidebar wrapper on mobile */
+            #details-sidebar-target-wrapper { display: none !important; }
         }
         @media (min-width: 769px) {
             .step-stages-toggle { display: none !important; }
             .process-sidebar-steps { display: flex; flex-direction: column; gap: 12px; }
+            .mobile-step-pill-bar { display: none !important; }
         }
         @media (max-width: 992px) and (min-width: 769px) {
             .process-workspace {
@@ -573,7 +592,6 @@ pub const PROCESS_HTML: &str = r#"
         /* Workspace layout */
         .process-workspace {
             display: flex;
-            gap: 32px;
             margin-top: 24px;
             align-items: flex-start;
         }
@@ -601,16 +619,53 @@ pub const PROCESS_HTML: &str = r#"
             border-radius: var(--radius-lg);
             padding: 32px;
             border: 1px solid var(--border);
-            max-height: calc(75vh - 60px);
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
         }
-        .process-content-panel::-webkit-scrollbar { width: 5px; }
-        .process-content-panel::-webkit-scrollbar-track { background: transparent; }
-        .process-content-panel::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
-        /* step-stages-toggle shown only on mobile via @media above */
+        /* step-stages-toggle shown only on mobile via @media above — now unused but kept for compat */
         .step-stages-toggle { display: none; }
+
+        /* Mobile step pill bar — same pattern as working document filter bar */
+        .mobile-step-pill-bar {
+            display: none;
+            overflow-x: auto;
+            gap: 8px;
+            padding-bottom: 8px;
+            -webkit-overflow-scrolling: touch;
+        }
+        .mobile-step-pill-bar::-webkit-scrollbar { display: none; }
+        .mobile-step-pill {
+            flex-shrink: 0;
+            padding: 8px 14px;
+            border-radius: 9999px;
+            border: 2px solid var(--border);
+            background: var(--background);
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--muted-foreground);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .mobile-step-pill:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+        .mobile-step-pill.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+        .mobile-step-pill.completed {
+            border-color: var(--secondary);
+            color: var(--secondary);
+        }
+        .mobile-step-pill.active.completed {
+            background: var(--secondary);
+            border-color: var(--secondary);
+            color: #fff;
+        }
 
         /* Step nav items (Sidebar) */
         .step-nav-item {
@@ -811,6 +866,7 @@ pub const PROCESS_HTML: &str = r#"
             <div class="sidebar-brand" id="sidebar-brand-container">
                 <!-- Dynamically populated based on user role -->
             </div>
+            <!-- Desktop logout (hidden on mobile via CSS, mobile one is in the nav) -->
             <div>
                 <button class="logout-btn" id="logout-btn">Log Out</button>
             </div>
@@ -884,14 +940,14 @@ pub const PROCESS_HTML: &str = r#"
                 </div>
 
                 <div class="process-workspace">
-                    <!-- Step Navigation Sidebar -->
+                    <!-- Mobile step pill bar (always visible on mobile, hidden on desktop) -->
+                    <div class="mobile-step-pill-bar" id="mobile-step-pill-bar">
+                        <!-- Populated dynamically by JS -->
+                    </div>
+
+                    <!-- Step Navigation Sidebar (desktop only) -->
                     <div class="process-sidebar" id="details-sidebar-target-wrapper">
-                        <!-- Mobile accordion toggle -->
-                        <button class="step-stages-toggle" id="stages-toggle-btn" onclick="toggleStagesSidebar()">
-                            <span id="stages-toggle-label">View All Stages</span>
-                            <span id="stages-toggle-icon">▼</span>
-                        </button>
-                        <!-- Steps list (shown always on desktop, toggled on mobile) -->
+                        <!-- Steps list -->
                         <div class="process-sidebar-steps" id="details-sidebar-target">
                             <!-- Step list items will be rendered here -->
                         </div>
@@ -993,6 +1049,7 @@ pub const PROCESS_HTML: &str = r#"
         const mobileBrandLabel = document.getElementById('mobile-brand-label');
         if (mobileBrandLabel) mobileBrandLabel.textContent = isAdmin ? 'Admin' : 'Vistas';
         if (sidebarBrandContainer) {
+            const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
             if (isAdmin) {
                 sidebarBrandContainer.innerHTML = `
                     <h1>Admin</h1>
@@ -1001,6 +1058,7 @@ pub const PROCESS_HTML: &str = r#"
                         <a href="/admin" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>
                         <a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        <button class="logout-btn" style="margin-top:8px; display:none;" id="logout-btn-mobile" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             } else {
@@ -1011,8 +1069,14 @@ pub const PROCESS_HTML: &str = r#"
                         <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        <button class="logout-btn" style="margin-top:8px; display:none;" id="logout-btn-mobile" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
+            }
+            // Show mobile logout btn only on small screens
+            const mobileLogout = document.getElementById('logout-btn-mobile');
+            if (mobileLogout && window.innerWidth <= 768) {
+                mobileLogout.style.display = 'block';
             }
         }
 
@@ -1405,14 +1469,15 @@ pub const PROCESS_HTML: &str = r#"
                 const isActive = step.template_step_id === currentSelectedStepId;
                 
                 let statusLabel = 'Locked';
-                if (step.status === 'COMPLETED') statusLabel = 'Completed';
-                else if (step.status === 'PENDING_REVIEW') statusLabel = 'Reviewing';
-                else if (step.status === 'OPEN') statusLabel = 'Active';
+                let statusSymbol = '○';
+                if (step.status === 'COMPLETED') { statusLabel = 'Done'; statusSymbol = '✓'; }
+                else if (step.status === 'PENDING_REVIEW') { statusLabel = 'Review'; statusSymbol = '⋯'; }
+                else if (step.status === 'OPEN') { statusLabel = 'Active'; statusSymbol = '●'; }
 
+                // Desktop sidebar nav item
                 const btn = document.createElement('button');
                 btn.className = 'step-nav-item' + (isActive ? ' active' : '');
                 btn.onclick = () => selectStep(step.template_step_id);
-                
                 btn.innerHTML = `
                     <div class="step-nav-info">
                         <span class="step-nav-num">Stage ${index + 1}</span>
@@ -1422,6 +1487,43 @@ pub const PROCESS_HTML: &str = r#"
                 `;
                 sidebar.appendChild(btn);
             });
+
+            // Mobile pill bar — always visible, horizontal scroll
+            const pillBar = document.getElementById('mobile-step-pill-bar');
+            if (pillBar) {
+                pillBar.innerHTML = '';
+                steps.forEach((step, index) => {
+                    const isActive = step.template_step_id === currentSelectedStepId;
+                    let pillStatusClass = step.status === 'COMPLETED' ? 'completed' : '';
+                    let statusSymbol = '';
+                    if (step.status === 'COMPLETED') statusSymbol = ' ✓';
+                    else if (step.status === 'PENDING_REVIEW') statusSymbol = ' ⋯';
+                    else if (step.status === 'OPEN') statusSymbol = ' ●';
+
+                    const pill = document.createElement('button');
+                    pill.className = 'mobile-step-pill' + (isActive ? ' active' : '') + (pillStatusClass ? ' ' + pillStatusClass : '');
+                    pill.onclick = () => selectStep(step.template_step_id);
+                    pill.textContent = `${index + 1}. ${step.name}${statusSymbol}`;
+                    pillBar.appendChild(pill);
+                });
+
+                // JS drag scroll — works regardless of CSS/browser touch routing
+                let tsX = 0, tsScroll = 0, tsDragging = false;
+                pillBar.addEventListener('touchstart', (e) => {
+                    tsX = e.touches[0].clientX;
+                    tsScroll = pillBar.scrollLeft;
+                    tsDragging = true;
+                }, { passive: true });
+                pillBar.addEventListener('touchmove', (e) => {
+                    if (!tsDragging) return;
+                    pillBar.scrollLeft = tsScroll + (tsX - e.touches[0].clientX);
+                }, { passive: true });
+                pillBar.addEventListener('touchend', () => { tsDragging = false; }, { passive: true });
+
+                // Scroll active pill into view
+                const activePill = pillBar.querySelector('.mobile-step-pill.active');
+                if (activePill) activePill.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            }
 
             // Render the currently selected step content in the content panel
             renderSelectedStepContent();

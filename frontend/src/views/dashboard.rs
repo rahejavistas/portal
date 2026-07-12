@@ -66,12 +66,12 @@ pub const DASHBOARD_HTML: &str = r#"
             top: 0;
             left: 0;
             right: 0;
-            height: 56px;
+            height: 48px;
             background-color: var(--background);
             border-bottom: 1px solid var(--border);
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px;
+            padding: 0 14px;
             z-index: 200;
         }
         .mobile-topbar-brand {
@@ -301,24 +301,29 @@ pub const DASHBOARD_HTML: &str = r#"
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 24px 20px;
+                padding: 64px 20px 24px 20px;
                 top: 0;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
             .sidebar-brand p { display: none; }
+            .sidebar-brand h1 { display: none; }
+            /* Hide the standalone bottom logout div on mobile — logout is in nav */
+            .sidebar > div:last-child { display: none; }
+            .logout-btn-mobile-nav { display: block !important; }
             .main-content {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
                 width: 100%;
                 min-width: 0;
                 max-width: 100vw;
+                box-sizing: border-box;
             }
             /* Document table -> card layout on mobile */
             .doc-table-desktop { display: none; }
             .doc-cards-mobile { display: flex !important; }
-            h2 { font-size: 1.75rem; }
-            .section-desc { font-size: 0.9375rem; }
+            h2 { font-size: 1.5rem; }
+            .section-desc { font-size: 0.875rem; }
         }
         @media (min-width: 769px) {
             .doc-table-desktop { display: block; }
@@ -568,6 +573,7 @@ pub const DASHBOARD_HTML: &str = r#"
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                    <button class="logout-btn logout-btn-mobile-nav" id="logout-btn-mobile" style="display:none; margin-top: 8px;">Log Out</button>
                 </nav>
             </div>
 
@@ -791,6 +797,14 @@ pub const DASHBOARD_HTML: &str = r#"
             localStorage.clear();
             window.location.href = '/login';
         });
+        const mobileLogoutBtn = document.getElementById('logout-btn-mobile');
+        if (mobileLogoutBtn) {
+            mobileLogoutBtn.addEventListener('click', () => {
+                localStorage.clear();
+                window.location.href = '/login';
+            });
+            if (window.innerWidth <= 768) mobileLogoutBtn.style.display = 'block';
+        }
 
         // Parse URL params for initial tab
         const urlParams = new URLSearchParams(window.location.search);

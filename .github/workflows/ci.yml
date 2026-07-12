@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   rust-ci:
@@ -15,6 +16,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Free Disk Space
+      run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/.ghcup
+        sudo rm -rf /usr/share/swift
+        sudo apt-get clean
+        df -h
+
     - name: Checkout Code
       uses: actions/checkout@v4
 
@@ -39,6 +50,4 @@ jobs:
       run: ./scripts/run_checks.sh
 
     - name: Build and Run Tests
-      run: |
-        cargo build
-        cargo test
+      run: cargo test
