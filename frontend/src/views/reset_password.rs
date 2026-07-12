@@ -32,13 +32,14 @@ pub const RESET_PASSWORD_HTML: &str = r#"
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
             position: relative;
         }
 
         /* Decorative Background Shapes */
         .bg-shape-1 {
-            position: absolute;
+            position: fixed;
             width: 400px;
             height: 400px;
             border-radius: 50%;
@@ -46,9 +47,10 @@ pub const RESET_PASSWORD_HTML: &str = r#"
             top: -100px;
             right: -100px;
             z-index: 1;
+            pointer-events: none;
         }
         .bg-shape-2 {
-            position: absolute;
+            position: fixed;
             width: 500px;
             height: 500px;
             border-radius: 50%;
@@ -56,6 +58,7 @@ pub const RESET_PASSWORD_HTML: &str = r#"
             bottom: -150px;
             left: -150px;
             z-index: 1;
+            pointer-events: none;
         }
 
         .container {
@@ -64,6 +67,11 @@ pub const RESET_PASSWORD_HTML: &str = r#"
             padding: 24px;
             position: relative;
             z-index: 10;
+        }
+        @media (max-width: 480px) {
+            .container { padding: 16px; }
+            .display-title { font-size: 2.5rem !important; }
+            .card { padding: 24px 20px !important; }
         }
         .display-header {
             text-align: center;
