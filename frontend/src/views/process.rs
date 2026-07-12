@@ -1584,9 +1584,9 @@ pub const PROCESS_HTML: &str = r#"
 
                     if (uniqueDocs.length > 0) {
                         inputHtml = uniqueDocs.map(doc => `
-                            <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border);">
-                                <span style="font-weight: 600;">Document: ${escapeHtml(doc.document_title || 'File')}</span>
-                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; margin-left: 12px;" onclick="downloadProcessDoc('${escapeHtml(doc.document_id)}')">Download</button>
+                            <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
+                                <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(doc.document_title || 'File')}</span>
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="downloadProcessDoc('${escapeHtml(doc.document_id)}')">Download</button>
                             </div>
                         `).join('');
                     } else {
@@ -2428,8 +2428,8 @@ pub const PROCESS_HTML: &str = r#"
     </script>
 
     <!-- Document Picker Modal -->
-    <div id="docPickerModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center;">
-        <div style="background: var(--background); width: 100%; max-width: 600px; max-height: 85vh; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1);">
+    <div id="docPickerModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 16px; box-sizing: border-box;">
+        <div style="background: var(--background); width: 100%; max-width: 600px; max-height: 85vh; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box;">
             <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
                 <h3 style="margin: 0; font-size: 1.25rem;">Choose Document</h3>
                 <button type="button" onclick="closeDocumentPickerModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--muted-foreground);">&times;</button>
@@ -2437,9 +2437,9 @@ pub const PROCESS_HTML: &str = r#"
             
             <div style="padding: 20px; overflow-y: auto;">
                 <h4 style="margin: 0 0 12px 0; font-size: 1rem;">Upload New</h4>
-                <div style="display: flex; gap: 12px; margin-bottom: 32px;">
-                    <input type="file" id="picker-new-upload" style="flex: 1; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px;">
-                    <button type="button" class="btn btn-primary" onclick="uploadNewDocumentFromPicker()">Upload & Select</button>
+                <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px;">
+                    <input type="file" id="picker-new-upload" style="flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
+                    <button type="button" class="btn btn-primary" onclick="uploadNewDocumentFromPicker()" style="white-space: nowrap;">Upload & Select</button>
                 </div>
                 
                 <h4 id="picker-library-heading" style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>

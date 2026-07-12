@@ -332,13 +332,10 @@ pub const DASHBOARD_HTML: &str = r#"
 
         /* Document card (mobile view) */
         .doc-cards-mobile {
-            max-height: 480px;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
-        .doc-cards-mobile::-webkit-scrollbar { width: 4px; }
-        .doc-cards-mobile::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         .doc-card-mobile {
             background: var(--background);
             border-radius: var(--radius-lg);
@@ -432,18 +429,10 @@ pub const DASHBOARD_HTML: &str = r#"
         /* Table Styles for Documents */
         .table-container {
             overflow-x: auto;
-            overflow-y: auto;
-            max-height: 480px;
             border-radius: var(--radius-lg);
             border: none;
             background-color: var(--background);
-            /* Custom scrollbar */
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
         }
-        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
-        .table-container::-webkit-scrollbar-track { background: transparent; }
-        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         table {
             width: 100%;
             border-collapse: collapse;

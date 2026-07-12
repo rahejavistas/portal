@@ -293,7 +293,7 @@ pub const ADMIN_HTML: &str = r#"
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 24px 20px;
+                padding: 64px 20px 24px 20px;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
@@ -628,11 +628,8 @@ pub const ADMIN_HTML: &str = r#"
                     <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
                     </a>
+                    <button class="logout-btn" id="logout-btn">Log Out</button>
                 </nav>
-            </div>
-
-            <div>
-                <button class="logout-btn" id="logout-btn">Log Out</button>
             </div>
         </aside>
 
