@@ -316,8 +316,12 @@ pub const PROCESS_HTML: &str = r#"
                 max-width: 100%;
                 -webkit-line-clamp: 2;
             }
-            /* Content panel: full height, no inner scroll — page scrolls */
+            /* Content panel: constrained to parent width — page scrolls */
             .process-content-panel {
+                width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+                overflow: hidden;
                 padding: 20px 16px;
             }
             /* Details header: tighter on mobile */
@@ -615,6 +619,10 @@ pub const PROCESS_HTML: &str = r#"
         .process-sidebar-steps::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         .process-content-panel {
             flex-grow: 1;
+            min-width: 0;
+            width: 0;
+            box-sizing: border-box;
+            overflow: hidden;
             background-color: var(--background);
             border-radius: var(--radius-lg);
             padding: 32px;
