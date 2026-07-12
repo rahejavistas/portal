@@ -287,46 +287,6 @@ pub const ADMIN_HTML: &str = r#"
             z-index: 10;
         }
 
-        @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
-            .sidebar {
-                transform: translateX(-100%);
-                width: min(280px, 85vw);
-                min-width: unset;
-                padding: 64px 20px 24px 20px;
-                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
-            }
-            .sidebar.open { transform: translateX(0); }
-            .sidebar-brand p { display: none; }
-            .workspace {
-                margin-left: 0 !important;
-                padding: 72px 16px 32px 16px;
-                width: 100%;
-                min-width: 0;
-                max-width: 100vw;
-                overflow-x: hidden;
-            }
-            /* Reduce card padding so inner content fits */
-            .card { padding: 20px; margin-bottom: 20px; }
-            /* Collapse split grid immediately */
-            .split-grid { grid-template-columns: 1fr; gap: 0; }
-            /* Subtabs wrap instead of overflowing */
-            .subtab-bar { flex-wrap: wrap; gap: 8px; }
-            /* Category filter bar must not widen the page */
-            .category-filter-bar {
-                max-width: 100%;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }
-            /* Table: horizontal scroll only, vertical handled by page */
-            table {
-                min-width: 480px;
-            }
-            /* Hide least critical table columns on very small screens */
-            .admin-col-hide-mobile { display: none; }
-            h2 { font-size: 1.75rem; }
-        }
-
         /* Typography */
         h2 {
             font-size: 2.75rem;
@@ -584,6 +544,46 @@ pub const ADMIN_HTML: &str = r#"
             background-color: #EF4444;
             color: var(--background);
             transform: scale(1.05);
+        }
+
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
+            .sidebar {
+                transform: translateX(-100%);
+                width: min(280px, 85vw);
+                min-width: unset;
+                padding: 64px 20px 24px 20px;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+            }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-brand p { display: none; }
+            .workspace {
+                margin-left: 0 !important;
+                padding: 72px 16px 32px 16px;
+                width: 100%;
+                min-width: 0;
+                max-width: 100vw;
+                overflow-x: hidden;
+            }
+            /* Reduce card padding so inner content fits */
+            .card { padding: 20px; margin-bottom: 20px; }
+            /* Collapse split grid immediately */
+            .split-grid { grid-template-columns: 1fr; gap: 0; }
+            /* Subtabs wrap instead of overflowing */
+            .subtab-bar { flex-wrap: wrap; gap: 8px; }
+            /* Category filter bar must not widen the page */
+            .category-filter-bar {
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            /* Table: horizontal scroll only, vertical handled by page */
+            table {
+                min-width: 480px;
+            }
+            /* Hide least critical table columns on very small screens */
+            .admin-col-hide-mobile { display: none; }
+            h2 { font-size: 1.75rem; }
         }
     </style>
 </head>

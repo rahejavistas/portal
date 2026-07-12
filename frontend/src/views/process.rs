@@ -228,134 +228,6 @@ pub const PROCESS_HTML: &str = r#"
             z-index: 10;
         }
 
-        @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
-            .sidebar {
-                transform: translateX(-100%);
-                width: min(280px, 85vw);
-                min-width: unset;
-                padding: 64px 20px 24px 20px;
-                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
-            }
-            .sidebar.open { transform: translateX(0); }
-            .sidebar-brand p { display: none; }
-            .sidebar-brand h1 { display: none; }
-            /* Hide standalone logout div on mobile — it's embedded in the nav instead */
-            .sidebar > div:last-child { display: none; }
-            .workspace {
-                margin-left: 0 !important;
-                padding: 72px 16px 32px 16px;
-                width: 100%;
-                min-width: 0;
-                max-width: 100vw;
-                box-sizing: border-box;
-            }
-            h2 { font-size: 1.5rem; }
-            .section-desc { font-size: 0.875rem; }
-            /* Ensure nothing wider than viewport */
-            .card, .table-container, .process-workspace, .subtab-bar, #filters-container {
-                max-width: 100%;
-                box-sizing: border-box;
-            }
-            /* Process details: step sidebar as full-width accordion on mobile */
-            .process-workspace { flex-direction: column; }
-            .process-sidebar { width: 100%; }
-            .step-stages-toggle {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                background: var(--background);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-lg);
-                padding: 14px 16px;
-                font-weight: 700;
-                font-size: 0.9375rem;
-                cursor: pointer;
-                width: 100%;
-                margin-bottom: 8px;
-            }
-            .process-sidebar-steps {
-                display: none;
-            }
-            .process-sidebar-steps.expanded {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-            }
-            /* Process list: transform table into vertical cards on mobile */
-            #screen-list .table-container {
-                overflow: visible;
-                background: transparent;
-                max-height: none;
-                border-radius: 0;
-            }
-            #screen-list table { display: block; min-width: unset; width: 100%; }
-            #screen-list thead { display: none; }
-            #screen-list tbody { display: flex; flex-direction: column; gap: 10px; }
-            #screen-list tr {
-                display: flex;
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 6px;
-                background: var(--background);
-                border: 1px solid var(--border);
-                border-radius: var(--radius-lg);
-                padding: 14px 16px;
-            }
-            #screen-list tr:hover { background: #F9FAFB; }
-            #screen-list td {
-                display: block;
-                border: none;
-                padding: 0;
-                font-size: 0.875rem;
-                width: 100%;
-            }
-            /* Process title fits full width */
-            #screen-list .process-title {
-                font-size: 0.9375rem;
-                max-width: 100%;
-                -webkit-line-clamp: 2;
-            }
-            /* Content panel: constrained to parent width — page scrolls */
-            .process-content-panel {
-                width: 100%;
-                min-width: 0;
-                box-sizing: border-box;
-                overflow: hidden;
-                padding: 20px 16px;
-            }
-            /* Details header: tighter on mobile */
-            #screen-details > div:first-child h2 {
-                font-size: 1.25rem;
-            }
-            /* Mobile step pill bar — same pattern as the working document filter bar */
-            .mobile-step-pill-bar {
-                display: flex !important;
-                overflow-x: auto;
-                width: 100%;
-                min-width: 0;
-                gap: 8px;
-                padding-bottom: 8px;
-                margin-bottom: 12px;
-                -webkit-overflow-scrolling: touch;
-            }
-            .mobile-step-pill-bar::-webkit-scrollbar { display: none; }
-            /* Hide the desktop sidebar wrapper on mobile */
-            #details-sidebar-target-wrapper { display: none !important; }
-        }
-        @media (min-width: 769px) {
-            .step-stages-toggle { display: none !important; }
-            .process-sidebar-steps { display: flex; flex-direction: column; gap: 12px; }
-            .mobile-step-pill-bar { display: none !important; }
-        }
-        @media (max-width: 992px) and (min-width: 769px) {
-            .process-workspace {
-                flex-direction: column;
-                gap: 24px;
-            }
-            .process-sidebar { width: 100%; }
-        }
-
         h2 {
             font-size: 2.75rem;
             font-weight: 800;
@@ -596,6 +468,7 @@ pub const PROCESS_HTML: &str = r#"
         /* Workspace layout */
         .process-workspace {
             display: flex;
+            width: 100%;
             margin-top: 24px;
             align-items: flex-start;
         }
@@ -853,6 +726,141 @@ pub const PROCESS_HTML: &str = r#"
             border-left: 2px solid var(--border);
             margin-bottom: 8px;
             background: #F9FAFB;
+        }
+
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
+            .sidebar {
+                transform: translateX(-100%);
+                width: min(280px, 85vw);
+                min-width: unset;
+                padding: 64px 20px 24px 20px;
+                box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+            }
+            .sidebar.open { transform: translateX(0); }
+            .sidebar-brand p { display: none; }
+            .sidebar-brand h1 { display: none; }
+            /* Hide standalone logout div on mobile — it's embedded in the nav instead */
+            .sidebar > div:last-child { display: none; }
+            .workspace {
+                margin-left: 0 !important;
+                padding: 72px 16px 32px 16px;
+                width: 100%;
+                min-width: 0;
+                max-width: 100vw;
+                box-sizing: border-box;
+            }
+            h2 { font-size: 1.5rem; }
+            .section-desc { font-size: 0.875rem; }
+            /* Ensure nothing wider than viewport */
+            .card, .table-container, .process-workspace, .subtab-bar, #filters-container {
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+            /* Process details: step sidebar as full-width accordion on mobile */
+            .process-workspace {
+                flex-direction: column;
+                align-items: stretch;
+                width: 100%;
+            }
+            .process-sidebar { width: 100%; }
+            .step-stages-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                background: var(--background);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 14px 16px;
+                font-weight: 700;
+                font-size: 0.9375rem;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 8px;
+            }
+            .process-sidebar-steps {
+                display: none;
+            }
+            .process-sidebar-steps.expanded {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            /* Process list: transform table into vertical cards on mobile */
+            #screen-list .table-container {
+                overflow: visible;
+                background: transparent;
+                max-height: none;
+                border-radius: 0;
+            }
+            #screen-list table { display: block; min-width: unset; width: 100%; }
+            #screen-list thead { display: none; }
+            #screen-list tbody { display: flex; flex-direction: column; gap: 10px; }
+            #screen-list tr {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+                background: var(--background);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                padding: 14px 16px;
+            }
+            #screen-list tr:hover { background: #F9FAFB; }
+            #screen-list td {
+                display: block;
+                border: none;
+                padding: 0;
+                font-size: 0.875rem;
+                width: 100%;
+            }
+            /* Process title fits full width */
+            #screen-list .process-title {
+                font-size: 0.9375rem;
+                max-width: 100%;
+                -webkit-line-clamp: 2;
+            }
+            /* Content panel: constrained to parent width — page scrolls */
+            .process-content-panel {
+                width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+                overflow: hidden;
+                padding: 20px 16px;
+            }
+            /* Details header: tighter on mobile */
+            #screen-details > div:first-child h2 {
+                font-size: 1.25rem;
+            }
+            /* Mobile step pill bar — same pattern as the working document filter bar */
+            .mobile-step-pill-bar {
+                display: flex !important;
+                overflow-x: auto;
+                width: 100%;
+                min-width: 0;
+                gap: 8px;
+                padding-bottom: 8px;
+                margin-bottom: 12px;
+                -webkit-overflow-scrolling: touch;
+            }
+            .mobile-step-pill-bar::-webkit-scrollbar { display: none; }
+            /* Hide the desktop sidebar wrapper on mobile */
+            #details-sidebar-target-wrapper { display: none !important; }
+        }
+        @media (min-width: 769px) {
+            .step-stages-toggle { display: none !important; }
+            .process-sidebar-steps { display: flex; flex-direction: column; gap: 12px; }
+            .mobile-step-pill-bar { display: none !important; }
+        }
+        @media (max-width: 992px) and (min-width: 769px) {
+            .process-workspace {
+                flex-direction: column;
+                align-items: stretch;
+                width: 100%;
+                gap: 24px;
+            }
+            .process-sidebar { width: 100%; }
+            .process-content-panel { width: 100%; }
         }
     </style>
 </head>
