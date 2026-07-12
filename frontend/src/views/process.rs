@@ -316,9 +316,8 @@ pub const PROCESS_HTML: &str = r#"
                 max-width: 100%;
                 -webkit-line-clamp: 2;
             }
-            /* Content panel: remove max-height constraint on mobile */
+            /* Content panel: full height, no inner scroll — page scrolls */
             .process-content-panel {
-                max-height: none;
                 padding: 20px 16px;
             }
             /* Details header: tighter on mobile */
@@ -329,6 +328,8 @@ pub const PROCESS_HTML: &str = r#"
             .mobile-step-pill-bar {
                 display: flex !important;
                 overflow-x: auto;
+                width: 100%;
+                min-width: 0;
                 gap: 8px;
                 padding-bottom: 8px;
                 margin-bottom: 12px;
@@ -618,14 +619,7 @@ pub const PROCESS_HTML: &str = r#"
             border-radius: var(--radius-lg);
             padding: 32px;
             border: 1px solid var(--border);
-            max-height: calc(75vh - 60px);
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
         }
-        .process-content-panel::-webkit-scrollbar { width: 5px; }
-        .process-content-panel::-webkit-scrollbar-track { background: transparent; }
-        .process-content-panel::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         /* step-stages-toggle shown only on mobile via @media above — now unused but kept for compat */
         .step-stages-toggle { display: none; }
 
