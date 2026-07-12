@@ -318,10 +318,7 @@ pub const ADMIN_HTML: &str = r#"
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
             }
-            /* Table scrolls inside its container only */
-            .table-container {
-                max-height: 380px;
-            }
+            /* Table: horizontal scroll only, vertical handled by page */
             table {
                 min-width: 480px;
             }
@@ -494,17 +491,9 @@ pub const ADMIN_HTML: &str = r#"
         /* Table */
         .table-container {
             overflow-x: auto;
-            overflow-y: auto;
-            max-height: 520px;
             border-radius: var(--radius-lg);
             background-color: var(--background);
-            /* Custom scrollbar */
-            scrollbar-width: thin;
-            scrollbar-color: var(--border) transparent;
         }
-        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
-        .table-container::-webkit-scrollbar-track { background: transparent; }
-        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
         table {
             width: 100%;
             border-collapse: collapse;
