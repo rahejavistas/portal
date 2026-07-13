@@ -99,22 +99,36 @@ pub async fn save_step(
     Ok(result.new_status)
 }
 
+/// Parameters for recording an admin review.
+/// Bundled into a struct to keep `review_step` within clippy argument limits.
+pub struct ReviewStepParams<'a> {
+    pub step_id: i32,
+    pub admin_id: Option<i32>,
+    pub is_approved: bool,
+    pub notes: Option<&'a str>,
+    /// Template step IDs (= `process_steps.template_step_id`) the admin flagged
+    /// as needing resident attention. Purely informational — does not affect the
+    /// state machine. See the migration comment for full details.
+    pub flagged_step_ids: &'a [i32],
+}
+
 /// Record an admin review (approve/reject).
 /// Returns whether the step is now completed (`process_steps.is_completed`).
 pub async fn review_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template: &crate::ProcessTemplate,
-    step_id: i32,
-    admin_id: Option<i32>,
-    is_approved: bool,
-    notes: Option<&str>,
+    params: ReviewStepParams<'_>,
 ) -> Result<bool, String> {
     let state = load_state(conn, process_id)
         .await
         .map_err(|e| e.to_string())?;
-    let (steps_to_update, is_completed) =
-        state_machine::compute_review_updates(template, &state, step_id, is_approved)?;
+    let (steps_to_update, is_completed) = state_machine::compute_review_updates(
+        template,
+        &state,
+        params.step_id,
+        params.is_approved,
+    )?;
 
     persist_step_completions(&mut *conn, process_id, &steps_to_update)
         .await
@@ -123,10 +137,11 @@ pub async fn review_step(
     insert_review(
         &mut *conn,
         process_id,
-        step_id,
-        admin_id,
-        is_approved,
-        notes,
+        params.step_id,
+        params.admin_id,
+        params.is_approved,
+        params.notes,
+        params.flagged_step_ids,
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -167,6 +182,7 @@ pub async fn reopen_step(
                 Some(admin_id),
                 false,
                 custom_note,
+                &[], // revokes carry no substep flags
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -233,6 +249,9 @@ pub struct ProcessReviewHistory {
     pub is_approved: bool,
     pub notes: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Template step IDs the admin flagged during this review as needing
+    /// resident attention. Purely informational — does not affect step state.
+    pub flagged_step_ids: Vec<i32>,
 }
 
 pub async fn get_process_reviews(
@@ -240,7 +259,8 @@ pub async fn get_process_reviews(
     process_id: Uuid,
 ) -> Result<Vec<ProcessReviewHistory>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT pr.review_id, ps.template_step_id, u.email as admin_email, pr.is_approved, pr.notes, pr.created_at \
+        "SELECT pr.review_id, ps.template_step_id, u.email as admin_email, \
+                pr.is_approved, pr.notes, pr.created_at, pr.flagged_step_ids \
          FROM process_step_reviews pr \
          JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
          LEFT JOIN users u ON pr.admin_id = u.user_id \
@@ -564,6 +584,7 @@ async fn insert_review(
     admin_id: Option<i32>,
     is_approved: bool,
     notes: Option<&str>,
+    flagged_step_ids: &[i32],
 ) -> Result<(), sqlx::Error> {
     let step_instance_id: Uuid = sqlx::query_scalar(
         "SELECT step_instance_id FROM process_steps WHERE process_id = $1 AND template_step_id = $2",
@@ -574,13 +595,15 @@ async fn insert_review(
     .await?;
 
     sqlx::query(
-        "INSERT INTO process_step_reviews (step_instance_id, admin_id, is_approved, notes, created_at) \
-         VALUES ($1, $2, $3, $4, NOW())",
+        "INSERT INTO process_step_reviews \
+         (step_instance_id, admin_id, is_approved, notes, flagged_step_ids, created_at) \
+         VALUES ($1, $2, $3, $4, $5, NOW())",
     )
     .bind(step_instance_id)
     .bind(admin_id)
     .bind(is_approved)
     .bind(notes)
+    .bind(flagged_step_ids)
     .execute(&mut *conn)
     .await?;
 

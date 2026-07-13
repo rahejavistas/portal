@@ -654,7 +654,9 @@ pub const PROCESS_HTML: &str = r#"
         .step-header {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 8px;
             margin-bottom: 12px;
         }
         .step-title {
@@ -1809,8 +1811,18 @@ pub const PROCESS_HTML: &str = r#"
             // If the selected step has substeps, render each substep card vertically
             if (selectedStep.substeps && selectedStep.substeps.length > 0) {
                 html += `<div style="display: flex; flex-direction: column; gap: 24px; margin-top: 16px;">`;
-                
-                selectedStep.substeps.forEach(sub => {
+
+                // Hoist admin context and latest-review flags so each substep card can render the checkbox
+                const isAdminForSubsteps = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const latestRevForCards = (p.reviews || []).reduce((latest, r) => {
+                    if (!latest) return r;
+                    return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
+                }, null);
+                const alreadyFlaggedIds = latestRevForCards && Array.isArray(latestRevForCards.flagged_step_ids)
+                    ? latestRevForCards.flagged_step_ids
+                    : [];
+
+                    selectedStep.substeps.forEach(sub => {
                     const subStatus = sub.status;
                     const subId = sub.template_step_id;
                     const subStatusLabel = subStatus.replace('_', ' ');
@@ -1820,14 +1832,35 @@ pub const PROCESS_HTML: &str = r#"
                     else if (subStatus === 'PENDING_REVIEW') subBadgeClass = 'pending_review';
                     else if (subStatus === 'OPEN') subBadgeClass = 'open';
 
+                    // Check if this substep was flagged in the latest review
+                    const latestRevForSub = (p.reviews || []).reduce((latest, r) => {
+                        if (!latest) return r;
+                        return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
+                    }, null);
+                    const isFlaggedByAdmin = latestRevForSub &&
+                        Array.isArray(latestRevForSub.flagged_step_ids) &&
+                        latestRevForSub.flagged_step_ids.includes(sub.template_step_id);
+                    const flagBadge = isFlaggedByAdmin
+                        ? `<span style="display:inline-flex;align-items:center;gap:4px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">⚑ Admin Focus</span>`
+                        : '';
+
                     html += `
-                        <div class="step-card ${subStatus.toLowerCase()}" style="padding: 20px; border-radius: var(--radius-lg); border-color: ${subStatus === 'OPEN' ? 'var(--primary)' : 'var(--border)'};">
+                        <div class="step-card ${subStatus.toLowerCase()}" style="padding: 20px; border-radius: var(--radius-lg); border-color: ${isFlaggedByAdmin ? '#FDE68A' : (subStatus === 'OPEN' ? 'var(--primary)' : 'var(--border)')};${isFlaggedByAdmin ? ' background: #FFFBEB;' : ''}">
                             <div class="step-header" style="margin-bottom: 8px;">
                                 <h4 class="step-title" style="font-size: 1.125rem; font-weight: 700;">${escapeHtml(sub.name)}</h4>
-                                <span class="status-pill ${subBadgeClass}">${subStatusLabel}</span>
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <span class="status-pill ${subBadgeClass}">${subStatusLabel}</span>
+                                    ${flagBadge}
+                                    ${isAdminForSubsteps && sub.fields && sub.fields.some(f => f.filled_by === 'user') ? `
+                                        <label title="Flag for resident attention" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;padding:3px 8px;border-radius:999px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border:1px solid ${alreadyFlaggedIds.includes(sub.template_step_id) ? '#FDE68A' : 'var(--border)'};background:${alreadyFlaggedIds.includes(sub.template_step_id) ? '#FEF3C7' : 'var(--muted)'};color:${alreadyFlaggedIds.includes(sub.template_step_id) ? '#92400E' : 'var(--muted-foreground)'}; user-select:none;">
+                                            <input type="checkbox" class="substep-flag-cb" data-substep-id="${sub.template_step_id}" ${alreadyFlaggedIds.includes(sub.template_step_id) ? 'checked' : ''} style="width:13px;height:13px;accent-color:#92400E;flex-shrink:0;cursor:pointer;">
+                                            ⚑ Flag
+                                        </label>
+                                    ` : ''}
+                                </div>
                             </div>
                             <p class="step-desc" style="margin-bottom: 16px; font-size: 0.875rem;">${escapeHtml(sub.description || '')}</p>
-                    `;
+                `;
 
                     if (sub.fields && sub.fields.length > 0 && subStatus !== 'LOCKED') {
                         html += `<div class="fields-container" style="border-top: 1px solid var(--border); padding-top: 16px;">`;
@@ -1854,6 +1887,9 @@ pub const PROCESS_HTML: &str = r#"
                 const approveButtonClass = isCompleted ? 'btn btn-secondary' : 'btn';
                 const approveDisabled = isCompleted ? 'disabled' : '';
 
+                // Build substep flag checkboxes — now embedded in each substep card header above.
+                // No separate panel needed.
+
                 html += `
                     <div style="border-top: 2px solid var(--border); padding-top: 24px; margin-top: 32px;">
                         <h4 style="margin: 0 0 16px 0; font-size: 1.25rem; font-weight: 800; color: var(--foreground);">Admin Action Panel</h4>
@@ -1861,9 +1897,9 @@ pub const PROCESS_HTML: &str = r#"
                             <label for="review-notes-${stepId}" style="font-weight: 700; font-size: 0.8125rem; text-transform: uppercase;">Review Remarks (Shown to Resident)</label>
                             <textarea id="review-notes-${stepId}" style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-family: inherit; font-size: 0.9375rem; line-height: 1.5;" placeholder="Enter comments or instructions..."></textarea>
                         </div>
-                        <div style="display: flex; gap: 16px; justify-content: flex-end;">
-                            <button class="btn btn-danger" style="font-size: 0.875rem; padding: 12px 24px;" onclick="${rejectOnClick}">${rejectButtonLabel}</button>
-                            <button class="${approveButtonClass}" style="font-size: 0.875rem; padding: 12px 24px;" ${approveDisabled} onclick="${approveOnClick}">${approveButtonLabel}</button>
+                        <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+                            <button class="btn btn-danger" style="font-size: 0.875rem; padding: 12px 24px; min-width: 140px; flex: 1 1 auto; max-width: 220px;" onclick="${rejectOnClick}">${rejectButtonLabel}</button>
+                            <button class="${approveButtonClass}" style="font-size: 0.875rem; padding: 12px 24px; min-width: 120px; flex: 1 1 auto; max-width: 180px;" ${approveDisabled} onclick="${approveOnClick}">${approveButtonLabel}</button>
                         </div>
                     </div>
                 `;
@@ -2134,11 +2170,17 @@ pub const PROCESS_HTML: &str = r#"
             const notesEl = document.getElementById(`review-notes-${stepId}`);
             const notes = notesEl ? notesEl.value.trim() : '';
 
+            // Collect flagged substep IDs from checked checkboxes
+            const flaggedStepIds = Array.from(
+                document.querySelectorAll('.substep-flag-cb:checked')
+            ).map(cb => parseInt(cb.dataset.substepId, 10));
+
             const payload = {
                 process_id: currentProcessDetails.process_id,
                 template_step_id: stepId,
                 is_approved: isApproved,
-                notes: notes ? notes : null
+                notes: notes ? notes : null,
+                flagged_step_ids: flaggedStepIds.length > 0 ? flaggedStepIds : null
             };
 
             try {
