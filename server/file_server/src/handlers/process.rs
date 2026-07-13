@@ -121,6 +121,9 @@ pub struct AdminReviewRequest {
     pub template_step_id: i32,
     pub is_approved: bool,
     pub notes: Option<String>,
+    /// Optional list of substep template_step_ids the admin is flagging for
+    /// resident attention. Stored as an annotation on the review record.
+    pub flagged_step_ids: Option<Vec<i32>>,
 }
 
 #[derive(Serialize)]
@@ -744,14 +747,18 @@ pub async fn admin_review_step(
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
 
+    let flagged = payload.flagged_step_ids.as_deref().unwrap_or(&[]);
     let is_completed = process::db::review_step(
         &mut tx,
         payload.process_id,
         &template,
-        payload.template_step_id,
-        Some(user.user_id),
-        payload.is_approved,
-        payload.notes.as_deref(),
+        process::db::ReviewStepParams {
+            step_id: payload.template_step_id,
+            admin_id: Some(user.user_id),
+            is_approved: payload.is_approved,
+            notes: payload.notes.as_deref(),
+            flagged_step_ids: flagged,
+        },
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;

@@ -90,15 +90,19 @@ impl<'a> TestProcess<'a> {
         admin_id: Option<i32>,
         is_approved: bool,
         notes: Option<&str>,
+        flagged_step_ids: &[i32],
     ) -> Result<(), String> {
         process::db::review_step(
             &mut *self.conn,
             self.process_id,
             self.template,
-            step_id,
-            admin_id,
-            is_approved,
-            notes,
+            process::db::ReviewStepParams {
+                step_id,
+                admin_id,
+                is_approved,
+                notes,
+                flagged_step_ids,
+            },
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -255,7 +259,7 @@ async fn test_process_lifecycle_integration() {
     assert_eq!(exec.status(2), StepStatus::PendingReview);
 
     // 6. Admin Review: Reject the step
-    exec.review_step(2, None, false, Some("Invalid documents"))
+    exec.review_step(2, None, false, Some("Invalid documents"), &[])
         .await
         .unwrap();
 
@@ -271,7 +275,7 @@ async fn test_process_lifecycle_integration() {
     let mut exec = TestProcess::reload_with_user(&mut conn, user_id, process_id, &template).await;
     exec.force_step_completion(2, true).await;
 
-    exec.review_step(2, None, true, Some("Approved"))
+    exec.review_step(2, None, true, Some("Approved"), &[])
         .await
         .unwrap();
 
@@ -391,7 +395,7 @@ async fn test_admin_reopen_and_edit_lifecycle() {
     assert_eq!(exec.status(2), StepStatus::PendingReview);
 
     // Admin approves the step
-    exec.review_step(2, Some(user_id), true, Some("Approved"))
+    exec.review_step(2, Some(user_id), true, Some("Approved"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(2), StepStatus::Completed);
@@ -534,7 +538,7 @@ async fn test_invalid_process_workflows_and_transitions() {
 
     // 3. Review a step that is OPEN (step 2) — this is now allowed
     let review_open_res = exec
-        .review_step(2, Some(user_id), true, Some("Approved"))
+        .review_step(2, Some(user_id), true, Some("Approved"), &[])
         .await;
     assert!(
         review_open_res.is_ok(),
@@ -556,7 +560,9 @@ async fn test_invalid_process_workflows_and_transitions() {
     // 3b. Review a LOCKED step (step 7 is Locked) — this should still fail
     //     Reset step 2 first so step 7 stays locked
     exec.force_step_completion(2, false).await;
-    let review_locked_res = exec.review_step(7, Some(user_id), true, Some("Bad")).await;
+    let review_locked_res = exec
+        .review_step(7, Some(user_id), true, Some("Bad"), &[])
+        .await;
     assert!(
         review_locked_res.is_err(),
         "LOCKED steps should not be reviewable"
@@ -674,7 +680,7 @@ async fn test_admin_reopen_parent_step_directly() {
     assert_eq!(exec.status(2), StepStatus::PendingReview);
 
     // Admin approves step 2
-    exec.review_step(2, Some(user_id), true, Some("Approved"))
+    exec.review_step(2, Some(user_id), true, Some("Approved"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(2), StepStatus::Completed);
@@ -924,6 +930,7 @@ async fn test_rejection_resubmission_approval_lifecycle() {
         Some(user_id),
         false,
         Some("KYC documents are blurry. Please upload again."),
+        &[],
     )
     .await
     .unwrap();
@@ -1006,7 +1013,7 @@ async fn test_rejection_resubmission_approval_lifecycle() {
     assert_eq!(count, 2);
 
     // Admin approves the resubmission
-    exec.review_step(2, Some(user_id), true, Some("Looks good now!"))
+    exec.review_step(2, Some(user_id), true, Some("Looks good now!"), &[])
         .await
         .unwrap();
 
@@ -1234,7 +1241,7 @@ async fn test_turn_logic_full_lifecycle() {
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
     // T2: Admin approves Step 1 → Step 2 opens (admin field 111) → still Admin turn
-    exec.review_step(2, Some(user_id), true, Some("All documents verified"))
+    exec.review_step(2, Some(user_id), true, Some("All documents verified"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(2), StepStatus::Completed);
@@ -1265,7 +1272,7 @@ async fn test_turn_logic_full_lifecycle() {
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
     // T4: Admin approves Step 2 → Step 3 opens (admin field 112) → Admin turn
-    exec.review_step(7, Some(user_id), true, Some("Approved"))
+    exec.review_step(7, Some(user_id), true, Some("Approved"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(7), StepStatus::Completed);
@@ -1288,7 +1295,7 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
-    exec.review_step(8, Some(user_id), true, Some("NOC issued"))
+    exec.review_step(8, Some(user_id), true, Some("NOC issued"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(9), StepStatus::Open);
@@ -1325,7 +1332,7 @@ async fn test_turn_logic_full_lifecycle() {
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
     // T7: Admin approves Step 4 → Step 5 opens (admin field) → Admin turn
-    exec.review_step(9, Some(user_id), true, Some("Agreement verified"))
+    exec.review_step(9, Some(user_id), true, Some("Agreement verified"), &[])
         .await
         .unwrap();
 
@@ -1346,7 +1353,7 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
-    exec.review_step(10, Some(user_id), true, Some("Shifting approved"))
+    exec.review_step(10, Some(user_id), true, Some("Shifting approved"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(10), StepStatus::Completed);
@@ -1407,7 +1414,7 @@ async fn test_revoke_resubmit_turn_and_note_content() {
     assert_eq!(exec.status(2), StepStatus::PendingReview);
 
     // Admin approves Step 1
-    exec.review_step(2, Some(user_id), true, Some("Approved"))
+    exec.review_step(2, Some(user_id), true, Some("Approved"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(2), StepStatus::Completed);
@@ -1670,7 +1677,7 @@ async fn test_comprehensive_failure_cases() {
         exec.save_step_fields(step, &inputs, false).await.unwrap();
     }
     exec.force_step_completion(2, true).await;
-    exec.review_step(2, Some(user_id), true, Some("OK"))
+    exec.review_step(2, Some(user_id), true, Some("OK"), &[])
         .await
         .unwrap();
     assert_eq!(exec.status(7), StepStatus::Open);
@@ -1693,7 +1700,7 @@ async fn test_comprehensive_failure_cases() {
 
     // 3. Cannot review a LOCKED step
     let result = exec
-        .review_step(8, Some(user_id), true, Some("Bad review"))
+        .review_step(8, Some(user_id), true, Some("Bad review"), &[])
         .await;
     assert!(result.is_err(), "Cannot review a step that is Locked");
 
@@ -1783,7 +1790,7 @@ async fn test_revoke_without_note_stores_null() {
             .collect();
         exec.save_step_fields(step, &inputs, false).await.unwrap();
     }
-    exec.review_step(2, Some(user_id), true, Some("OK"))
+    exec.review_step(2, Some(user_id), true, Some("OK"), &[])
         .await
         .unwrap();
 
@@ -1808,6 +1815,184 @@ async fn test_revoke_without_note_stores_null() {
             note.is_none(),
             "Expected NULL note for revoke without note, got: {:?}",
             note
+        );
+    }
+}
+
+/// Test that flagged_step_ids are persisted correctly on a review and returned
+/// by get_process_reviews, and that reviews with no flags store an empty array.
+#[tokio::test]
+async fn test_review_flagged_step_ids() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+
+    let user_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) \
+         VALUES ('test_flagged_steps@vistas.com', TRUE) \
+         RETURNING user_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
+
+    let doc_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
+         VALUES ($1, 'flag_test.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+    )
+    .bind(doc_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (step, fids) in [
+        (3, vec![101i32, 102, 103, 105, 106]),
+        (4, vec![107]),
+        (5, vec![108]),
+        (6, vec![109, 110]),
+    ] {
+        let inputs: Vec<process::state_machine::SaveFieldInput> = fids
+            .into_iter()
+            .map(|fid| process::state_machine::SaveFieldInput {
+                template_field_id: fid,
+                text_value: None,
+                document_id: Some(doc_id),
+            })
+            .collect();
+        exec.save_step_fields(step, &inputs, false).await.unwrap();
+    }
+    assert_eq!(exec.status(2), StepStatus::PendingReview);
+
+    // Admin rejects and flags substeps 3 and 5 ("Owner Documents" and "Undertaking").
+    // These are template_step_ids — same integers stored in process_steps.template_step_id.
+    exec.review_step(
+        2,
+        Some(user_id),
+        false,
+        Some("Please fix owner docs and undertaking."),
+        &[3, 5],
+    )
+    .await
+    .unwrap();
+
+    // get_process_reviews should return the flags intact
+    let reviews = process::db::get_process_reviews(&mut *exec.conn, exec.process_id)
+        .await
+        .unwrap();
+
+    assert_eq!(reviews.len(), 1);
+    let r = &reviews[0];
+    assert!(!r.is_approved);
+    assert_eq!(
+        r.notes.as_deref(),
+        Some("Please fix owner docs and undertaking.")
+    );
+
+    // flagged_step_ids should be exactly {3, 5} (sort to normalise order)
+    let mut flagged = r.flagged_step_ids.clone();
+    flagged.sort();
+    assert_eq!(flagged, vec![3, 5], "flagged_step_ids mismatch");
+
+    // Submit a second review with NO flags — should persist as empty array
+    exec.force_step_completion(2, true).await;
+    exec.review_step(2, Some(user_id), true, Some("All good now"), &[])
+        .await
+        .unwrap();
+
+    let reviews2 = process::db::get_process_reviews(&mut *exec.conn, exec.process_id)
+        .await
+        .unwrap();
+    assert_eq!(reviews2.len(), 2);
+    let approved = reviews2.iter().find(|r| r.is_approved).unwrap();
+    assert!(
+        approved.flagged_step_ids.is_empty(),
+        "Approval with no flags should store an empty array"
+    );
+}
+
+/// Test that reopen_step always stores empty flagged_step_ids on its
+/// system-generated rejection reviews (never inherits admin flags).
+#[tokio::test]
+async fn test_reopen_step_stores_empty_flags() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+
+    let user_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) \
+         VALUES ('test_reopen_flags@vistas.com', TRUE) \
+         RETURNING user_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
+
+    let doc_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
+         VALUES ($1, 'reopen_flag.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+    )
+    .bind(doc_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for (step, fids) in [
+        (3, vec![101i32, 102, 103, 105, 106]),
+        (4, vec![107]),
+        (5, vec![108]),
+        (6, vec![109, 110]),
+    ] {
+        let inputs: Vec<process::state_machine::SaveFieldInput> = fids
+            .into_iter()
+            .map(|fid| process::state_machine::SaveFieldInput {
+                template_field_id: fid,
+                text_value: None,
+                document_id: Some(doc_id),
+            })
+            .collect();
+        exec.save_step_fields(step, &inputs, false).await.unwrap();
+    }
+
+    // Approve step 2 so it becomes Completed
+    exec.review_step(2, Some(user_id), true, Some("Approved"), &[])
+        .await
+        .unwrap();
+    assert_eq!(exec.status(2), StepStatus::Completed);
+
+    // Reopen substep 3 — inserts system-generated rejection reviews via insert_review(&[])
+    exec.reopen_step(3, Some("Please re-upload with better quality."))
+        .await
+        .unwrap();
+
+    // Every rejection review from reopen must carry empty flagged_step_ids
+    let flagged_arrays: Vec<Vec<i32>> = sqlx::query_scalar(
+        "SELECT pr.flagged_step_ids \
+         FROM process_step_reviews pr \
+         JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
+         WHERE ps.process_id = $1 AND pr.is_approved = FALSE",
+    )
+    .bind(exec.process_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    assert!(
+        !flagged_arrays.is_empty(),
+        "reopen_step should have inserted rejection reviews"
+    );
+    for flags in &flagged_arrays {
+        assert!(
+            flags.is_empty(),
+            "reopen_step rejection reviews must have empty flagged_step_ids, got: {:?}",
+            flags
         );
     }
 }
