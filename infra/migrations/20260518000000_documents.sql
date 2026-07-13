@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS generic_document_metadata (
     -- Temporal
     document_date DATE NOT NULL,
     valid_from DATE,
-    valid_until DATE,
+    valid_until DATE, 
     
     CONSTRAINT chk_generic_valid_date_range CHECK (
         valid_from IS NULL OR valid_until IS NULL OR valid_from <= valid_until
