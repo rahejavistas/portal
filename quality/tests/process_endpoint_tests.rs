@@ -532,3 +532,50 @@ async fn test_admin_process_upload_creates_downloadable_document() {
     assert_eq!(wing, "A", "Mapped to wrong wing");
     assert_eq!(flat_number, "0101", "Mapped to wrong flat number");
 }
+
+#[tokio::test]
+async fn test_admin_add_note_standalone() {
+    let env = setup_api_test_env(3134).await;
+    let url = env.server_url();
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+
+    // 1. Admin adds an internal note
+    let resp = ureq::post(&format!("{}/api/v1/admin/process/add-note", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 2,
+            "comment": "Admin standalone internal note test."
+        }))
+        .expect("Admin add note failed");
+
+    assert_eq!(resp.status(), 200);
+
+    // 2. Fetch process state as admin - should see the note
+    let admin_state_resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({"process_id": pid}))
+        .expect("Admin get state failed");
+
+    let admin_val: serde_json::Value = admin_state_resp.into_json().unwrap();
+    let admin_comments = admin_val["admin_comments"].as_array().unwrap();
+    assert_eq!(admin_comments.len(), 1);
+    assert_eq!(
+        admin_comments[0]["comment"].as_str().unwrap(),
+        "Admin standalone internal note test."
+    );
+    assert_eq!(admin_comments[0]["template_step_id"].as_i64().unwrap(), 2);
+
+    // 3. Fetch process state as resident - should NOT see the note
+    let res_state_resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({"process_id": pid}))
+        .expect("Resident get state failed");
+
+    let res_val: serde_json::Value = res_state_resp.into_json().unwrap();
+    let res_comments = res_val["admin_comments"].as_array().unwrap();
+    assert!(
+        res_comments.is_empty(),
+        "Resident should not see admin comments"
+    );
+}

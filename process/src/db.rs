@@ -134,17 +134,9 @@ pub async fn review_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    insert_review(
-        &mut *conn,
-        process_id,
-        params.step_id,
-        params.admin_id,
-        params.is_approved,
-        params.notes,
-        params.flagged_step_ids,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    insert_review(&mut *conn, process_id, &params)
+        .await
+        .map_err(|e| e.to_string())?;
 
     sync_start_times(&mut *conn, process_id, template)
         .await
@@ -178,11 +170,13 @@ pub async fn reopen_step(
             insert_review(
                 &mut *conn,
                 process_id,
-                sid,
-                Some(admin_id),
-                false,
-                custom_note,
-                &[], // revokes carry no substep flags
+                &ReviewStepParams {
+                    step_id: sid,
+                    admin_id: Some(admin_id),
+                    is_approved: false,
+                    notes: custom_note,
+                    flagged_step_ids: &[],
+                },
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -237,6 +231,18 @@ pub async fn get_process_info(
 ) -> Result<Option<ProcessInfo>, sqlx::Error> {
     sqlx::query_as("SELECT user_id, template_id, ownership_id FROM processes WHERE process_id = $1")
         .bind(process_id)
+        .fetch_optional(conn)
+        .await
+}
+
+/// Look up a user's email address by their user_id.
+/// Used by notification helpers to build email payloads.
+pub async fn get_user_email(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT email FROM users WHERE user_id = $1")
+        .bind(user_id)
         .fetch_optional(conn)
         .await
 }
@@ -580,17 +586,13 @@ async fn persist_step_completions(
 async fn insert_review(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
-    template_step_id: i32,
-    admin_id: Option<i32>,
-    is_approved: bool,
-    notes: Option<&str>,
-    flagged_step_ids: &[i32],
+    params: &ReviewStepParams<'_>,
 ) -> Result<(), sqlx::Error> {
     let step_instance_id: Uuid = sqlx::query_scalar(
         "SELECT step_instance_id FROM process_steps WHERE process_id = $1 AND template_step_id = $2",
     )
     .bind(process_id)
-    .bind(template_step_id)
+    .bind(params.step_id)
     .fetch_one(&mut *conn)
     .await?;
 
@@ -600,12 +602,67 @@ async fn insert_review(
          VALUES ($1, $2, $3, $4, $5, NOW())",
     )
     .bind(step_instance_id)
-    .bind(admin_id)
-    .bind(is_approved)
-    .bind(notes)
-    .bind(flagged_step_ids)
+    .bind(params.admin_id)
+    .bind(params.is_approved)
+    .bind(params.notes)
+    .bind(params.flagged_step_ids)
     .execute(&mut *conn)
     .await?;
 
     Ok(())
+}
+
+// ==========================================
+// Standalone admin-only comments
+// ==========================================
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct AdminComment {
+    pub comment_id: Uuid,
+    pub process_id: Uuid,
+    pub template_step_id: i32,
+    pub admin_email: Option<String>,
+    pub comment: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Insert a standalone admin-only comment. These are never shown to residents.
+pub async fn insert_admin_comment(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template_step_id: i32,
+    admin_id: i32,
+    comment: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO process_admin_comments \
+         (process_id, template_step_id, admin_id, comment, created_at) \
+         VALUES ($1, $2, $3, $4, NOW())",
+    )
+    .bind(process_id)
+    .bind(template_step_id)
+    .bind(admin_id)
+    .bind(comment)
+    .execute(conn)
+    .await?;
+
+    Ok(())
+}
+
+/// Fetch all admin-only comments for a process. Only returned to admin callers.
+pub async fn get_admin_comments(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<Vec<AdminComment>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT ac.comment_id, ac.process_id, ac.template_step_id, \
+                u.email as admin_email, ac.comment, ac.created_at \
+         FROM process_admin_comments ac \
+         LEFT JOIN users u ON ac.admin_id = u.user_id \
+         WHERE ac.process_id = $1 \
+         ORDER BY ac.created_at ASC",
+    )
+    .bind(process_id)
+    .fetch_all(conn)
+    .await
 }
