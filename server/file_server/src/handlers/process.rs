@@ -2,10 +2,12 @@ use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
-    get_active_ownerships_for_user, get_field_history, get_flat_id_for_ownership,
-    get_flat_label_for_ownership, get_process_info, get_process_reviews, get_user_active_flats,
-    list_processes_for_user, ProcessInfo, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
+    get_active_ownerships_for_user, get_admin_comments, get_field_history,
+    get_flat_id_for_ownership, get_flat_label_for_ownership, get_process_info, get_process_reviews,
+    get_user_active_flats, get_user_email, list_processes_for_user, AdminComment, ProcessInfo,
+    ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
+use process::notification::NotificationContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -85,6 +87,9 @@ pub struct ProcessStateResponse {
     pub is_completed: bool,
     pub next_actions: Vec<NextActionInfo>,
     pub reviews: Vec<ReviewHistoryInfo>,
+    /// Standalone admin-only comments. Only populated for admin callers;
+    /// empty for residents.
+    pub admin_comments: Vec<AdminComment>,
     pub steps: Vec<StepResponse>,
 }
 
@@ -142,6 +147,19 @@ pub struct AdminRevokeRequest {
 
 #[derive(Serialize)]
 pub struct AdminRevokeResponse {
+    pub status: String,
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+pub struct AdminAddNoteRequest {
+    pub process_id: Uuid,
+    pub template_step_id: i32,
+    pub comment: String,
+}
+
+#[derive(Serialize)]
+pub struct AdminAddNoteResponse {
     pub status: String,
     pub message: String,
 }
@@ -208,6 +226,27 @@ fn find_step_name_recursive(step: &process::ProcessStepTemplate, step_id: i32) -
         }
     }
     None
+}
+
+/// Build a `NotificationContext` for email dispatch.
+/// Looks up the process owner's email from the DB. Returns `None` if
+/// the lookup fails (notification will be skipped gracefully).
+async fn build_notification_ctx(
+    pool: &sqlx::PgPool,
+    owner_user_id: i32,
+    admin_email: &str,
+    process_name: &str,
+) -> Option<NotificationContext> {
+    let mut conn = pool.acquire().await.ok()?;
+    let user_email = get_user_email(&mut conn, owner_user_id)
+        .await
+        .ok()
+        .flatten()?;
+    Some(NotificationContext {
+        user_email,
+        admin_email: admin_email.to_string(),
+        process_name: process_name.to_string(),
+    })
 }
 
 /// For a resident user, resolve which ownership to use and find-or-create a process instance.
@@ -486,10 +525,12 @@ pub async fn get_process_state(
         .map(|doc| (doc.document_id, doc.title))
         .collect();
 
+    // TODO check why we need this when we already get reviews in `load_state` ??
     let reviews = get_process_reviews(&mut tx, process_id)
         .await
         .unwrap_or_default();
 
+    // TODO check why we need this when we already get field history in `load_state` ??
     let pf_rows = get_field_history(&mut tx, process_id)
         .await
         .unwrap_or_default();
@@ -592,6 +633,15 @@ pub async fn get_process_state(
     let is_completed =
         statuses.get(&template.step_id) == Some(&process::state_machine::StepStatus::Completed);
 
+    // --- Fetch admin-only comments (only for admin callers) ---
+    let admin_comments = if is_admin {
+        get_admin_comments(&mut tx, process_id)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     // Commit transaction — needed for the auto-init path which may create a new process
     tx.commit()
         .await
@@ -606,6 +656,7 @@ pub async fn get_process_state(
         is_completed,
         next_actions,
         reviews,
+        admin_comments,
         steps: steps_res,
     }))
 }
@@ -688,37 +739,23 @@ pub async fn save_process_step(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    {
+    // Only email on meaningful cross-role transitions (user→admin review needed)
+    if step_status == process::state_machine::StepStatus::PendingReview {
         let step_name = find_step_name(&template, payload.template_step_id);
-        match step_status {
-            process::state_machine::StepStatus::PendingReview => {
-                process::notification::notify_admin(
-                    payload.process_id,
-                    info.user_id,
-                    payload.template_step_id,
-                    &step_name,
-                    "A step has been submitted by the resident and is now pending admin review.",
-                );
-            }
-            process::state_machine::StepStatus::Open => {
-                process::notification::notify_user(
-                    payload.process_id,
-                    info.user_id,
-                    payload.template_step_id,
-                    &step_name,
-                    "Step inputs saved. You still need to fill out the remaining fields to complete this step.",
-                );
-            }
-            process::state_machine::StepStatus::Completed => {
-                process::notification::notify_user(
-                    payload.process_id,
-                    info.user_id,
-                    payload.template_step_id,
-                    &step_name,
-                    "This step has been successfully completed.",
-                );
-            }
-            _ => {}
+        if let Some(ctx) = build_notification_ctx(
+            &state.pg_pool,
+            info.user_id,
+            &state.admin_email,
+            &template.name,
+        )
+        .await
+        {
+            process::notification::notify_admin_pending_review(
+                &ctx,
+                payload.process_id,
+                &step_name,
+            )
+            .await;
         }
     }
 
@@ -774,25 +811,34 @@ pub async fn admin_review_step(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
-    if payload.is_approved {
-        process::notification::notify_user(
-            payload.process_id,
-            info.user_id,
-            payload.template_step_id,
-            &step_name,
-            "This step has been reviewed and approved by the Admin.",
-        );
-    } else {
-        process::notification::notify_user(
-            payload.process_id,
-            info.user_id,
-            payload.template_step_id,
-            &step_name,
-            &format!(
-                "This step has been rejected by the Admin. Notes: {}",
-                payload.notes.as_deref().unwrap_or("None")
-            ),
-        );
+    if let Some(ctx) = build_notification_ctx(
+        &state.pg_pool,
+        info.user_id,
+        &state.admin_email,
+        &template.name,
+    )
+    .await
+    {
+        // Resolve flagged step IDs to human-readable names for the email
+        let flagged_names: Vec<String> = payload
+            .flagged_step_ids
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|&id| find_step_name(&template, id))
+            .collect();
+
+        process::notification::notify_user_review(
+            &ctx,
+            process::notification::ReviewNotificationParams {
+                process_id: payload.process_id,
+                step_name: &step_name,
+                is_approved: payload.is_approved,
+                notes: payload.notes.as_deref(),
+                flagged_step_names: &flagged_names,
+            },
+        )
+        .await;
     }
 
     Ok(Json(AdminReviewResponse {
@@ -832,13 +878,22 @@ pub async fn admin_revoke_step(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
-    process::notification::notify_user(
-        payload.process_id,
+    if let Some(ctx) = build_notification_ctx(
+        &state.pg_pool,
         info.user_id,
-        payload.template_step_id,
-        &step_name,
-        "An administrator has reopened this step. Additional action may be required.",
-    );
+        &state.admin_email,
+        &template.name,
+    )
+    .await
+    {
+        process::notification::notify_user_revoke(
+            &ctx,
+            payload.process_id,
+            &step_name,
+            payload.notes.as_deref(),
+        )
+        .await;
+    }
 
     Ok(Json(AdminRevokeResponse {
         status: "success".to_string(),
@@ -1002,4 +1057,46 @@ impl From<UserFlatInfo> for UserFlatResponse {
             flat_number: f.flat_number,
         }
     }
+}
+
+// ==========================================
+// Admin: Add standalone internal note
+// ==========================================
+
+pub async fn admin_add_note(
+    user: SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<AdminAddNoteRequest>,
+) -> Result<Json<AdminAddNoteResponse>, ApiError> {
+    let comment = payload.comment.trim();
+    if comment.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("Comment cannot be empty".to_string()),
+        ));
+    }
+
+    let mut conn = state
+        .pg_pool
+        .acquire()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    // Verify the process exists and admin has access
+    load_authorized_process(&mut conn, &user.0, payload.process_id, true).await?;
+
+    process::db::insert_admin_comment(
+        &mut conn,
+        payload.process_id,
+        payload.template_step_id,
+        user.0.user_id,
+        comment,
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+
+    Ok(Json(AdminAddNoteResponse {
+        status: "success".to_string(),
+        message: "Internal note added".to_string(),
+    }))
 }

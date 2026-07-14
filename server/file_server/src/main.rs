@@ -65,6 +65,7 @@ async fn main() {
         forgot_password_expiry: config.forgot_password_expiry,
         rate_limiters,
         log_reset_link: config.log_reset_link.unwrap_or(false),
+        admin_email: config.admin_email.clone(),
     };
 
     macro_rules! make_app {
@@ -116,6 +117,10 @@ async fn main() {
                 .route(
                     "/process/revoke",
                     post(handlers::process::admin_revoke_step),
+                )
+                .route(
+                    "/process/add-note",
+                    post(handlers::process::admin_add_note),
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),

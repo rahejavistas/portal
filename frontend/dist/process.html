@@ -1780,12 +1780,55 @@
                                 </span>
                             </div>
                             <p style="margin: 0; font-size: 0.875rem; color: var(--foreground); line-height: 1.5;">
-                                ${r.notes ? escapeHtml(r.notes) : '<em style="color:var(--muted-foreground);">No comments provided</em>'}
+                                ${r.notes ? escapeHtml(r.notes).replace(/\n/g, '<br>') : '<em style="color:var(--muted-foreground);">No comments provided</em>'}
                             </p>
+
                         </div>
                     `;
                 });
                 reviewsHtml += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            // -------------------------------------------------------------
+            // NEW: Render standalone internal admin notes for this step
+            // -------------------------------------------------------------
+            let standaloneCommentsHtml = '';
+            const stepAdminComments = (p.admin_comments || []).filter(c => c.template_step_id === stepId);
+            if (stepAdminComments.length > 0) {
+                standaloneCommentsHtml = `
+                    <div style="margin-bottom: 24px;">
+                        <h4 style="margin: 0 0 12px 0; font-size: 1rem; font-weight: 700; color: #581C87; display: flex; align-items: center; gap: 8px;">
+                            <span>🔒</span> Internal Admin Notes
+                        </h4>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                `;
+                
+                // Sort by created_at desc
+                stepAdminComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                
+                stepAdminComments.forEach(c => {
+                    const dateFormatted = formatDateMinimal(c.created_at);
+                    const author = c.admin_email ? escapeHtml(c.admin_email) : 'Admin';
+                    standaloneCommentsHtml += `
+                        <div style="background-color: #FAF5FF; border-left: 4px solid #9333EA; padding: 12px 16px; border-radius: var(--radius-lg);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+                                <strong style="font-size: 0.8125rem; color: #6B21A8;">
+                                    ${author}
+                                </strong>
+                                <span style="font-size: 0.75rem; color: #9333EA; font-weight: 600;">
+                                    ${dateFormatted}
+                                </span>
+                            </div>
+                            <p style="margin: 0; font-size: 0.875rem; color: #581C87; line-height: 1.5;">
+                                ${escapeHtml(c.comment).replace(/\n/g, '<br>')}
+                            </p>
+                        </div>
+                    `;
+                });
+                standaloneCommentsHtml += `
                         </div>
                     </div>
                 `;
@@ -1798,6 +1841,7 @@
                 </div>
                 ${statusBanner}
                 ${reviewsHtml}
+                ${standaloneCommentsHtml}
             `;
 
             // If the selected step has fields directly, render them
@@ -1894,9 +1938,12 @@
                         <h4 style="margin: 0 0 16px 0; font-size: 1.25rem; font-weight: 800; color: var(--foreground);">Admin Action Panel</h4>
                         <div class="form-group" style="margin-bottom: 16px;">
                             <label for="review-notes-${stepId}" style="font-weight: 700; font-size: 0.8125rem; text-transform: uppercase;">Review Remarks (Shown to Resident)</label>
-                            <textarea id="review-notes-${stepId}" style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-family: inherit; font-size: 0.9375rem; line-height: 1.5;" placeholder="Enter comments or instructions..."></textarea>
+                            <textarea id="review-notes-${stepId}" style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-family: inherit; font-size: 0.9375rem; line-height: 1.5;" placeholder="Enter comments or instructions visible to the resident..."></textarea>
                         </div>
-                        <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; align-items: center;">
+                            <button class="btn" style="background-color: white; border: 1px solid #9333EA; color: #9333EA; font-size: 0.875rem; padding: 12px 24px; margin-right: auto;" onclick="openAdminNoteModal(${stepId})">
+                                🔒 Add Internal Note
+                            </button>
                             <button class="btn btn-danger" style="font-size: 0.875rem; padding: 12px 24px; min-width: 140px; flex: 1 1 auto; max-width: 220px;" onclick="${rejectOnClick}">${rejectButtonLabel}</button>
                             <button class="${approveButtonClass}" style="font-size: 0.875rem; padding: 12px 24px; min-width: 120px; flex: 1 1 auto; max-width: 180px;" ${approveDisabled} onclick="${approveOnClick}">${approveButtonLabel}</button>
                         </div>
@@ -2169,6 +2216,7 @@
             const notesEl = document.getElementById(`review-notes-${stepId}`);
             const notes = notesEl ? notesEl.value.trim() : '';
 
+
             // Collect flagged substep IDs from checked checkboxes
             const flaggedStepIds = Array.from(
                 document.querySelectorAll('.substep-flag-cb:checked')
@@ -2332,6 +2380,65 @@
 
         function closeDocumentPickerModal() {
             document.getElementById('docPickerModal').style.display = 'none';
+        }
+
+        // --- Admin Internal Note Modal Logic ---
+        let adminNoteStepId = null;
+
+        function openAdminNoteModal(stepId) {
+            adminNoteStepId = stepId;
+            document.getElementById('adminNoteInput').value = '';
+            document.getElementById('adminNoteModal').style.display = 'flex';
+        }
+
+        function closeAdminNoteModal() {
+            document.getElementById('adminNoteModal').style.display = 'none';
+            adminNoteStepId = null;
+        }
+
+        async function submitAdminNote() {
+            if (!adminNoteStepId) return;
+            const noteText = document.getElementById('adminNoteInput').value.trim();
+            if (!noteText) {
+                alert('Please enter a note before submitting.');
+                return;
+            }
+
+            const payload = {
+                process_id: currentProcessDetails.process_id,
+                template_step_id: adminNoteStepId,
+                comment: noteText
+            };
+
+            const submitBtn = document.getElementById('adminNoteSubmitBtn');
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = 'Saving...';
+            submitBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/process/add-note`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    closeAdminNoteModal();
+                    await viewProcessDetail(currentProcessDetails.process_id); 
+                } else {
+                    const err = await response.text();
+                    alert(`Failed to add note: ${err}`);
+                }
+            } catch(e) {
+                console.error(e);
+                alert('Connection error');
+            } finally {
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            }
         }
 
         async function uploadNewDocumentFromPicker() {
@@ -2502,6 +2609,30 @@
                 <h4 id="picker-library-heading" style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>
                 <div id="picker-existing-docs" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 4px;">
                     <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Internal Note Modal -->
+    <div id="adminNoteModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 16px; box-sizing: border-box;">
+        <div style="background: var(--background); width: 100%; max-width: 500px; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box;">
+            <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background-color: #FAF5FF;">
+                <h3 style="margin: 0; font-size: 1.25rem; color: #581C87; display: flex; align-items: center; gap: 8px;">
+                    <span>🔒</span> Add Internal Note
+                </h3>
+                <button type="button" onclick="closeAdminNoteModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #9333EA;">&times;</button>
+            </div>
+            
+            <div style="padding: 20px;">
+                <p style="margin: 0 0 16px 0; font-size: 0.875rem; color: #6B21A8;">
+                    This note will only be visible to administrators. Residents cannot see these comments.
+                </p>
+                <textarea id="adminNoteInput" style="width: 100%; min-height: 120px; padding: 12px; border: 1px solid #D8B4FE; border-radius: var(--radius-md); font-family: inherit; font-size: 0.9375rem; line-height: 1.5; resize: vertical;" placeholder="Type your internal note here..."></textarea>
+                
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+                    <button class="btn" style="background-color: white; color: var(--foreground); border: 1px solid var(--border);" onclick="closeAdminNoteModal()">Cancel</button>
+                    <button id="adminNoteSubmitBtn" class="btn btn-primary" style="background-color: #9333EA; border: none;" onclick="submitAdminNote()">Save Note</button>
                 </div>
             </div>
         </div>
