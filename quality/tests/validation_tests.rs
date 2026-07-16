@@ -95,7 +95,12 @@ async fn test_self_demotion_prevention() {
         .send_json(serde_json::json!({}))
         .unwrap();
     let users: Vec<serde_json::Value> = list_resp.into_json().unwrap();
-    let admin_id = users[0]["user_id"].as_i64().unwrap() as i32;
+    let admin_id = users
+        .iter()
+        .find(|u| u["email"].as_str().unwrap() == "superadmin@vistas.com")
+        .unwrap()["user_id"]
+        .as_i64()
+        .unwrap() as i32;
 
     // Admin tries to demote themselves
     let demote_req = ureq::post(&format!("{}/api/v1/admin/users/roles", url))

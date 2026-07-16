@@ -22,7 +22,9 @@ async fn test_admin_auth_and_user_creation() {
     let users_val: serde_json::Value = list_resp.into_json().unwrap();
     let users_arr = users_val.as_array().expect("Expected users array");
     assert_eq!(users_arr.len(), 1);
-    assert_eq!(users_arr[0]["email"].as_str().unwrap(), "admin@vistas.com");
+    assert!(users_arr
+        .iter()
+        .any(|u| u["email"].as_str().unwrap() == "superadmin@vistas.com"));
 
     let uid1 = quick_create_user(&env, &admin_jwt, "res1@vistas.com", "A", "101");
     let uid2 = quick_create_user(&env, &admin_jwt, "res2@vistas.com", "B", "202");
@@ -91,22 +93,12 @@ async fn test_document_permissions_and_soft_delete() {
 
     let _rid2 = quick_create_user(&env, &admin_jwt, "resident2@vistas.com", "B", "202");
 
-    let doc1_id = quick_create_document(
-        &env,
-        &admin_jwt,
-        "Handbook 2026",
-        "GENERIC",
-        "GENERIC_RULEBOOK",
-        "PUBLIC",
-        None,
-    );
+    let doc1_id = quick_create_document(&env, &admin_jwt, "Handbook 2026", "PUBLIC", None);
     let doc2_id = quick_create_document(
         &env,
         &admin_jwt,
         "Flat Registry A-101",
         "RESIDENT_SPECIFIC",
-        "RESIDENT_PROPERTY",
-        "PRIVATE",
         Some(("A", "101")),
     );
     let doc3_id = quick_create_document(
@@ -114,17 +106,13 @@ async fn test_document_permissions_and_soft_delete() {
         &admin_jwt,
         "Flat Registry B-202",
         "RESIDENT_SPECIFIC",
-        "RESIDENT_PROPERTY",
-        "PRIVATE",
         Some(("B", "202")),
     );
     let doc4_id = quick_create_document(
         &env,
         &admin_jwt,
-        "Elevator Agreement",
-        "OPERATIONAL",
-        "OPERATIONAL_VENDOR_CONTRACT",
-        "COMMITTEE_ONLY",
+        "Committee Meeting Pack",
+        "COMMITTEE",
         None,
     );
 
@@ -155,7 +143,7 @@ async fn test_document_permissions_and_soft_delete() {
         .send_json(serde_json::json!({}));
     assert_eq!(get_doc4.unwrap_err().into_response().unwrap().status(), 403);
 
-    quick_promote_user(&env, &admin_jwt, rid1, "Committee");
+    quick_promote_user(&env, &admin_jwt, rid1, "committee");
 
     let list_resp2 = ureq::post(&format!("{}/api/v1/documents", url))
         .set("Authorization", &res1_auth_header)

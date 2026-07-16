@@ -1,6 +1,4 @@
-use crate::document::{
-    DocumentAccessLevel, DocumentCategory, DocumentType, DocumentWithMetadata, MetadataInput,
-};
+use crate::document::{DocumentCategory, DocumentWithMetadata, MetadataInput};
 use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{
@@ -11,7 +9,9 @@ use axum::{
 use base::flat::FlatIdentifier;
 use uuid::Uuid;
 
-pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &["pdf", "doc", "docx", "xls", "xlsx", "txt"];
+pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &[
+    "pdf", "doc", "docx", "xls", "xlsx", "txt", "jpg", "jpeg", "png",
+];
 
 pub fn derive_content_type_from_ext(ext: &str) -> String {
     match ext {
@@ -21,6 +21,8 @@ pub fn derive_content_type_from_ext(ext: &str) -> String {
         "xls" => "application/vnd.ms-excel",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "txt" => "text/plain",
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -219,9 +221,6 @@ pub struct AdminCreateDocumentPayload {
     pub title: String,
     pub description: Option<String>,
     pub category: DocumentCategory,
-    pub document_type: DocumentType,
-    /// Optional access level override. Falls back to category default if not provided.
-    pub access_level: Option<DocumentAccessLevel>,
     pub metadata: Option<CreateMetadataPayload>,
     /// Flat mapping for RESIDENT_SPECIFIC documents (wing + flat_number).
     pub flat: Option<FlatPayload>,
@@ -232,9 +231,6 @@ pub struct AdminUpdateDocumentPayload {
     pub title: String,
     pub description: Option<String>,
     pub category: DocumentCategory,
-    pub document_type: DocumentType,
-    /// Optional access level override. Falls back to category default if not provided.
-    pub access_level: Option<DocumentAccessLevel>,
     pub metadata: Option<CreateMetadataPayload>,
     /// Flat mapping for RESIDENT_SPECIFIC documents (wing + flat_number).
     pub flat: Option<FlatPayload>,
@@ -252,23 +248,6 @@ impl FlatPayload {
     pub fn into_identifier(self) -> Result<FlatIdentifier, String> {
         FlatIdentifier::new(&self.wing, &self.flat_number)
     }
-}
-
-/// Validates that the document_type is valid for the given category.
-/// Returns a user-friendly error string if the combination is invalid.
-fn validate_category_type(
-    category: DocumentCategory,
-    document_type: DocumentType,
-) -> Result<(), String> {
-    if !category.is_valid_type(document_type) {
-        return Err(format!(
-            "Document type '{:?}' is not valid for category '{:?}'. Valid types: {:?}",
-            document_type,
-            category,
-            category.valid_types()
-        ));
-    }
-    Ok(())
 }
 
 /// POST /api/v1/admin/documents/list
@@ -315,9 +294,6 @@ pub struct AdminUploadUrlRequest {
     pub title: String,
     pub description: Option<String>,
     pub category: DocumentCategory,
-    pub document_type: DocumentType,
-    /// Optional access level override. Falls back to category default if not provided.
-    pub access_level: Option<DocumentAccessLevel>,
     pub metadata: Option<CreateMetadataPayload>,
     /// Flat mapping for RESIDENT_SPECIFIC documents (wing + flat_number).
     pub flat: Option<FlatPayload>,
@@ -345,7 +321,7 @@ pub struct AdminConfirmUploadResponse {
 /// Creates an unconfirmed document with optional flat mapping and metadata — atomically,
 /// and returns a presigned PUT URL for direct client-to-S3 upload.
 pub async fn admin_upload_url(
-    _session_user: SessionUser,
+    SessionUser(user): SessionUser,
     State(state): State<AppState>,
     Json(payload): Json<AdminUploadUrlRequest>,
 ) -> Result<(StatusCode, Json<AdminUploadUrlResponse>), (StatusCode, Json<String>)> {
@@ -368,15 +344,6 @@ pub async fn admin_upload_url(
 
     // SECURITY: Derive content-type from the validated file extension
     let content_type = derive_content_type_from_ext(ext.as_str());
-
-    // Validate category ↔ type combination before hitting DB
-    validate_category_type(payload.category, payload.document_type)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
-
-    // Use provided access level, or fall back to the category default
-    let access_level = payload
-        .access_level
-        .unwrap_or_else(|| payload.category.default_access_level());
 
     // Validate: RESIDENT_SPECIFIC documents MUST have a flat mapping
     if payload.category == DocumentCategory::ResidentSpecific && payload.flat.is_none() {
@@ -409,14 +376,15 @@ pub async fn admin_upload_url(
     let (result, upload_url, _key) = state
         .document_manager
         .admin_create_upload_intent(
-            &payload.title,
-            payload.description.as_deref(),
-            payload.category,
-            payload.document_type,
-            access_level,
+            crate::document::AdminUploadIntentInput {
+                title: &payload.title,
+                description: payload.description.as_deref(),
+                category: payload.category,
+                metadata,
+                content_type: &content_type,
+                uploaded_by: Some(user.user_id),
+            },
             flat_id.as_ref(),
-            metadata,
-            &content_type,
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
@@ -458,15 +426,6 @@ pub async fn admin_update_document(
     Path(document_id): Path<Uuid>,
     Json(payload): Json<AdminUpdateDocumentPayload>,
 ) -> Result<Json<DocumentWithMetadata>, (StatusCode, Json<String>)> {
-    // Validate category ↔ type combination before hitting DB
-    validate_category_type(payload.category, payload.document_type)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
-
-    // Use provided access level, or fall back to the category default
-    let access_level = payload
-        .access_level
-        .unwrap_or_else(|| payload.category.default_access_level());
-
     // Validate: RESIDENT_SPECIFIC documents MUST have a flat mapping
     if payload.category == DocumentCategory::ResidentSpecific && payload.flat.is_none() {
         return Err((
@@ -502,8 +461,6 @@ pub async fn admin_update_document(
             &payload.title,
             payload.description.as_deref(),
             payload.category,
-            payload.document_type,
-            access_level,
             flat_id.as_ref(),
             metadata,
         )

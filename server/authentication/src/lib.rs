@@ -7,19 +7,6 @@ use sqlx::{Pool, Postgres};
 pub const USERS_TABLE: &str = "users";
 pub const USER_CREDENTIALS_TABLE: &str = "user_credentials";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(type_name = "user_role", rename_all = "lowercase")]
-pub enum UserRole {
-    Admin,
-    Committee,
-}
-
-impl sqlx::postgres::PgHasArrayType for UserRole {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        sqlx::postgres::PgTypeInfo::with_name("_user_role")
-    }
-}
-
 pub enum AuthResult {
     Success(User),
     InvalidCredentials,
@@ -33,20 +20,23 @@ pub struct User {
     pub is_active: bool,
     pub wing: String,
     pub flat_number: String,
-    pub roles: Vec<UserRole>,
+    pub designations: Vec<String>,
 }
 
 impl User {
-    /// Returns true if the user possesses either the Committee or Admin role.
-    pub fn is_committee_or_admin(&self) -> bool {
-        self.roles
-            .iter()
-            .any(|role| matches!(role, UserRole::Committee | UserRole::Admin))
+    /// Returns true if the user holds the given designation code (e.g. "staff", "committee").
+    pub fn has_designation(&self, code: &str) -> bool {
+        self.designations.iter().any(|d| d == code)
     }
 
-    /// Returns true if the user has a specific role.
-    pub fn has_role(&self, role: UserRole) -> bool {
-        self.roles.contains(&role)
+    /// Returns true if the user is a Super Admin.
+    pub fn is_admin(&self) -> bool {
+        self.has_designation("super_admin")
+    }
+
+    /// Returns true if the user is a Committee member or Super Admin.
+    pub fn is_committee_or_admin(&self) -> bool {
+        self.is_admin() || self.has_designation("committee")
     }
 
     pub fn is_orphaned(&self) -> bool {
@@ -163,12 +153,11 @@ impl PermissionsManager {
             return Ok(None);
         };
 
-        // 2. Fetch active roles (matching only if the latest historical row for that role is active)
-        let roles = sqlx::query_scalar::<_, UserRole>(
-            "SELECT role FROM user_roles ur \
-             WHERE ur.user_id = $1 \
-               AND ur.is_active = TRUE \
-               AND ur.created_at = (SELECT MAX(created_at) FROM user_roles WHERE user_id = $1 AND role = ur.role)"
+        // 2. Fetch active designations
+        let designations: Vec<String> = sqlx::query_scalar(
+            "SELECT d.code FROM user_designations ud \
+             JOIN designations d ON d.designation_id = ud.designation_id \
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE",
         )
         .bind(user_id)
         .fetch_all(&mut *tx)
@@ -202,7 +191,7 @@ impl PermissionsManager {
             is_active,
             wing,
             flat_number,
-            roles,
+            designations,
         }))
     }
 
@@ -313,14 +302,19 @@ impl PermissionsManager {
             is_active: true,
             wing: wing.to_string(),
             flat_number: flat_number.to_string(),
-            roles: Vec::new(),
+            designations: Vec::new(),
         };
 
         Ok(user)
     }
 
-    /// Creates a new administrative user with their credentials but no password (seeding).
-    pub async fn create_admin_user(&self, email: &str) -> Result<User, String> {
+    /// Creates a new user with no password (seeding), assigning them the given
+    /// designation (e.g. "super_admin", "staff").
+    pub async fn create_seeded_user(
+        &self,
+        email: &str,
+        designation_code: &str,
+    ) -> Result<User, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         // 1. Insert core user with email
@@ -345,9 +339,17 @@ impl PermissionsManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        // 3. Insert active roles into user_roles
-        sqlx::query("INSERT INTO user_roles (user_id, role, is_active) VALUES ($1, 'admin', TRUE)")
+        // 3. Assign the designation
+        let designation_id: i32 =
+            sqlx::query_scalar("SELECT designation_id FROM designations WHERE code = $1")
+                .bind(designation_code)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Unknown designation: {}", designation_code))?;
+        sqlx::query("INSERT INTO user_designations (user_id, designation_id) VALUES ($1, $2)")
             .bind(user_row.0)
+            .bind(designation_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
@@ -360,7 +362,7 @@ impl PermissionsManager {
             is_active: true,
             wing: "TBD".to_string(),
             flat_number: "TBD".to_string(),
-            roles: vec![UserRole::Admin],
+            designations: vec![designation_code.to_string()],
         };
 
         Ok(user)
@@ -456,32 +458,48 @@ impl PermissionsManager {
         Ok(true)
     }
 
-    /// Sets the user's role to the desired target state atomically.
-    /// - `Some(role)` → deactivate all existing roles, then activate the specified role.
-    /// - `None` → deactivate all existing roles (demote to plain Resident).
+    /// Sets the user's primary designation (committee) to the desired target state.
+    /// - `Some("committee")` → deactivate the current committee designation, activate it.
+    /// - `None` → deactivate (demote to plain Resident).
     ///
-    /// Historical rows are preserved with is_active = FALSE for audit trail.
+    /// Historical rows are preserved with is_active = FALSE for audit trail. "committee" is
+    /// the only valid target here — super_admin is seed-only, and other designations (staff,
+    /// treasurer, etc.) are managed via `assign_designation`/`revoke_designation`.
     pub async fn set_user_target_role(
         &self,
         user_id: i32,
-        target_role: Option<UserRole>,
+        target_designation: Option<&str>,
     ) -> Result<(), String> {
+        if let Some(code) = target_designation {
+            if code != "committee" {
+                return Err(format!("Invalid target role: {}", code));
+            }
+        }
+
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
-        // 1. Deactivate ALL currently active roles for this user
+        // 1. Deactivate the currently active committee designation, if any
         sqlx::query(
-            "UPDATE user_roles SET is_active = FALSE, updated_at = NOW() WHERE user_id = $1 AND is_active = TRUE",
+            "UPDATE user_designations SET is_active = FALSE \
+             WHERE user_id = $1 AND is_active = TRUE \
+               AND designation_id IN (SELECT designation_id FROM designations WHERE code = 'committee')",
         )
         .bind(user_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
-        // 2. If a target role is specified, insert a fresh active mapping
-        if let Some(role) = target_role {
-            sqlx::query("INSERT INTO user_roles (user_id, role, is_active) VALUES ($1, $2, TRUE)")
+        // 2. If a target designation is specified, insert a fresh active mapping
+        if let Some(code) = target_designation {
+            let designation_id: i32 =
+                sqlx::query_scalar("SELECT designation_id FROM designations WHERE code = $1")
+                    .bind(code)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            sqlx::query("INSERT INTO user_designations (user_id, designation_id) VALUES ($1, $2)")
                 .bind(user_id)
-                .bind(role)
+                .bind(designation_id)
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -491,19 +509,15 @@ impl PermissionsManager {
         Ok(())
     }
 
-    /// Fetches all users from the users table, aggregating their active flat info and roles.
+    /// Fetches all users from the users table, aggregating their active flat info and designations.
     pub async fn get_all_users(&self) -> Result<Vec<User>, sqlx::Error> {
         let query = format!(
-            "WITH user_active_roles AS ( \
-                 SELECT ur.user_id, ARRAY_AGG(ur.role) as roles \
-                 FROM user_roles ur \
-                 WHERE ur.is_active = TRUE \
-                   AND ur.created_at = ( \
-                       SELECT MAX(created_at) \
-                       FROM user_roles \
-                       WHERE user_id = ur.user_id AND role = ur.role \
-                   ) \
-                 GROUP BY ur.user_id \
+            "WITH user_active_designations AS ( \
+                 SELECT ud.user_id, ARRAY_AGG(d.code) as designations \
+                 FROM user_designations ud \
+                 JOIN designations d ON d.designation_id = ud.designation_id \
+                 WHERE ud.is_active = TRUE \
+                 GROUP BY ud.user_id \
              ), \
              user_flats AS ( \
                  SELECT fo.user_id, \
@@ -515,13 +529,13 @@ impl PermissionsManager {
                  GROUP BY fo.user_id \
              ) \
              SELECT u.user_id, u.email, u.is_active, \
-                    COALESCE(r.roles, ARRAY[]::user_role[]) AS roles, \
+                    COALESCE(r.designations, ARRAY[]::TEXT[]) AS designations, \
                     COALESCE(f.wing, 'TBD') AS wing, \
                     COALESCE(f.flat_number, 'TBD') AS flat_number \
              FROM {} u \
-             LEFT JOIN user_active_roles r ON u.user_id = r.user_id \
+             LEFT JOIN user_active_designations r ON u.user_id = r.user_id \
              LEFT JOIN user_flats f ON u.user_id = f.user_id \
-             WHERE f.wing IS NOT NULL OR r.roles IS NOT NULL \
+             WHERE f.wing IS NOT NULL OR r.designations IS NOT NULL \
              ORDER BY u.user_id DESC",
             USERS_TABLE
         );
@@ -562,7 +576,7 @@ impl PermissionsManager {
             .await
             .map_err(|e| e.to_string())?;
         if let Some(user) = u {
-            if user.wing == "TBD" && user.flat_number == "TBD" && user.roles.is_empty() {
+            if user.wing == "TBD" && user.flat_number == "TBD" && user.designations.is_empty() {
                 sqlx::query(&format!(
                     "UPDATE {} SET is_active = FALSE, updated_at = NOW() WHERE user_id = $1",
                     USERS_TABLE
@@ -573,6 +587,126 @@ impl PermissionsManager {
                 .map_err(|e| e.to_string())?;
             }
         }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct Designation {
+    pub designation_id: i32,
+    pub code: String,
+    pub label: String,
+    pub is_system: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct Permission {
+    pub permission_id: i32,
+    pub code: String,
+    pub label: String,
+}
+
+impl PermissionsManager {
+    pub async fn list_designations(&self) -> Result<Vec<Designation>, sqlx::Error> {
+        sqlx::query_as("SELECT designation_id, code, label, is_system FROM designations ORDER BY designation_id")
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    pub async fn list_permissions(&self) -> Result<Vec<Permission>, sqlx::Error> {
+        sqlx::query_as("SELECT permission_id, code, label FROM permissions ORDER BY permission_id")
+            .fetch_all(&self.pool)
+            .await
+    }
+
+    pub async fn get_designation_permissions(
+        &self,
+        designation_code: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT p.code FROM designation_permissions dp \
+             JOIN permissions p ON p.permission_id = dp.permission_id \
+             JOIN designations d ON d.designation_id = dp.designation_id \
+             WHERE d.code = $1",
+        )
+        .bind(designation_code)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_user_designations(&self, user_id: i32) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT d.code FROM user_designations ud \
+             JOIN designations d ON d.designation_id = ud.designation_id \
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn user_has_permission(
+        &self,
+        user_id: i32,
+        permission_code: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM user_designations ud \
+             JOIN designation_permissions dp ON dp.designation_id = ud.designation_id \
+             JOIN permissions p ON p.permission_id = dp.permission_id \
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE AND p.code = $2",
+        )
+        .bind(user_id)
+        .bind(permission_code)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    pub async fn assign_designation(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+        assigned_by: Option<i32>,
+    ) -> Result<(), String> {
+        let designation_id: i32 =
+            sqlx::query_scalar("SELECT designation_id FROM designations WHERE code = $1")
+                .bind(designation_code)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Unknown designation: {}", designation_code))?;
+
+        sqlx::query(
+            "INSERT INTO user_designations (user_id, designation_id, assigned_by) \
+             VALUES ($1, $2, $3)",
+        )
+        .bind(user_id)
+        .bind(designation_id)
+        .bind(assigned_by)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    pub async fn revoke_designation(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+    ) -> Result<(), String> {
+        sqlx::query(
+            "UPDATE user_designations SET is_active = FALSE \
+             WHERE user_id = $1 AND is_active = TRUE \
+               AND designation_id = (SELECT designation_id FROM designations WHERE code = $2)",
+        )
+        .bind(user_id)
+        .bind(designation_code)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         Ok(())
     }

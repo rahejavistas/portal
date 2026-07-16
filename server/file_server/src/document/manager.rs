@@ -1,8 +1,6 @@
 use crate::document::{
-    Document, DocumentAccessLevel, DocumentCategory, DocumentType, DocumentWithMetadata,
-    GenericDocumentMetadata, MetadataInput,
+    Document, DocumentCategory, DocumentWithMetadata, GenericDocumentMetadata, MetadataInput,
 };
-use authentication::UserRole;
 use base::flat::FlatIdentifier;
 use chrono::NaiveDate;
 use sqlx::PgPool;
@@ -14,6 +12,19 @@ pub struct DocumentManager {
     pub s3_accessor: base::s3::S3Accessor,
 }
 
+/// Bundled input for `admin_create_upload_intent`/`admin_create_upload_intent_by_id`.
+/// Groups the fields common to both (title/description/category/metadata/content_type/
+/// uploaded_by), leaving flat targeting as a separate argument since the two functions
+/// differ in how the flat is identified (`FlatIdentifier` vs a raw `flat_id`).
+pub struct AdminUploadIntentInput<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub category: DocumentCategory,
+    pub metadata: Option<MetadataInput<'a>>,
+    pub content_type: &'a str,
+    pub uploaded_by: Option<i32>,
+}
+
 impl DocumentManager {
     pub fn new(pg_pool: PgPool, s3_accessor: base::s3::S3Accessor) -> Self {
         Self {
@@ -23,25 +34,23 @@ impl DocumentManager {
     }
 
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
-        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let key = super::derive_s3_key(doc.category, doc.document_id);
         self.s3_accessor
             .create_presigned_url(&key)
             .await
             .map_err(|e| e.to_string())
     }
 
-    /// Fetches all allowed document IDs for a user based on access levels, roles, and direct resident mapping.
+    /// Fetches all allowed document IDs for a user based on category, designations, and flat ownership.
     pub async fn get_allowed_document_ids(
         &self,
         user: &authentication::User,
     ) -> Result<std::collections::HashSet<Uuid>, String> {
         let mut allowed_ids = std::collections::HashSet::new();
 
-        let is_admin = user.has_role(UserRole::Admin);
-        let is_committee = user.is_committee_or_admin();
+        let is_admin = user.is_admin();
 
         if is_admin {
-            // Admin bypasses all checks and sees all non-deleted files
             let admin_ids: Vec<Uuid> =
                 sqlx::query_scalar("SELECT document_id FROM documents WHERE NOT is_deleted")
                     .fetch_all(&self.pg_pool)
@@ -50,35 +59,31 @@ impl DocumentManager {
             return Ok(admin_ids.into_iter().collect());
         }
 
-        // 1. Fetch all PUBLIC documents
+        // 1. PUBLIC documents are visible to everyone
         let public_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT document_id FROM documents WHERE access_level = 'PUBLIC' AND NOT is_deleted",
+            "SELECT document_id FROM documents WHERE category = 'PUBLIC' AND NOT is_deleted",
         )
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(public_ids);
 
-        // 2. Fetch COMMITTEE_ONLY documents if the user is a committee member
-        if is_committee {
-            let committee_ids: Vec<Uuid> = sqlx::query_scalar(
-                "SELECT document_id FROM documents \
-                 WHERE access_level = 'COMMITTEE_ONLY' \
-                   AND NOT is_deleted \
-                   AND ( \
-                       cardinality(restricted_committee_roles) = 0 \
-                       OR restricted_committee_roles && $1 \
-                   )",
-            )
-            .bind(&user.roles)
-            .fetch_all(&self.pg_pool)
-            .await
-            .map_err(|e| e.to_string())?;
-            allowed_ids.extend(committee_ids);
-        }
+        // 2. Documents whose category is mapped to one of the user's active designations
+        let designation_mapped_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT d.document_id \
+             FROM documents d \
+             JOIN document_category_designations dcd ON dcd.category = d.category \
+             JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE AND NOT d.is_deleted",
+        )
+        .bind(user.user_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        allowed_ids.extend(designation_mapped_ids);
 
-        // 3. Fetch PRIVATE documents assigned to flat(s) owned/occupied by the user
-        let private_assigned_ids: Vec<Uuid> = sqlx::query_scalar(
+        // 3. Documents assigned to flat(s) owned/occupied by the user (RESIDENT_SPECIFIC)
+        let owned_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT df.document_id \
              FROM document_flats df \
              JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
@@ -88,7 +93,7 @@ impl DocumentManager {
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
-        allowed_ids.extend(private_assigned_ids);
+        allowed_ids.extend(owned_ids);
 
         Ok(allowed_ids)
     }
@@ -122,7 +127,7 @@ impl DocumentManager {
         // C. Fetch the authorized document
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -152,7 +157,7 @@ impl DocumentManager {
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -173,17 +178,10 @@ impl DocumentManager {
 
     /// Atomically creates an unconfirmed document with optional flat assignment and metadata,
     /// and returns a presigned PUT URL for direct S3 upload.
-    #[allow(clippy::too_many_arguments)]
     pub async fn admin_create_upload_intent(
         &self,
-        title: &str,
-        description: Option<&str>,
-        category: DocumentCategory,
-        document_type: DocumentType,
-        access_level: DocumentAccessLevel,
+        input: AdminUploadIntentInput<'_>,
         flat: Option<&FlatIdentifier>,
-        metadata: Option<MetadataInput<'_>>,
-        content_type: &str,
     ) -> Result<(DocumentWithMetadata, String, String), String> {
         let mut tx = base::postgres::begin_transaction(&self.pg_pool)
             .await
@@ -191,13 +189,12 @@ impl DocumentManager {
 
         let doc = Self::insert_document(
             &mut *tx,
-            title,
-            description,
-            category,
-            document_type,
-            access_level,
+            input.title,
+            input.description,
+            input.category,
             false,
             false, // is_upload_confirmed: admin uploads use presigned URLs now
+            input.uploaded_by,
         )
         .await?;
 
@@ -205,7 +202,7 @@ impl DocumentManager {
             Self::assign_flat_with_executor(&mut *tx, doc.document_id, flat_id).await?;
         }
 
-        let meta = if let Some(m) = metadata {
+        let meta = if let Some(m) = input.metadata {
             Some(
                 Self::insert_metadata(
                     &mut *tx,
@@ -225,10 +222,10 @@ impl DocumentManager {
         tx.commit().await.map_err(|e| e.to_string())?;
 
         // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let key = super::derive_s3_key(doc.category, doc.document_id);
         let upload_url = self
             .s3_accessor
-            .create_presigned_put_url(&key, content_type)
+            .create_presigned_put_url(&key, input.content_type)
             .await
             .map_err(|e| format!("Failed to generate presigned PUT URL: {}", e))?;
 
@@ -236,6 +233,7 @@ impl DocumentManager {
             DocumentWithMetadata {
                 document: doc,
                 metadata: meta,
+                flat: None,
                 download_url: None,
             },
             upload_url,
@@ -245,17 +243,10 @@ impl DocumentManager {
 
     /// Atomically creates an unconfirmed document with optional flat ID assignment
     /// and returns a presigned PUT URL for direct S3 upload.
-    #[allow(clippy::too_many_arguments)]
     pub async fn admin_create_upload_intent_by_id(
         &self,
-        title: &str,
-        description: Option<&str>,
-        category: DocumentCategory,
-        document_type: DocumentType,
-        access_level: DocumentAccessLevel,
+        input: AdminUploadIntentInput<'_>,
         flat_id: Option<i32>,
-        metadata: Option<MetadataInput<'_>>,
-        content_type: &str,
     ) -> Result<(DocumentWithMetadata, String, String), String> {
         let mut tx = base::postgres::begin_transaction(&self.pg_pool)
             .await
@@ -263,13 +254,12 @@ impl DocumentManager {
 
         let doc = Self::insert_document(
             &mut *tx,
-            title,
-            description,
-            category,
-            document_type,
-            access_level,
+            input.title,
+            input.description,
+            input.category,
             false,
             false,
+            input.uploaded_by,
         )
         .await?;
 
@@ -277,7 +267,7 @@ impl DocumentManager {
             Self::assign_flat_by_id_with_executor(&mut *tx, doc.document_id, fid).await?;
         }
 
-        let meta = if let Some(m) = metadata {
+        let meta = if let Some(m) = input.metadata {
             Some(
                 Self::insert_metadata(
                     &mut *tx,
@@ -297,10 +287,10 @@ impl DocumentManager {
         tx.commit().await.map_err(|e| e.to_string())?;
 
         // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let key = super::derive_s3_key(doc.category, doc.document_id);
         let upload_url = self
             .s3_accessor
-            .create_presigned_put_url(&key, content_type)
+            .create_presigned_put_url(&key, input.content_type)
             .await
             .map_err(|e| format!("Failed to generate presigned PUT URL: {}", e))?;
 
@@ -308,6 +298,7 @@ impl DocumentManager {
             DocumentWithMetadata {
                 document: doc,
                 metadata: meta,
+                flat: None,
                 download_url: None,
             },
             upload_url,
@@ -317,15 +308,12 @@ impl DocumentManager {
 
     /// Atomically updates a document with flat re-assignment and metadata upsert in a single transaction.
     /// Note: soft-deletion is handled by the dedicated `admin_soft_delete_document` endpoint.
-    #[allow(clippy::too_many_arguments)]
     pub async fn admin_update_document_atomic(
         &self,
         document_id: Uuid,
         title: &str,
         description: Option<&str>,
         category: DocumentCategory,
-        document_type: DocumentType,
-        access_level: DocumentAccessLevel,
         flat: Option<&FlatIdentifier>,
         metadata: Option<MetadataInput<'_>>,
     ) -> Result<DocumentWithMetadata, String> {
@@ -333,16 +321,8 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        let doc = Self::update_document(
-            &mut *tx,
-            document_id,
-            title,
-            description,
-            category,
-            document_type,
-            access_level,
-        )
-        .await?;
+        let doc =
+            Self::update_document(&mut *tx, document_id, title, description, category).await?;
 
         // Clear old flat mappings and re-assign within the same transaction
         Self::clear_flat_mappings_with_executor(&mut *tx, document_id).await?;
@@ -371,6 +351,7 @@ impl DocumentManager {
         Ok(DocumentWithMetadata {
             document: doc,
             metadata: meta,
+            flat: None,
             download_url: None,
         })
     }
@@ -400,10 +381,9 @@ impl DocumentManager {
             title,
             description,
             DocumentCategory::ResidentSpecific,
-            DocumentType::ResidentGeneral,
-            DocumentAccessLevel::Private,
             true, // is_user_uploaded
             true, // is_upload_confirmed: server-proxied upload
+            Some(user.user_id),
         )
         .await?;
 
@@ -420,35 +400,31 @@ impl DocumentManager {
         Ok(DocumentWithMetadata {
             document: doc,
             metadata: None,
+            flat: None,
             download_url: None,
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn insert_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         title: &str,
         description: Option<&str>,
         category: DocumentCategory,
-        document_type: DocumentType,
-        access_level: DocumentAccessLevel,
         is_user_uploaded: bool,
         is_upload_confirmed: bool,
+        uploaded_by: Option<i32>,
     ) -> Result<Document, String> {
-        let empty_roles: Vec<UserRole> = vec![];
         let doc: Document = sqlx::query_as(
-            "INSERT INTO documents (title, description, category, document_type, access_level, restricted_committee_roles, is_user_uploaded, is_upload_confirmed) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed",
+            "INSERT INTO documents (title, description, category, is_user_uploaded, is_upload_confirmed, uploaded_by) \
+             VALUES ($1, $2, $3, $4, $5, $6) \
+             RETURNING document_id, title, description, category, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
         )
         .bind(title)
         .bind(description)
         .bind(category)
-        .bind(document_type)
-        .bind(access_level)
-        .bind(&empty_roles)
         .bind(is_user_uploaded)
         .bind(is_upload_confirmed)
+        .bind(uploaded_by)
         .fetch_one(executor)
         .await
         .map_err(|e| e.to_string())?;
@@ -456,29 +432,22 @@ impl DocumentManager {
         Ok(doc)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn update_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         document_id: Uuid,
         title: &str,
         description: Option<&str>,
         category: DocumentCategory,
-        document_type: DocumentType,
-        access_level: DocumentAccessLevel,
     ) -> Result<Document, String> {
-        let empty_roles: Vec<UserRole> = vec![];
         let doc: Document = sqlx::query_as(
             "UPDATE documents \
-             SET title = $1, description = $2, category = $3, document_type = $4, access_level = $5, restricted_committee_roles = $6 \
-             WHERE document_id = $7 \
-             RETURNING document_id, title, description, category, document_type, access_level, restricted_committee_roles, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed",
+             SET title = $1, description = $2, category = $3 \
+             WHERE document_id = $4 \
+             RETURNING document_id, title, description, category, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
         )
         .bind(title)
         .bind(description)
         .bind(category)
-        .bind(document_type)
-        .bind(access_level)
-        .bind(&empty_roles)
         .bind(document_id)
         .fetch_one(executor)
         .await
@@ -625,7 +594,7 @@ impl DocumentManager {
     ) -> Result<Option<DocumentWithMetadata>, String> {
         let mut doc_with_meta: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
                 g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
@@ -648,10 +617,17 @@ impl DocumentManager {
     pub async fn admin_list_all_documents(&self) -> Result<Vec<DocumentWithMetadata>, String> {
         let all_docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, \
-                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until, \
+                f.wing, f.flat_number \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             LEFT JOIN LATERAL ( \
+                SELECT fl.wing, fl.flat_number FROM document_flats df \
+                JOIN flats fl ON fl.flat_id = df.flat_id \
+                WHERE df.document_id = d.document_id \
+                LIMIT 1 \
+             ) f ON TRUE \
              ORDER BY d.uploaded_date DESC",
         )
         .fetch_all(&self.pg_pool)
@@ -677,12 +653,12 @@ impl DocumentManager {
         process_id: Uuid,
     ) -> Result<Vec<Document>, String> {
         sqlx::query_as(
-            "SELECT DISTINCT d.document_id, d.title, d.description, d.category, d.document_type, d.access_level, \
-             d.restricted_committee_roles, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed \
+            "SELECT DISTINCT d.document_id, d.title, d.description, d.category, \
+             d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by \
              FROM documents d \
              JOIN process_fields pf ON d.document_id = pf.document_id \
              JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
-             WHERE ps.process_id = $1 AND NOT d.is_deleted"
+             WHERE ps.process_id = $1 AND NOT d.is_deleted",
         )
         .bind(process_id)
         .fetch_all(executor)
@@ -732,10 +708,9 @@ impl DocumentManager {
             title,
             None,
             DocumentCategory::ResidentSpecific,
-            DocumentType::ResidentGeneral,
-            DocumentAccessLevel::Private,
             true,  // is_user_uploaded
             false, // is_upload_confirmed: NOT confirmed until client finishes S3 upload
+            Some(user.user_id),
         )
         .await?;
 
@@ -750,7 +725,7 @@ impl DocumentManager {
         tx.commit().await.map_err(|e| e.to_string())?;
 
         // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.access_level, doc.document_id);
+        let key = super::derive_s3_key(doc.category, doc.document_id);
         let upload_url = self
             .s3_accessor
             .create_presigned_put_url(&key, content_type)
@@ -761,6 +736,7 @@ impl DocumentManager {
             DocumentWithMetadata {
                 document: doc,
                 metadata: None,
+                flat: None,
                 download_url: None,
             },
             upload_url,
@@ -773,22 +749,22 @@ impl DocumentManager {
     /// `is_upload_confirmed = true` in the DB.
     pub async fn confirm_upload(&self, document_id: Uuid) -> Result<(), String> {
         // Verify the document exists and is unconfirmed
-        let row: Option<(bool, DocumentAccessLevel)> = sqlx::query_as(
-            "SELECT is_upload_confirmed, access_level FROM documents WHERE document_id = $1 AND NOT is_deleted",
+        let row: Option<(bool, DocumentCategory)> = sqlx::query_as(
+            "SELECT is_upload_confirmed, category FROM documents WHERE document_id = $1 AND NOT is_deleted",
         )
         .bind(document_id)
         .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
 
-        let access_level = match row {
+        let category = match row {
             None => return Err("Document not found".to_string()),
             Some((true, _)) => return Ok(()), // Already confirmed, idempotent
-            Some((false, level)) => level,    // Proceed with confirmation
+            Some((false, category)) => category, // Proceed with confirmation
         };
 
         // HEAD the S3 object to verify the file landed
-        let key = super::derive_s3_key(access_level, document_id);
+        let key = super::derive_s3_key(category, document_id);
         let head_result = self
             .s3_accessor
             .head_object(&key)

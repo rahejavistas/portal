@@ -1,24 +1,19 @@
--- Core users table (holds email as primary identity)
 CREATE TABLE IF NOT EXISTS users (
     user_id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
-    -- User becomes inactive if all flats mapped to this user is revoked.
-    -- They can become active again if admin re-adds them mapped to a flat.
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
--- User credentials table (for authentication)
 CREATE TABLE IF NOT EXISTS user_credentials (
     user_id INT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
-    password_hash VARCHAR(255), -- Nullable for first-time onboarding
+    password_hash VARCHAR(255),
     reset_token VARCHAR(255),
     reset_token_expires_at TIMESTAMP WITH TIME ZONE,
     failed_login_attempts INT DEFAULT 0 NOT NULL
 );
 
--- Flats table representing individual flat units with wings
 CREATE TABLE IF NOT EXISTS flats (
     flat_id SERIAL PRIMARY KEY,
     wing VARCHAR(255) NOT NULL,
@@ -27,7 +22,6 @@ CREATE TABLE IF NOT EXISTS flats (
     UNIQUE (wing, flat_number)
 );
 
--- Historical flat ownership mapping table
 CREATE TABLE IF NOT EXISTS flat_ownerships (
     ownership_id SERIAL PRIMARY KEY,
     flat_id INT NOT NULL REFERENCES flats(flat_id) ON DELETE CASCADE,
@@ -37,31 +31,85 @@ CREATE TABLE IF NOT EXISTS flat_ownerships (
     is_active BOOLEAN DEFAULT TRUE NOT NULL
 );
 
--- Partial index to enforce that a flat has at most ONE active owner at any point in time
-CREATE UNIQUE INDEX IF NOT EXISTS idx_active_flat_ownership 
-ON flat_ownerships (flat_id) 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_active_flat_ownership
+ON flat_ownerships (flat_id)
 WHERE (is_active = TRUE);
 
--- Create user_role enum safely
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
-        CREATE TYPE user_role AS ENUM ('admin', 'committee');
-    END IF;
-END
-$$;
-
--- Mapping table for user roles (admins, committee members) for historical logging
-CREATE TABLE IF NOT EXISTS user_roles (
-    role_id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    role user_role NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+CREATE TABLE IF NOT EXISTS designations (
+    designation_id SERIAL PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE,
+    label VARCHAR(255) NOT NULL,
+    is_system BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
--- Index to enforce a user can only have one active role of each type
-CREATE UNIQUE INDEX IF NOT EXISTS idx_active_user_role
-ON user_roles (user_id, role)
-WHERE (is_active = TRUE);
+CREATE TABLE IF NOT EXISTS permissions (
+    permission_id SERIAL PRIMARY KEY,
+    code VARCHAR(128) NOT NULL UNIQUE,
+    label VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS designation_permissions (
+    designation_id INT NOT NULL REFERENCES designations(designation_id) ON DELETE CASCADE,
+    permission_id INT NOT NULL REFERENCES permissions(permission_id) ON DELETE CASCADE,
+    PRIMARY KEY (designation_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_designations (
+    user_designation_id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    designation_id INT NOT NULL REFERENCES designations(designation_id) ON DELETE CASCADE,
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    assigned_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_designations_user ON user_designations(user_id);
+
+INSERT INTO designations (code, label, is_system) VALUES
+    ('super_admin', 'Super Admin', TRUE),
+    ('staff', 'Staff', FALSE),
+    ('committee', 'Committee', FALSE),
+    ('office_bearer', 'Office Bearer', FALSE),
+    ('treasurer', 'Treasurer', FALSE),
+    ('secretary', 'Secretary', FALSE),
+    ('auditor', 'Auditor', FALSE)
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO permissions (code, label) VALUES
+    ('users.manage', 'Edit/view residents and staff of the society'),
+    ('users.view', 'View all residents'),
+    ('users.roles.manage', 'Manage the designations of users'),
+    ('users.roles.view', 'View the designations of users'),
+    ('documents.all.manage', 'View and manage all categories of documents'),
+    ('documents.public.manage', 'View and manage (upload, sign, delete) Public documents'),
+    ('documents.resident_specific.manage', 'View and manage (upload, sign, delete) Resident Specific documents'),
+    ('documents.committee.manage', 'View and manage (upload, sign, delete) Committee documents'),
+    ('documents.finance.manage', 'View and manage (upload, sign, delete) Finance documents'),
+    ('documents.governance.manage', 'View and manage (upload, sign, delete) Governance documents'),
+    ('documents.operational.manage', 'View and manage (upload, sign, delete) Operational documents'),
+    ('process.view', 'View all existing processes'),
+    ('process.reviewer', 'Review processes')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO designation_permissions (designation_id, permission_id)
+SELECT d.designation_id, p.permission_id
+FROM (VALUES
+    ('super_admin', 'users.manage'),
+    ('super_admin', 'users.view'),
+    ('super_admin', 'users.roles.manage'),
+    ('super_admin', 'users.roles.view'),
+    ('super_admin', 'documents.all.manage'),
+    ('super_admin', 'documents.public.manage'),
+    ('super_admin', 'documents.resident_specific.manage'),
+    ('super_admin', 'documents.committee.manage'),
+    ('super_admin', 'documents.finance.manage'),
+    ('super_admin', 'documents.governance.manage'),
+    ('super_admin', 'documents.operational.manage'),
+    ('super_admin', 'process.view'),
+    ('super_admin', 'process.reviewer')
+) AS seed(designation_code, permission_code)
+JOIN designations d ON d.code = seed.designation_code
+JOIN permissions p ON p.code = seed.permission_code
+ON CONFLICT DO NOTHING;

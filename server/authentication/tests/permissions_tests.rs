@@ -1,4 +1,4 @@
-use authentication::{AuthResult, PermissionsManager, UserRole};
+use authentication::{AuthResult, PermissionsManager};
 use quality::setup_db_test_env;
 
 /// Tests programmatic user creation, email checking, and user details retrieval by ID.
@@ -24,7 +24,7 @@ async fn test_user_creation_and_retrieval() {
     assert_eq!(retrieved.email, email);
     assert_eq!(retrieved.wing, "A");
     assert_eq!(retrieved.flat_number, "101");
-    assert!(retrieved.roles.is_empty());
+    assert!(retrieved.designations.is_empty());
 }
 
 /// Tests password hashing, correct verification, and incorrect password authentication blocks.
@@ -69,14 +69,14 @@ async fn test_admin_seeding_and_role() {
     let pm = PermissionsManager::new(env.db_pool.clone());
 
     let email = "admin_seed@vistas.com";
-    let admin = pm.create_admin_user(email).await.unwrap();
+    let admin = pm.create_seeded_user(email, "super_admin").await.unwrap();
     assert_eq!(admin.email, email);
     assert_eq!(admin.wing, "TBD");
     assert_eq!(admin.flat_number, "TBD");
-    assert_eq!(admin.roles, vec![UserRole::Admin]);
+    assert_eq!(admin.designations, vec!["super_admin".to_string()]);
 
     let retrieved = pm.get_user_by_id(admin.user_id).await.unwrap().unwrap();
-    assert!(retrieved.has_role(UserRole::Admin));
+    assert!(retrieved.has_designation("super_admin"));
     assert!(retrieved.is_committee_or_admin());
 }
 
@@ -130,50 +130,49 @@ async fn test_role_promotions_and_demotions() {
         .create_user_with_credentials("promoted@vistas.com", Some("password123"), "C", "303")
         .await
         .unwrap();
-    assert!(user.roles.is_empty());
+    assert!(user.designations.is_empty());
 
     // 1. Promote to Committee
-    pm.set_user_target_role(user.user_id, Some(UserRole::Committee))
+    pm.set_user_target_role(user.user_id, Some("committee"))
         .await
         .unwrap();
     let u_committee1 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_committee1.has_role(UserRole::Committee));
+    assert!(u_committee1.has_designation("committee"));
     assert!(u_committee1.is_committee_or_admin());
 
     // 2. Demote back to Resident
     pm.set_user_target_role(user.user_id, None).await.unwrap();
     let u_resident1 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_resident1.roles.is_empty());
+    assert!(u_resident1.designations.is_empty());
     assert!(!u_resident1.is_committee_or_admin());
 
     // 3. Re-promote to Committee
-    pm.set_user_target_role(user.user_id, Some(UserRole::Committee))
+    pm.set_user_target_role(user.user_id, Some("committee"))
         .await
         .unwrap();
     let u_committee2 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_committee2.has_role(UserRole::Committee));
+    assert!(u_committee2.has_designation("committee"));
     assert!(u_committee2.is_committee_or_admin());
 
-    // 4. Promote to Admin
-    pm.set_user_target_role(user.user_id, Some(UserRole::Admin))
+    // 4. "admin" is no longer a valid target — super_admin is seed-only, promoted via this
+    // endpoint only supports "committee".
+    assert!(pm
+        .set_user_target_role(user.user_id, Some("admin"))
         .await
-        .unwrap();
-    let u_admin = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_admin.has_role(UserRole::Admin));
-    assert!(!u_admin.has_role(UserRole::Committee));
+        .is_err());
 
     // 5. Demote to Resident
     pm.set_user_target_role(user.user_id, None).await.unwrap();
     let u_resident2 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_resident2.roles.is_empty());
+    assert!(u_resident2.designations.is_empty());
     assert!(!u_resident2.is_committee_or_admin());
 
     // 6. Re-promote to Committee again
-    pm.set_user_target_role(user.user_id, Some(UserRole::Committee))
+    pm.set_user_target_role(user.user_id, Some("committee"))
         .await
         .unwrap();
     let u_committee3 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_committee3.has_role(UserRole::Committee));
+    assert!(u_committee3.has_designation("committee"));
     assert!(u_committee3.is_committee_or_admin());
 }
 
@@ -192,7 +191,7 @@ async fn test_list_all_users_aggregation() {
         .await
         .unwrap();
     let admin = pm
-        .create_admin_user("owner_admin@vistas.com")
+        .create_seeded_user("owner_admin@vistas.com", "super_admin")
         .await
         .unwrap();
 
@@ -203,11 +202,11 @@ async fn test_list_all_users_aggregation() {
     assert_eq!(f1.email, "member1@vistas.com");
     assert_eq!(f1.wing, "A");
     assert_eq!(f1.flat_number, "101");
-    assert!(f1.roles.is_empty());
+    assert!(f1.designations.is_empty());
 
     let f_admin = all.iter().find(|u| u.user_id == admin.user_id).unwrap();
     assert_eq!(f_admin.email, "owner_admin@vistas.com");
-    assert_eq!(f_admin.roles, vec![UserRole::Admin]);
+    assert_eq!(f_admin.designations, vec!["super_admin".to_string()]);
 }
 
 /// Tests revoking a resident's flat ownership mapping and their subsequent access loss.
@@ -331,4 +330,62 @@ async fn test_restore_orphaned_user() {
     assert!(u2.is_active);
     assert_eq!(u2.wing, "F");
     assert_eq!(u2.flat_number, "606");
+}
+
+/// Tests the designation/permission seed data and the assign/check/revoke flow.
+#[tokio::test]
+async fn test_designations_and_permissions() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    let designations = pm.list_designations().await.unwrap();
+    let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
+    assert!(codes.contains(&"super_admin"));
+    assert!(codes.contains(&"staff"));
+    assert!(!codes.contains(&"admin"));
+    assert!(!codes.contains(&"resident"));
+    assert!(!codes.contains(&"tenant"));
+
+    // Only super_admin is seeded with permissions; other designations (e.g. staff)
+    // get none by default.
+    let super_admin_perms = pm.get_designation_permissions("super_admin").await.unwrap();
+    assert!(super_admin_perms.contains(&"users.manage".to_string()));
+    assert!(super_admin_perms.contains(&"documents.all.manage".to_string()));
+    assert!(super_admin_perms.contains(&"process.reviewer".to_string()));
+    assert_eq!(super_admin_perms.len(), 13);
+
+    let staff_perms = pm.get_designation_permissions("staff").await.unwrap();
+    assert!(staff_perms.is_empty());
+
+    let user = pm
+        .create_user_with_credentials("staffer@vistas.com", Some("password123"), "A", "101")
+        .await
+        .unwrap();
+
+    assert!(!pm
+        .user_has_permission(user.user_id, "users.manage")
+        .await
+        .unwrap());
+
+    pm.assign_designation(user.user_id, "staff", None)
+        .await
+        .unwrap();
+
+    // Staff has no permissions seeded, so this remains false even though assigned.
+    assert!(!pm
+        .user_has_permission(user.user_id, "users.manage")
+        .await
+        .unwrap());
+    assert_eq!(
+        pm.get_user_designations(user.user_id).await.unwrap(),
+        vec!["staff".to_string()]
+    );
+
+    pm.revoke_designation(user.user_id, "staff").await.unwrap();
+
+    assert!(pm
+        .get_user_designations(user.user_id)
+        .await
+        .unwrap()
+        .is_empty());
 }

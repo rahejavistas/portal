@@ -418,7 +418,7 @@ pub async fn list_user_processes(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.has_role(authentication::UserRole::Admin);
+    let is_admin = user.is_admin();
     let mut items = if is_admin {
         process::db::list_all_processes(&mut conn).await
     } else {
@@ -477,7 +477,7 @@ pub async fn get_process_state(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.has_role(authentication::UserRole::Admin);
+    let is_admin = user.is_admin();
 
     // --- Resolve process_id, template_id, ownership_id ---
     let (process_id, template_id, ownership_id) = match payload.process_id {
@@ -525,12 +525,10 @@ pub async fn get_process_state(
         .map(|doc| (doc.document_id, doc.title))
         .collect();
 
-    // TODO check why we need this when we already get reviews in `load_state` ??
     let reviews = get_process_reviews(&mut tx, process_id)
         .await
         .unwrap_or_default();
 
-    // TODO check why we need this when we already get field history in `load_state` ??
     let pf_rows = get_field_history(&mut tx, process_id)
         .await
         .unwrap_or_default();
@@ -673,7 +671,7 @@ pub async fn save_process_step(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.has_role(authentication::UserRole::Admin);
+    let is_admin = user.is_admin();
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
@@ -702,6 +700,21 @@ pub async fn save_process_step(
                         StatusCode::BAD_REQUEST,
                         Json(format!(
                             "Document ID {} has not been uploaded yet. Please complete the upload first.",
+                            doc_id
+                        )),
+                    ));
+                }
+                // Process fields only ever hold flat-scoped documents. Other categories
+                // (PUBLIC, COMMITTEE, FINANCE, GOVERNANCE, OPERATIONAL) are visible in a
+                // user's document list but must never be attachable to a process step.
+                Some(ref doc)
+                    if doc.document.category
+                        != crate::document::DocumentCategory::ResidentSpecific =>
+                {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(format!(
+                            "Document ID {} is not a Resident Specific document and cannot be attached to a process step",
                             doc_id
                         )),
                     ));
@@ -745,7 +758,7 @@ pub async fn save_process_step(
         if let Some(ctx) = build_notification_ctx(
             &state.pg_pool,
             info.user_id,
-            &state.admin_email,
+            &state.super_admin_email,
             &template.name,
         )
         .await
@@ -791,7 +804,7 @@ pub async fn admin_review_step(
         &template,
         process::db::ReviewStepParams {
             step_id: payload.template_step_id,
-            admin_id: Some(user.user_id),
+            reviewer_user_id: Some(user.user_id),
             is_approved: payload.is_approved,
             notes: payload.notes.as_deref(),
             flagged_step_ids: flagged,
@@ -814,7 +827,7 @@ pub async fn admin_review_step(
     if let Some(ctx) = build_notification_ctx(
         &state.pg_pool,
         info.user_id,
-        &state.admin_email,
+        &state.super_admin_email,
         &template.name,
     )
     .await
@@ -881,7 +894,7 @@ pub async fn admin_revoke_step(
     if let Some(ctx) = build_notification_ctx(
         &state.pg_pool,
         info.user_id,
-        &state.admin_email,
+        &state.super_admin_email,
         &template.name,
     )
     .await
@@ -917,27 +930,19 @@ pub struct ProcessAdminUploadUrlResponse {
 
 /// POST /api/v1/admin/process/upload-url
 /// Creates an upload intent for a process document uploaded by an admin.
-/// The backend securely derives the flat and forces PROCESS_SPECIFIC + PRIVATE semantics.
+/// The backend securely derives the flat and forces RESIDENT_SPECIFIC (private) semantics.
 pub async fn process_admin_upload_url(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
     Json(payload): Json<ProcessAdminUploadUrlRequest>,
 ) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
-    let is_admin = user.has_role(authentication::UserRole::Admin);
-    if !is_admin {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json("Only admins can use this endpoint".to_string()),
-        ));
-    }
-
     let mut conn = state
         .pg_pool
         .acquire()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
+    let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
 
     let mut flat_id: Option<i32> = None;
     if let Some(oid) = info.ownership_id {
@@ -968,19 +973,20 @@ pub async fn process_admin_upload_url(
 
     // flat_id is already an Option<i32>
 
-    use crate::document::{DocumentAccessLevel, DocumentCategory, DocumentType};
+    use crate::document::DocumentCategory;
 
     let (result, upload_url, _key) = state
         .document_manager
         .admin_create_upload_intent_by_id(
-            &payload.title,
-            None,
-            DocumentCategory::ProcessSpecific,
-            DocumentType::ProcessGeneral,
-            DocumentAccessLevel::Private,
+            crate::document::AdminUploadIntentInput {
+                title: &payload.title,
+                description: None,
+                category: DocumentCategory::ResidentSpecific,
+                metadata: None,
+                content_type: &content_type,
+                uploaded_by: Some(user.user_id),
+            },
             flat_id,
-            None,
-            &content_type,
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
@@ -1001,7 +1007,7 @@ pub async fn process_download_url(
     State(state): State<AppState>,
     Json(payload): Json<DocumentUrlRequest>,
 ) -> Result<Json<DocumentUrlResponse>, ApiError> {
-    let is_admin = user.has_role(authentication::UserRole::Admin);
+    let is_admin = user.is_admin();
 
     // Auth check
     {

@@ -6,6 +6,14 @@ pub const ADMIN_HTML: &str = r#"
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Admin Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        // Set the initial suite before the page paints, so the correct panel
+        // is visible from the first frame instead of flashing Residents first.
+        document.documentElement.setAttribute(
+            'data-tab',
+            new URLSearchParams(window.location.search).get('tab') || 'residents'
+        );
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -307,6 +315,13 @@ pub const ADMIN_HTML: &str = r#"
         .suite-panel.active {
             display: block;
         }
+        /* Initial-tab state, set synchronously in <head> before first paint
+           (see the inline script above) — avoids a flash to the Residents suite
+           on a fresh page load with ?tab=documents. */
+        html[data-tab="documents"] #suite-residents { display: none; }
+        html[data-tab="documents"] #suite-documents { display: block; }
+        html[data-tab="documents"] #suite-btn-residents { background-color: transparent; color: var(--foreground); }
+        html[data-tab="documents"] #suite-btn-documents { background-color: var(--primary); color: var(--background); }
 
         /* Subtabs */
         .subtab-bar {
@@ -510,6 +525,34 @@ pub const ADMIN_HTML: &str = r#"
         .badge.deleted {
             background-color: #FEE2E2;
             color: #EF4444;
+        }
+
+        /* Category tag (matches the resident document list's badge styling) */
+        .doc-category-badge {
+            font-size: 0.6875rem;
+            text-transform: uppercase;
+            padding: 4px 8px;
+            border-radius: var(--radius-md);
+            font-weight: 700;
+            background-color: var(--muted);
+            color: var(--muted-foreground);
+            display: inline-block;
+        }
+        .cat-resident {
+            background-color: #EFF6FF;
+            color: #1D4ED8;
+        }
+        .cat-generic {
+            background-color: #FEF3C7;
+            color: #B45309;
+        }
+        .cat-minutes {
+            background-color: #ECFDF5;
+            color: #047857;
+        }
+        .cat-operational {
+            background-color: #F5F3FF;
+            color: #6D28D9;
         }
 
         /* Action elements */
@@ -726,15 +769,12 @@ pub const ADMIN_HTML: &str = r#"
                     <!-- Category Filter Bar (Desktop & Mobile) -->
                     <div class="category-filter-bar" id="admin-filter-bar">
                         <button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar('ALL')">All</button>
+                        <button class="filter-chip" id="admin-filter-public" onclick="filterAdminDocsBySubbar('PUBLIC')">Public</button>
                         <button class="filter-chip" id="admin-filter-resident-specific" onclick="filterAdminDocsBySubbar('RESIDENT_SPECIFIC')">Resident Specific</button>
-                        <button class="filter-chip" id="admin-filter-generic" onclick="filterAdminDocsBySubbar('GENERIC')">Generic</button>
-                        <button class="filter-chip" id="admin-filter-meeting-minutes" onclick="filterAdminDocsBySubbar('MEETING_MINUTES')">Minutes</button>
+                        <button class="filter-chip" id="admin-filter-committee" onclick="filterAdminDocsBySubbar('COMMITTEE')">Committee</button>
+                        <button class="filter-chip" id="admin-filter-finance" onclick="filterAdminDocsBySubbar('FINANCE')">Finance</button>
+                        <button class="filter-chip" id="admin-filter-governance" onclick="filterAdminDocsBySubbar('GOVERNANCE')">Governance</button>
                         <button class="filter-chip" id="admin-filter-operational" onclick="filterAdminDocsBySubbar('OPERATIONAL')">Operational</button>
-                    </div>
-
-                    <!-- Sub-Category Filter Bar (Dynamic) -->
-                    <div class="category-filter-bar" id="admin-sub-filter-bar" style="display: none; gap: 8px; margin-top: -12px; margin-bottom: 24px; padding-bottom: 4px;">
-                        <!-- Dynamically populated sub-category chips -->
                     </div>
 
                     <div class="card">
@@ -742,15 +782,6 @@ pub const ADMIN_HTML: &str = r#"
                         
                         <!-- Filters for DB Explorer (Secondary Row) -->
                         <div style="display: flex; gap: 15px; margin-bottom: 24px; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 150px;">
-                                <label style="font-size: 11px; margin-bottom: 5px;">Access Level</label>
-                                <select id="filter-access" onchange="filterAdminDocs()" style="padding: 8px 12px; font-size: 13px;">
-                                    <option value="ALL">All Access Levels</option>
-                                    <option value="PUBLIC">Public</option>
-                                    <option value="COMMITTEE_ONLY">Committee Only</option>
-                                    <option value="PRIVATE">Private</option>
-                                </select>
-                            </div>
                             <div style="flex: 1; min-width: 150px;">
                                 <label style="font-size: 11px; margin-bottom: 5px;">Status</label>
                                 <select id="filter-status" onchange="filterAdminDocs()" style="padding: 8px 12px; font-size: 13px;">
@@ -766,7 +797,7 @@ pub const ADMIN_HTML: &str = r#"
                                 <thead>
                                     <tr>
                                         <th>Document</th>
-                                        <th>Status</th>
+                                        <th>Category</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -795,36 +826,18 @@ pub const ADMIN_HTML: &str = r#"
                             </div>
                             <div class="form-group">
                                 <label for="doc-file">Document File</label>
-                                <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" required style="padding: 8px; width: 100%; background-color: var(--muted);">
+                                <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required style="padding: 8px; width: 100%; background-color: var(--muted);">
                             </div>
-                            <div class="form-row-2">
-                                <div class="form-group">
-                                    <label for="doc-category">Category</label>
-                                    <select id="doc-category" required onchange="handleCategoryChange()">
-                                        <option value="GENERIC">Generic</option>
-                                        <option value="RESIDENT_SPECIFIC">Resident</option>
-                                        <option value="MEETING_MINUTES">Meeting Minutes</option>
-                                        <option value="OPERATIONAL">Operational</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="doc-type">Type</label>
-                                    <select id="doc-type" required>
-                                        <!-- Dynamically loaded based on category selection -->
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="form-row-2">
-                                <div class="form-group">
-                                    <label for="doc-access">Access Level</label>
-                                    <select id="doc-access" required>
-                                        <option value="PUBLIC">Public</option>
-                                        <option value="COMMITTEE_ONLY">Committee Only</option>
-                                        <option value="PRIVATE">Private</option>
-                                    </select>
-                                </div>
-                                <div class="form-group"></div>
+                            <div class="form-group">
+                                <label for="doc-category">Category</label>
+                                <select id="doc-category" required onchange="handleCategoryChange()">
+                                    <option value="PUBLIC">Public</option>
+                                    <option value="RESIDENT_SPECIFIC">Resident Specific</option>
+                                    <option value="COMMITTEE">Committee</option>
+                                    <option value="FINANCE">Finance</option>
+                                    <option value="GOVERNANCE">Governance</option>
+                                    <option value="OPERATIONAL">Operational</option>
+                                </select>
                             </div>
 
                             <!-- Resident Flat (shown only for RESIDENT_SPECIFIC) -->
@@ -903,6 +916,10 @@ pub const ADMIN_HTML: &str = r#"
     </div>
 
     <script>
+        function isAdminUser(user) {
+            return !!(user && user.designations && (user.designations.includes('super_admin')));
+        }
+
         // ---- Sidebar toggle (mobile) ----
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
@@ -943,7 +960,7 @@ pub const ADMIN_HTML: &str = r#"
             localStorage.clear();
             window.location.href = '/login';
         } else {
-            if (!user.roles || !user.roles.includes('Admin')) {
+            if (!isAdminUser(user)) {
                 window.location.href = '/dashboard';
             }
 
@@ -959,7 +976,7 @@ pub const ADMIN_HTML: &str = r#"
                     if (response.ok) {
                         const freshUser = await response.json();
                         localStorage.setItem('vfs_user', JSON.stringify(freshUser));
-                        if (!freshUser.roles || !freshUser.roles.includes('Admin')) {
+                        if (!isAdminUser(freshUser)) {
                             window.location.href = '/dashboard';
                         }
                     } else if (response.status === 401) {
@@ -978,56 +995,8 @@ pub const ADMIN_HTML: &str = r#"
             });
         }
 
-        // Category Type Mapping
-        const typeMappings = {
-            GENERIC: [
-                { value: 'GENERIC_RULEBOOK', text: 'Rulebook' },
-                { value: 'GENERIC_BYLAWS', text: 'Bylaws' }
-            ],
-            RESIDENT_SPECIFIC: [
-                { value: 'RESIDENT_KYC', text: 'Resident KYC Details' },
-                { value: 'RESIDENT_PROPERTY', text: 'Property Ownership Files' },
-                { value: 'RESIDENT_RENTAL', text: 'Rental Agreement Copies' }
-            ],
-            MEETING_MINUTES: [
-                { value: 'MINUTES_AGM', text: 'Annual General Meeting (AGM)' },
-                { value: 'MINUTES_GBM', text: 'General Body Meeting (GBM)' },
-                { value: 'MINUTES_MGMT', text: 'Management Committee Minutes' }
-            ],
-            OPERATIONAL: [
-                { value: 'OPERATIONAL_VENDOR_CONTRACT', text: 'Vendor Contract Files' },
-                { value: 'OPERATIONAL_PAYMENT', text: 'Operations Payment Slips' },
-                { value: 'OPERATIONAL_SLA', text: 'Service Level Agreement (SLA)' }
-            ]
-        };
-
-        // Category → Default Access Level Mapping (server-enforced)
-        const categoryDefaultAccess = {
-            GENERIC: 'PUBLIC',
-            RESIDENT_SPECIFIC: 'PRIVATE',
-            MEETING_MINUTES: 'PUBLIC',
-            OPERATIONAL: 'PUBLIC'
-        };
-
         function handleCategoryChange() {
             const cat = document.getElementById('doc-category').value;
-            const typeSelect = document.getElementById('doc-type');
-            typeSelect.innerHTML = '';
-            
-            if (typeMappings[cat]) {
-                typeMappings[cat].forEach(t => {
-                    const opt = document.createElement('option');
-                    opt.value = t.value;
-                    opt.textContent = t.text;
-                    typeSelect.appendChild(opt);
-                });
-            }
-
-            // Auto-set the access level based on category default (user can override)
-            const accessSelect = document.getElementById('doc-access');
-            if (categoryDefaultAccess[cat]) {
-                accessSelect.value = categoryDefaultAccess[cat];
-            }
 
             // Show/hide flat mapping section for RESIDENT_SPECIFIC category
             const flatSection = document.getElementById('flat-mapping-section');
@@ -1048,8 +1017,13 @@ pub const ADMIN_HTML: &str = r#"
 
         // High Level Suite Toggle
         function switchSuite(suiteName) {
+            // Keep the FOUC-prevention attribute (set once from the URL at page load,
+            // see the inline <head> script) in sync so its CSS overrides don't fight
+            // the .active class toggled below on later clicks.
+            document.documentElement.setAttribute('data-tab', suiteName);
+
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            
+
             document.getElementById(`suite-btn-${suiteName}`).classList.add('active');
             
             // Switch panels
@@ -1280,8 +1254,8 @@ pub const ADMIN_HTML: &str = r#"
 
             usersList.forEach(u => {
                 const tr = document.createElement('tr');
-                const hasAdmin = u.roles.includes('Admin');
-                const hasCommittee = u.roles.includes('Committee');
+                const hasAdmin = u.designations.includes('super_admin');
+                const hasCommittee = u.designations.includes('committee');
                 const isSelf = u.user_id === user.user_id;
                 
                 let mappingText = '';
@@ -1300,13 +1274,12 @@ pub const ADMIN_HTML: &str = r#"
                     ? `<button class="del-action-btn" style="font-size: 11px; padding: 6px 10px; white-space: nowrap;" onclick="openRevokeFlatModal(${u.user_id}, '${escapeHtml(u.wing)}', '${escapeHtml(u.flat_number)}')">Revoke Flat</button>` 
                     : '';
 
-                // Self-admin: show label instead of dropdown
-                const roleControlHtml = isSelf
-                    ? `<span style="color:var(--foreground); font-weight:700; font-size:12px;">Admin (You)</span>`
+                // Super Admins (seed-only, not promotable via this UI): show label instead of dropdown
+                const roleControlHtml = (isSelf || hasAdmin)
+                    ? `<span style="color:var(--foreground); font-weight:700; font-size:12px;">${isSelf ? 'Super Admin (You)' : 'Super Admin'}</span>`
                     : `<select class="action-select" id="role-select-${escapeHtml(u.user_id)}">
-                            <option value="resident" ${!hasAdmin && !hasCommittee ? 'selected' : ''}>Set Resident</option>
-                            <option value="committee" ${hasCommittee && !hasAdmin ? 'selected' : ''}>Set Committee</option>
-                            <option value="admin" ${hasAdmin ? 'selected' : ''}>Set Admin</option>
+                            <option value="resident" ${!hasCommittee ? 'selected' : ''}>Set Resident</option>
+                            <option value="committee" ${hasCommittee ? 'selected' : ''}>Set Committee</option>
                        </select>`;
 
                 tr.innerHTML = `
@@ -1315,8 +1288,8 @@ pub const ADMIN_HTML: &str = r#"
                         <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 3px;">${mappingText}</div>
                     </td>
                     <td>
-                        ${u.roles.length > 0 
-                            ? u.roles.map(r => `<span class="badge ${r.toLowerCase()}">${escapeHtml(r)}</span>`).join('') 
+                        ${u.designations.length > 0
+                            ? u.designations.map(d => `<span class="badge ${d.toLowerCase()}">${escapeHtml(d)}</span>`).join('')
                             : '<span style="color:var(--muted-foreground); font-size:12px;">Resident</span>'}
                     </td>
                     <td>
@@ -1332,9 +1305,7 @@ pub const ADMIN_HTML: &str = r#"
                     const sel = tr.querySelector(`#role-select-${u.user_id}`);
                     sel.addEventListener('change', async () => {
                         const val = sel.value;
-                        const targetRole = val === 'committee' ? 'Committee'
-                                         : val === 'admin' ? 'Admin'
-                                         : null;
+                        const targetRole = val === 'committee' ? val : null;
                         await changeRole(u.user_id, targetRole);
                         loadUsers();
                     });
@@ -1375,7 +1346,6 @@ pub const ADMIN_HTML: &str = r#"
         
         let allAdminDocs = [];
         let subbarCategoryFilter = 'ALL';
-        let subbarTypeFilter = 'ALL';
 
         async function loadAdminDocuments() {
             try {
@@ -1395,35 +1365,8 @@ pub const ADMIN_HTML: &str = r#"
             }
         }
 
-        const SUB_CATEGORIES = {
-            'RESIDENT_SPECIFIC': [
-                { type: 'ALL', label: 'All Flat Docs' },
-                { type: 'RESIDENT_PROPERTY', label: 'Property Docs' },
-                { type: 'RESIDENT_KYC', label: 'KYC Docs' },
-                { type: 'RESIDENT_RENTAL', label: 'Rental Agreements' }
-            ],
-            'GENERIC': [
-                { type: 'ALL', label: 'All Generic Docs' },
-                { type: 'GENERIC_RULEBOOK', label: 'Rulebooks' },
-                { type: 'GENERIC_BYLAWS', label: 'Bylaws' }
-            ],
-            'MEETING_MINUTES': [
-                { type: 'ALL', label: 'All Minutes' },
-                { type: 'MINUTES_AGM', label: 'AGM Minutes' },
-                { type: 'MINUTES_GBM', label: 'GBM Minutes' },
-                { type: 'MINUTES_MGMT', label: 'Management Minutes' }
-            ],
-            'OPERATIONAL': [
-                { type: 'ALL', label: 'All Operational' },
-                { type: 'OPERATIONAL_VENDOR_CONTRACT', label: 'Vendor Contracts' },
-                { type: 'OPERATIONAL_PAYMENT', label: 'Payment Receipts' },
-                { type: 'OPERATIONAL_SLA', label: 'SLA Contracts' }
-            ]
-        };
-
         function filterAdminDocsBySubbar(category) {
             subbarCategoryFilter = category;
-            subbarTypeFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#admin-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
@@ -1431,61 +1374,19 @@ pub const ADMIN_HTML: &str = r#"
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
 
-            renderAdminSubFilters(category);
-            filterAdminDocs();
-        }
-
-        function renderAdminSubFilters(category) {
-            const subBar = document.getElementById('admin-sub-filter-bar');
-            if (category === 'ALL' || !SUB_CATEGORIES[category]) {
-                subBar.style.display = 'none';
-                subBar.innerHTML = '';
-                return;
-            }
-
-            subBar.style.display = 'flex';
-            subBar.innerHTML = '';
-            
-            SUB_CATEGORIES[category].forEach(sub => {
-                const button = document.createElement('button');
-                button.className = 'sub-filter-chip' + (subbarTypeFilter === sub.type ? ' active' : '');
-                button.textContent = sub.label;
-                button.onclick = () => filterAdminDocsBySubtype(sub.type);
-                subBar.appendChild(button);
-            });
-        }
-
-        function filterAdminDocsBySubtype(subtype) {
-            subbarTypeFilter = subtype;
-            
-            // Update active state of sub-filter chips
-            document.querySelectorAll('#admin-sub-filter-bar .sub-filter-chip').forEach((el, index) => {
-                const categoryList = SUB_CATEGORIES[subbarCategoryFilter];
-                if (categoryList && categoryList[index]) {
-                    if (categoryList[index].type === subtype) {
-                        el.classList.add('active');
-                    } else {
-                        el.classList.remove('active');
-                    }
-                }
-            });
-
             filterAdminDocs();
         }
 
         function filterAdminDocs() {
-            const accessFilter = document.getElementById('filter-access').value;
             const statusFilter = document.getElementById('filter-status').value;
 
             const filtered = allAdminDocs.filter(d => {
                 const doc = d.document;
                 const matchesCat = (subbarCategoryFilter === 'ALL' || doc.category === subbarCategoryFilter);
-                const matchesType = (subbarTypeFilter === 'ALL' || doc.document_type === subbarTypeFilter);
-                const matchesAccess = (accessFilter === 'ALL' || doc.access_level === accessFilter);
-                const matchesStatus = (statusFilter === 'ALL' || 
-                    (statusFilter === 'ACTIVE' && !doc.is_deleted) || 
+                const matchesStatus = (statusFilter === 'ALL' ||
+                    (statusFilter === 'ACTIVE' && !doc.is_deleted) ||
                     (statusFilter === 'DELETED' && doc.is_deleted));
-                return matchesCat && matchesType && matchesAccess && matchesStatus;
+                return matchesCat && matchesStatus;
             });
 
             renderAdminDocsTable(filtered);
@@ -1494,10 +1395,24 @@ pub const ADMIN_HTML: &str = r#"
         function getCategoryBadgeClass(cat) {
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'cat-resident';
-                case 'GENERIC': return 'cat-generic';
-                case 'MEETING_MINUTES': return 'cat-minutes';
+                case 'PUBLIC': return 'cat-generic';
+                case 'COMMITTEE': return 'cat-minutes';
+                case 'FINANCE': return 'cat-minutes';
+                case 'GOVERNANCE': return 'cat-minutes';
                 case 'OPERATIONAL': return 'cat-operational';
                 default: return '';
+            }
+        }
+
+        function formatCategory(cat) {
+            switch(cat) {
+                case 'RESIDENT_SPECIFIC': return 'Resident Specific';
+                case 'PUBLIC': return 'Public';
+                case 'COMMITTEE': return 'Committee';
+                case 'FINANCE': return 'Finance';
+                case 'GOVERNANCE': return 'Governance';
+                case 'OPERATIONAL': return 'Operational';
+                default: return cat;
             }
         }
 
@@ -1513,41 +1428,47 @@ pub const ADMIN_HTML: &str = r#"
             docsList.forEach(docWithMeta => {
                 const doc = docWithMeta.document;
                 const meta = docWithMeta.metadata;
+                const flat = docWithMeta.flat;
                 const tr = document.createElement('tr');
-                
-                let badgeHtml = doc.is_deleted 
+
+                let badgeHtml = doc.is_deleted
                     ? '<span class="badge deleted">Deleted</span>'
                     : '';
 
-                let metaString = 'N/A';
+                let metaString = '';
                 if (meta) {
                     metaString = `
-                        <div>Subcategory: <strong>${escapeHtml(meta.subcategory) || 'None'}</strong></div>
-                        <div style="font-size:11px; margin-top:2px;">Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ') || 'None'}</div>
-                        <div style="font-size:11px; margin-top:2px;">Date: ${escapeHtml(meta.document_date)}</div>
+                        <div style="font-size:11px; color:var(--muted-foreground); margin-top:8px; line-height: 1.45;">
+                            ${meta.subcategory ? `Subcategory: <strong>${escapeHtml(meta.subcategory)}</strong><br>` : ''}
+                            Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ') || 'None'}<br>
+                            Date: ${escapeHtml(meta.document_date)}
+                        </div>
                     `;
                 }
 
+                const flatHtml = flat
+                    ? `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Flat: <strong>${escapeHtml(flat.wing)}-${escapeHtml(flat.flat_number)}</strong></div>`
+                    : '';
+
                 tr.innerHTML = `
                     <td>
-                        <div style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(doc.title)}</div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(doc.title)}</div>
+                            ${badgeHtml}
+                        </div>
                         <div style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;">
                             ${escapeHtml(doc.description) || 'No description...'}
                         </div>
-                        <div style="font-size:11px; color:var(--muted-foreground); margin-top:8px;">
-                            Category: <strong>${escapeHtml(doc.category)}</strong> &nbsp;|&nbsp; 
-                            Type: <strong>${escapeHtml(doc.document_type)}</strong> &nbsp;|&nbsp; 
-                            Access: <strong>${escapeHtml(doc.access_level)}</strong>
-                        </div>
+                        ${metaString}
                     </td>
                     <td>
-                        ${badgeHtml}
-                        <div style="font-size: 11px; color:var(--muted-foreground); margin-top:5px; line-height: 1.45;">${metaString}</div>
+                        <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span>
+                        ${flatHtml}
                     </td>
                     <td>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <button class="download-btn" style="padding: 6px 12px; font-size: 11px;" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">Download</button>
-                            ${!doc.is_deleted 
+                            ${!doc.is_deleted
                                 ? `<button class="del-action-btn" onclick="deleteDocument('${escapeHtml(doc.document_id)}')">Delete</button>`
                                 : '<span style="color:var(--muted-foreground); font-style:italic; font-size: 12px;">Deleted</span>'}
                         </div>
@@ -1614,8 +1535,6 @@ pub const ADMIN_HTML: &str = r#"
             const title = document.getElementById('doc-title').value.trim();
             const description = document.getElementById('doc-desc').value.trim() || null;
             const category = document.getElementById('doc-category').value;
-            const document_type = document.getElementById('doc-type').value;
-            const access_level = document.getElementById('doc-access').value;
 
             // Collect flat mapping for RESIDENT_SPECIFIC documents
             let flat = null;
@@ -1644,8 +1563,6 @@ pub const ADMIN_HTML: &str = r#"
                 title,
                 description,
                 category,
-                document_type,
-                access_level,
                 flat,
                 metadata: document_date ? {
                     subcategory,
@@ -1675,11 +1592,11 @@ pub const ADMIN_HTML: &str = r#"
             }
 
             // Validate file type based on extension
-            const allowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt'];
+            const allowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
             const fileName = file.name.toLowerCase();
             const isValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
             if (!isValidExtension) {
-                docFeedback.textContent = 'Invalid file type. Only PDF, Word, Excel, and Text files are allowed.';
+                docFeedback.textContent = 'Invalid file type. Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.';
                 docFeedback.className = 'feedback-box error';
                 docFeedback.style.display = 'block';
                 return;

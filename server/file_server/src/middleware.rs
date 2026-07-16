@@ -70,7 +70,7 @@ pub async fn rate_limit_middleware<B>(
             &Validation::default(),
         ) {
             let user_id = data.claims.sub.parse::<i32>().unwrap_or(0);
-            let is_admin = data.claims.roles.contains(&authentication::UserRole::Admin);
+            let is_admin = data.claims.designations.iter().any(|d| d == "super_admin");
 
             if is_admin {
                 if state
@@ -188,11 +188,7 @@ pub async fn admin_guard<B>(
     req: Request<B>,
     next: Next<B>,
 ) -> Response {
-    if !session_user
-        .0
-        .roles
-        .contains(&authentication::UserRole::Admin)
-    {
+    if !session_user.0.is_admin() {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({

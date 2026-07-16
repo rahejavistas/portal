@@ -1,4 +1,3 @@
-use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::extract::Multipart;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
@@ -146,17 +145,8 @@ fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize
 
 pub async fn upload_users(
     State(state): State<AppState>,
-    user: SessionUser,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    if !user.0.has_role(authentication::UserRole::Admin) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"status": "error", "message": "Admin only"})),
-        )
-            .into_response();
-    }
-
     let mut file_bytes = Vec::new();
 
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {

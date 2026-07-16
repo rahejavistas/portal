@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Resident Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        // Set the initial tab before the page paints, so the correct panel
+        // is visible from the first frame instead of flashing Profile first.
+        document.documentElement.setAttribute(
+            'data-tab',
+            new URLSearchParams(window.location.search).get('tab') || 'profile'
+        );
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -184,6 +192,14 @@
             background-color: var(--primary);
             color: var(--background);
         }
+        /* Initial-tab state, set synchronously in <head> before first paint
+           (see the inline script above) — avoids a flash to the Profile tab
+           on a fresh page load with ?tab=documents. */
+        #panel-documents { display: none; }
+        html[data-tab="documents"] #panel-profile { display: none; }
+        html[data-tab="documents"] #panel-documents { display: block; }
+        html[data-tab="documents"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
+        html[data-tab="documents"] #tab-btn-documents { background-color: var(--primary); color: var(--background); }
         .admin-btn {
             display: none;
             padding: 12px 16px;
@@ -307,9 +323,6 @@
             .sidebar.open { transform: translateX(0); }
             .sidebar-brand p { display: none; }
             .sidebar-brand h1 { display: none; }
-            /* Hide the standalone bottom logout div on mobile — logout is in nav */
-            .sidebar > div:last-child { display: none; }
-            .logout-btn-mobile-nav { display: block !important; }
             .main-content {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
@@ -561,7 +574,7 @@
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
-                    <button class="logout-btn logout-btn-mobile-nav" id="logout-btn-mobile" style="display:none; margin-top: 8px;">Log Out</button>
+                    <button class="logout-btn" id="logout-btn" style="margin-top: 8px;">Log Out</button>
                 </nav>
             </div>
 
@@ -570,7 +583,6 @@
                 <a href="/admin" class="admin-btn" id="admin-link">
                     Admin Suite &rarr;
                 </a>
-                <button class="logout-btn" id="logout-btn">Log Out</button>
             </div>
         </aside>
 
@@ -601,7 +613,7 @@
             </section>
 
             <!-- Documents Info -->
-            <section id="panel-documents" style="display: none;">
+            <section id="panel-documents">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 16px;">
                     <div>
                         <h2 style="margin-top: 0;">Documents</h2>
@@ -613,14 +625,11 @@
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
                     <button class="filter-chip" id="user-filter-resident-specific" onclick="filterDocs('RESIDENT_SPECIFIC')">My Flat Documents</button>
-                    <button class="filter-chip" id="user-filter-generic" onclick="filterDocs('GENERIC')">Generic</button>
-                    <button class="filter-chip" id="user-filter-meeting-minutes" onclick="filterDocs('MEETING_MINUTES')">Minutes</button>
+                    <button class="filter-chip" id="user-filter-public" onclick="filterDocs('PUBLIC')">Public</button>
+                    <button class="filter-chip" id="user-filter-committee" onclick="filterDocs('COMMITTEE')">Committee</button>
+                    <button class="filter-chip" id="user-filter-finance" onclick="filterDocs('FINANCE')">Finance</button>
+                    <button class="filter-chip" id="user-filter-governance" onclick="filterDocs('GOVERNANCE')">Governance</button>
                     <button class="filter-chip" id="user-filter-operational" onclick="filterDocs('OPERATIONAL')">Operational</button>
-                </div>
-
-                <!-- Sub-Category Filter Bar (Dynamic) -->
-                <div class="category-filter-bar" id="user-sub-filter-bar" style="display: none; gap: 8px; margin-top: -12px; margin-bottom: 24px; padding-bottom: 4px;">
-                    <!-- Dynamically populated sub-category chips -->
                 </div>
 
                 <!-- Desktop Table -->
@@ -666,7 +675,7 @@
                     </div>
                     <div>
                         <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: 4px; text-transform: uppercase;">File</label>
-                        <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
+                        <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
                     </div>
                     <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px;">
                         <button type="button" onclick="closeUploadModal()" class="filter-chip">Cancel</button>
@@ -711,37 +720,40 @@
                  .replace(/'/g, "&#039;");
         }
 
+        function isAdminUser(user) {
+            return !!(user && user.designations && (user.designations.includes('super_admin')));
+        }
+
         const API_BASE = "";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
-        
+
         function renderProfile(user) {
             document.getElementById('user-email').textContent = user.email;
-            
+
             const rolesContainer = document.getElementById('user-roles');
             rolesContainer.innerHTML = '';
-            
-            let isAdminUser = false;
-            
-            if (user.roles && user.roles.length > 0) {
-                user.roles.forEach(role => {
+
+            const isAdmin = isAdminUser(user);
+
+            if (user.designations && user.designations.length > 0) {
+                user.designations.forEach(designation => {
                     const pill = document.createElement('span');
-                    pill.className = 'role-pill ' + role.toLowerCase();
-                    if (role === 'Admin') isAdminUser = true;
-                    pill.textContent = role;
+                    pill.className = 'role-pill ' + designation.toLowerCase();
+                    pill.textContent = designation;
                     rolesContainer.appendChild(pill);
                 });
             } else {
                 rolesContainer.innerHTML = '<span style="color: var(--muted-foreground); font-size: 13px; font-weight: 600;">Standard Resident</span>';
             }
 
-            if (isAdminUser || user.wing === 'TBD' || user.flat_number === 'TBD') {
+            if (isAdmin || user.wing === 'TBD' || user.flat_number === 'TBD') {
                 document.getElementById('user-flat').innerHTML = '<span style="color: var(--foreground); font-style: italic;">Administrative Account</span>';
             } else {
                 document.getElementById('user-flat').textContent = `${user.wing}-${user.flat_number}`;
             }
 
-            if (isAdminUser) {
+            if (isAdmin) {
                 window.location.replace('/admin');
                 return;
             } else {
@@ -785,14 +797,6 @@
             localStorage.clear();
             window.location.href = '/login';
         });
-        const mobileLogoutBtn = document.getElementById('logout-btn-mobile');
-        if (mobileLogoutBtn) {
-            mobileLogoutBtn.addEventListener('click', () => {
-                localStorage.clear();
-                window.location.href = '/login';
-            });
-            if (window.innerWidth <= 768) mobileLogoutBtn.style.display = 'block';
-        }
 
         // Parse URL params for initial tab
         const urlParams = new URLSearchParams(window.location.search);
@@ -800,6 +804,11 @@
 
         // Tabs switcher
         function switchTab(tabName) {
+            // Keep the FOUC-prevention attribute (set once from the URL at page load,
+            // see the inline <head> script) in sync so its CSS overrides don't fight
+            // the .active class toggled below on later clicks.
+            document.documentElement.setAttribute('data-tab', tabName);
+
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.getElementById(`tab-btn-${tabName}`).classList.add('active');
             
@@ -816,7 +825,6 @@
 
         let allResidentDocs = [];
         let currentCategoryFilter = 'ALL';
-        let currentTypeFilter = 'ALL';
 
         async function loadResidentDocuments() {
             try {
@@ -840,80 +848,14 @@
         // Apply initial tab
         switchTab(initialTab);
 
-        const SUB_CATEGORIES = {
-            'RESIDENT_SPECIFIC': [
-                { type: 'ALL', label: 'All Flat Docs' },
-                { type: 'RESIDENT_PROPERTY', label: 'Property Docs' },
-                { type: 'RESIDENT_KYC', label: 'KYC Docs' },
-                { type: 'RESIDENT_RENTAL', label: 'Rental Agreements' }
-            ],
-            'GENERIC': [
-                { type: 'ALL', label: 'All Generic Docs' },
-                { type: 'GENERIC_RULEBOOK', label: 'Rulebooks' },
-                { type: 'GENERIC_BYLAWS', label: 'Bylaws' }
-            ],
-            'MEETING_MINUTES': [
-                { type: 'ALL', label: 'All Minutes' },
-                { type: 'MINUTES_AGM', label: 'AGM Minutes' },
-                { type: 'MINUTES_GBM', label: 'GBM Minutes' },
-                { type: 'MINUTES_MGMT', label: 'Management Minutes' }
-            ],
-            'OPERATIONAL': [
-                { type: 'ALL', label: 'All Operational' },
-                { type: 'OPERATIONAL_VENDOR_CONTRACT', label: 'Vendor Contracts' },
-                { type: 'OPERATIONAL_PAYMENT', label: 'Payment Receipts' },
-                { type: 'OPERATIONAL_SLA', label: 'SLA Contracts' }
-            ]
-        };
-
         function filterDocs(category) {
             currentCategoryFilter = category;
-            currentTypeFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#user-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'user-filter-' + category.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
-
-            renderUserSubFilters(category);
-            applyFiltersAndRender();
-        }
-
-        function renderUserSubFilters(category) {
-            const subBar = document.getElementById('user-sub-filter-bar');
-            if (category === 'ALL' || !SUB_CATEGORIES[category]) {
-                subBar.style.display = 'none';
-                subBar.innerHTML = '';
-                return;
-            }
-
-            subBar.style.display = 'flex';
-            subBar.innerHTML = '';
-            
-            SUB_CATEGORIES[category].forEach(sub => {
-                const button = document.createElement('button');
-                button.className = 'sub-filter-chip' + (currentTypeFilter === sub.type ? ' active' : '');
-                button.textContent = sub.label;
-                button.onclick = () => filterDocsBySubtype(sub.type);
-                subBar.appendChild(button);
-            });
-        }
-
-        function filterDocsBySubtype(subtype) {
-            currentTypeFilter = subtype;
-            
-            // Update active state of sub-filter chips
-            document.querySelectorAll('#user-sub-filter-bar .sub-filter-chip').forEach((el, index) => {
-                const categoryList = SUB_CATEGORIES[currentCategoryFilter];
-                if (categoryList && categoryList[index]) {
-                    if (categoryList[index].type === subtype) {
-                        el.classList.add('active');
-                    } else {
-                        el.classList.remove('active');
-                    }
-                }
-            });
 
             applyFiltersAndRender();
         }
@@ -923,17 +865,16 @@
             if (currentCategoryFilter !== 'ALL') {
                 filtered = filtered.filter(item => item.document.category === currentCategoryFilter);
             }
-            if (currentTypeFilter !== 'ALL') {
-                filtered = filtered.filter(item => item.document.document_type === currentTypeFilter);
-            }
             renderResidentDocsTable(filtered);
         }
 
         function formatCategory(cat) {
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'My Flat Documents';
-                case 'GENERIC': return 'Generic';
-                case 'MEETING_MINUTES': return 'Minutes';
+                case 'PUBLIC': return 'Public';
+                case 'COMMITTEE': return 'Committee';
+                case 'FINANCE': return 'Finance';
+                case 'GOVERNANCE': return 'Governance';
                 case 'OPERATIONAL': return 'Operational';
                 default: return cat;
             }
@@ -942,8 +883,10 @@
         function getCategoryBadgeClass(cat) {
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'cat-resident';
-                case 'GENERIC': return 'cat-generic';
-                case 'MEETING_MINUTES': return 'cat-minutes';
+                case 'PUBLIC': return 'cat-generic';
+                case 'COMMITTEE': return 'cat-minutes';
+                case 'FINANCE': return 'cat-minutes';
+                case 'GOVERNANCE': return 'cat-minutes';
                 case 'OPERATIONAL': return 'cat-operational';
                 default: return '';
             }
@@ -1052,11 +995,11 @@
             }
 
             // Client side ext check
-            const allowedExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
+            const allowedExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'jpg', 'jpeg', 'png'];
             const ext = file.name.split('.').pop().toLowerCase();
             if (!allowedExts.includes(ext)) {
                 statusEl.style.color = '#EF4444';
-                statusEl.textContent = 'Error: Only PDF, Word, Excel, and Text files are allowed.';
+                statusEl.textContent = 'Error: Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.';
                 return;
             }
 

@@ -73,8 +73,6 @@ async fn test_malicious_user_access() {
         &admin_jwt,
         "Secret Deed B-202",
         "RESIDENT_SPECIFIC",
-        "RESIDENT_PROPERTY",
-        "PRIVATE",
         Some(("B", "202")),
     );
 

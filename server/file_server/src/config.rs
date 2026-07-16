@@ -18,7 +18,7 @@ pub struct RateLimitConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub port: u16,
-    pub admin_email: String,
+    pub super_admin_email: String,
     pub postgres: PostgresConfig,
     pub s3: S3Config,
     pub jwt_secret: String,
@@ -74,8 +74,8 @@ impl AppConfig {
         if let Ok(s3_bucket) = std::env::var("S3_BUCKET_NAME") {
             config.s3.bucket_name = s3_bucket;
         }
-        if let Ok(admin_email) = std::env::var("ADMIN_EMAIL") {
-            config.admin_email = admin_email;
+        if let Ok(super_admin_email) = std::env::var("SUPER_ADMIN_EMAIL") {
+            config.super_admin_email = super_admin_email;
         }
 
         config

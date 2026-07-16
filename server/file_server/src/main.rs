@@ -46,8 +46,12 @@ async fn main() {
         s3_accessor.clone(),
     ));
 
-    // Seed admin credentials programmatically on startup in a separate, clean helper
-    seed_admin_user_or_die(&permissions_manager, &config.admin_email).await;
+    seed_admin_user_or_die(
+        &permissions_manager,
+        &config.super_admin_email,
+        "super_admin",
+    )
+    .await;
 
     let rate_limiters = Arc::new(middleware::RateLimiters::new(
         config.rate_limit.ip_per_min,
@@ -65,7 +69,7 @@ async fn main() {
         forgot_password_expiry: config.forgot_password_expiry,
         rate_limiters,
         log_reset_link: config.log_reset_link.unwrap_or(false),
-        admin_email: config.admin_email.clone(),
+        super_admin_email: config.super_admin_email.clone(),
     };
 
     macro_rules! make_app {
@@ -204,15 +208,21 @@ async fn main() {
     }
 }
 
-/// Helper function to programmatically seed the admin user on startup if they don't exist.
-async fn seed_admin_user_or_die(permissions_manager: &PermissionsManager, email: &str) {
+async fn seed_admin_user_or_die(
+    permissions_manager: &PermissionsManager,
+    email: &str,
+    designation_code: &str,
+) {
     match permissions_manager.email_exists(email).await {
         Ok(false) => {
             println!(
                 "Admin user '{}' not found. Seeding programmatically...",
                 email
             );
-            match permissions_manager.create_admin_user(email).await {
+            match permissions_manager
+                .create_seeded_user(email, designation_code)
+                .await
+            {
                 Ok(_) => println!("Admin user '{}' successfully seeded.", email),
                 Err(e) => eprintln!("Failed to seed admin user: {}", e),
             }

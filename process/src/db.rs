@@ -103,7 +103,7 @@ pub async fn save_step(
 /// Bundled into a struct to keep `review_step` within clippy argument limits.
 pub struct ReviewStepParams<'a> {
     pub step_id: i32,
-    pub admin_id: Option<i32>,
+    pub reviewer_user_id: Option<i32>,
     pub is_approved: bool,
     pub notes: Option<&'a str>,
     /// Template step IDs (= `process_steps.template_step_id`) the admin flagged
@@ -150,8 +150,8 @@ pub async fn reopen_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template: &crate::ProcessTemplate,
-    step_id: i32,  // template_step_id of the step to reopen
-    admin_id: i32, // users.user_id of the admin performing the reopen
+    step_id: i32,          // template_step_id of the step to reopen
+    reviewer_user_id: i32, // users.user_id of the reviewer performing the reopen
     custom_note: Option<&str>,
 ) -> Result<(), String> {
     let state = load_state(conn, process_id)
@@ -172,7 +172,7 @@ pub async fn reopen_step(
                 process_id,
                 &ReviewStepParams {
                     step_id: sid,
-                    admin_id: Some(admin_id),
+                    reviewer_user_id: Some(reviewer_user_id),
                     is_approved: false,
                     notes: custom_note,
                     flagged_step_ids: &[],
@@ -269,7 +269,7 @@ pub async fn get_process_reviews(
                 pr.is_approved, pr.notes, pr.created_at, pr.flagged_step_ids \
          FROM process_step_reviews pr \
          JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
-         LEFT JOIN users u ON pr.admin_id = u.user_id \
+         LEFT JOIN users u ON pr.reviewer_user_id = u.user_id \
          WHERE ps.process_id = $1 \
          ORDER BY pr.created_at ASC",
     )
@@ -598,11 +598,11 @@ async fn insert_review(
 
     sqlx::query(
         "INSERT INTO process_step_reviews \
-         (step_instance_id, admin_id, is_approved, notes, flagged_step_ids, created_at) \
+         (step_instance_id, reviewer_user_id, is_approved, notes, flagged_step_ids, created_at) \
          VALUES ($1, $2, $3, $4, $5, NOW())",
     )
     .bind(step_instance_id)
-    .bind(params.admin_id)
+    .bind(params.reviewer_user_id)
     .bind(params.is_approved)
     .bind(params.notes)
     .bind(params.flagged_step_ids)
@@ -635,8 +635,8 @@ pub async fn insert_admin_comment(
     comment: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO process_admin_comments \
-         (process_id, template_step_id, admin_id, comment, created_at) \
+        "INSERT INTO process_reviewer_comments \
+         (process_id, template_step_id, reviewer_user_id, comment, created_at) \
          VALUES ($1, $2, $3, $4, NOW())",
     )
     .bind(process_id)
@@ -657,8 +657,8 @@ pub async fn get_admin_comments(
     sqlx::query_as(
         "SELECT ac.comment_id, ac.process_id, ac.template_step_id, \
                 u.email as admin_email, ac.comment, ac.created_at \
-         FROM process_admin_comments ac \
-         LEFT JOIN users u ON ac.admin_id = u.user_id \
+         FROM process_reviewer_comments ac \
+         LEFT JOIN users u ON ac.reviewer_user_id = u.user_id \
          WHERE ac.process_id = $1 \
          ORDER BY ac.created_at ASC",
     )

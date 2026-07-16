@@ -146,6 +146,16 @@
               "requirements": {
                 "document_type": "RESIDENT_GENERAL"
               }
+            },
+            {
+              "field_id": 116,
+              "name": "Additional Notes (e.g. file passwords)",
+              "type": "text",
+              "is_optional": true,
+              "filled_by": "user",
+              "requirements": {
+                "format": "string"
+              }
             }
           ]
         }

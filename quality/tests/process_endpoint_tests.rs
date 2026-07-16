@@ -205,6 +205,61 @@ async fn test_save_step_invalid_document_id_fails() {
     assert!(err.is_err());
 }
 
+/// A resident must not be able to attach a non-Resident-Specific document (e.g. a PUBLIC
+/// document, which is visible to them but not flat-scoped) to a process field, even though
+/// it passes the ownership/visibility check in `get_document`.
+#[tokio::test]
+async fn test_save_step_rejects_non_resident_specific_document() {
+    let env = setup_api_test_env(3125).await;
+    let url = env.server_url();
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+
+    // Admin creates and confirms a PUBLIC document via the presigned upload flow.
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/documents/upload-url", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "title": "Society Notice",
+            "category": "PUBLIC",
+            "filename": "notice.pdf"
+        }))
+        .expect("admin upload-url request failed");
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let public_doc_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"fake pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "document_id": public_doc_id }))
+        .expect("admin confirm-upload request failed");
+
+    // Resident attempts to attach the PUBLIC document to a process document field.
+    let err = ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 3,
+            "fields": [{"template_field_id": 101, "document_id": public_doc_id}]
+        }));
+
+    match err {
+        Err(ureq::Error::Status(code, response)) => {
+            assert_eq!(code, 400);
+            let body = response.into_string().unwrap();
+            assert!(
+                body.contains("Resident Specific"),
+                "unexpected error body: {}",
+                body
+            );
+        }
+        other => panic!("expected a 400 rejection, got: {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn test_save_step_locked_step_fails() {
     let env = setup_api_test_env(3118).await;

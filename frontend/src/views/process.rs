@@ -767,8 +767,6 @@ pub const PROCESS_HTML: &str = r#"
             .sidebar.open { transform: translateX(0); }
             .sidebar-brand p { display: none; }
             .sidebar-brand h1 { display: none; }
-            /* Hide standalone logout div on mobile — it's embedded in the nav instead */
-            .sidebar > div:last-child { display: none; }
             .workspace {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
@@ -926,11 +924,7 @@ pub const PROCESS_HTML: &str = r#"
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand" id="sidebar-brand-container">
-                <!-- Dynamically populated based on user role -->
-            </div>
-            <!-- Desktop logout (hidden on mobile via CSS, mobile one is in the nav) -->
-            <div>
-                <button class="logout-btn" id="logout-btn">Log Out</button>
+                <!-- Dynamically populated based on user role, including the Log Out button -->
             </div>
         </aside>
 
@@ -1052,6 +1046,10 @@ pub const PROCESS_HTML: &str = r#"
     </div>
 
     <script>
+        function isAdminUser(user) {
+            return !!(user && user.designations && (user.designations.includes('super_admin')));
+        }
+
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
         let token = localStorage.getItem('vfs_token');
         let user = JSON.parse(localStorage.getItem('vfs_user') || 'null');
@@ -1105,7 +1103,7 @@ pub const PROCESS_HTML: &str = r#"
         }
 
         // Populate sidebar based on role
-        const isAdmin = user.roles && user.roles.includes('Admin');
+        const isAdmin = isAdminUser(user);
         const sidebarBrandContainer = document.getElementById('sidebar-brand-container');
         // Set mobile brand label
         const mobileBrandLabel = document.getElementById('mobile-brand-label');
@@ -1120,7 +1118,7 @@ pub const PROCESS_HTML: &str = r#"
                         <a href="/admin" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>
                         <a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
-                        <button class="logout-btn" style="margin-top:8px; display:none;" id="logout-btn-mobile" onclick="${logoutOnClick}">Log Out</button>
+                        <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             } else {
@@ -1131,23 +1129,11 @@ pub const PROCESS_HTML: &str = r#"
                         <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
-                        <button class="logout-btn" style="margin-top:8px; display:none;" id="logout-btn-mobile" onclick="${logoutOnClick}">Log Out</button>
+                        <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             }
-            // Show mobile logout btn only on small screens
-            const mobileLogout = document.getElementById('logout-btn-mobile');
-            if (mobileLogout && window.innerWidth <= 768) {
-                mobileLogout.style.display = 'block';
-            }
         }
-
-        // Setup Log Out button
-        document.getElementById('logout-btn').onclick = () => {
-            localStorage.removeItem('vfs_token');
-            localStorage.removeItem('vfs_user');
-            window.location.href = '/login';
-        };
 
         // Escapes HTML values safely
         function escapeHtml(str) {
@@ -1191,12 +1177,13 @@ pub const PROCESS_HTML: &str = r#"
             currentTab = tab;
             document.getElementById('tab-btn-admin-review').className = 'subtab-btn' + (tab === 'ADMIN_REVIEW_REQUIRED' ? ' active' : '');
             document.getElementById('tab-btn-user-input').className = 'subtab-btn' + (tab === 'USER_INPUT_REQUIRED' ? ' active' : '');
+            document.getElementById('tab-btn-completed').className = 'subtab-btn' + (tab === 'COMPLETED' ? ' active' : '');
             renderProcessList();
         }
 
         // Load process list from backend
         async function loadProcesses() {
-            if (user && user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'))) {
+            if (isAdminUser(user)) {
                 const adminEmailGroup = document.getElementById('admin-email-filter-group');
                 if (adminEmailGroup) adminEmailGroup.style.display = 'flex';
                 const adminFlatGroup = document.getElementById('admin-flat-filter-group');
@@ -1256,7 +1243,7 @@ pub const PROCESS_HTML: &str = r#"
             const searchQuery = document.getElementById('filter-search').value.trim().toLowerCase();
             const flatQuery = document.getElementById('filter-flat').value.trim().toLowerCase();
             const emailQuery = document.getElementById('filter-email').value.trim().toLowerCase();
-            const isAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const isAdmin = isAdminUser(user);
 
             // Sort by creation date descending (oldest one should be below)
             allProcesses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -1347,7 +1334,7 @@ pub const PROCESS_HTML: &str = r#"
             document.getElementById('start-process-modal').style.display = 'flex';
 
             // Admins cannot start a process for themselves
-            if (user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'))) {
+            if (isAdminUser(user)) {
                 statusEl.style.color = 'var(--danger)';
                 statusEl.textContent = 'Administrative accounts cannot initiate processes directly. Please use the resident view.';
                 document.getElementById('start-process-submit-btn').disabled = true;
@@ -1609,7 +1596,7 @@ pub const PROCESS_HTML: &str = r#"
         // Helper to render fields list for a step/substep
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
             let html = '';
-            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const isCurrentAdmin = isAdminUser(user);
             
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
@@ -1901,7 +1888,7 @@ pub const PROCESS_HTML: &str = r#"
                 html += `<div style="display: flex; flex-direction: column; gap: 24px; margin-top: 16px;">`;
 
                 // Hoist admin context and latest-review flags so each substep card can render the checkbox
-                const isAdminForSubsteps = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const isAdminForSubsteps = isAdminUser(user);
                 const latestRevForCards = (p.reviews || []).reduce((latest, r) => {
                     if (!latest) return r;
                     return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
@@ -1965,7 +1952,7 @@ pub const PROCESS_HTML: &str = r#"
             // Admin review logic moved above
 
             // Render admin action panel (Approve / Reject) if user is admin
-            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const isCurrentAdmin = isAdminUser(user);
             if (isCurrentAdmin) {
                 const isCompleted = stepStatus === 'COMPLETED';
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
@@ -2006,6 +1993,22 @@ pub const PROCESS_HTML: &str = r#"
         // Fetch presigned URL and download file
         async function downloadProcessDoc(documentId) {
             const processId = currentProcessDetails.process_id;
+
+            // Open the tab synchronously (within the click's user-gesture window) so
+            // browsers don't treat it as a blocked popup once the awaited fetch below
+            // resolves — a blocked-popup notification bar is what was causing the
+            // page to jump back to the top after downloading.
+            const newTab = window.open('', '_blank');
+
+            // Preserve scroll position in case anything below still disturbs it.
+            const scrollY = window.scrollY;
+            const contentPanel = document.getElementById('details-content-target');
+            const contentScrollTop = contentPanel ? contentPanel.scrollTop : 0;
+            const restoreScroll = () => {
+                window.scrollTo(0, scrollY);
+                if (contentPanel) contentPanel.scrollTop = contentScrollTop;
+            };
+
             try {
                 const response = await fetch(`${API_BASE}/api/v1/process/download-url`, {
                     method: 'POST',
@@ -2022,17 +2025,27 @@ pub const PROCESS_HTML: &str = r#"
                 if (response.ok) {
                     const data = await response.json();
                     if (data.download_url) {
-                        window.open(data.download_url, '_blank');
+                        if (newTab) {
+                            newTab.location = data.download_url;
+                        } else {
+                            window.open(data.download_url, '_blank');
+                        }
                     } else {
+                        if (newTab) newTab.close();
                         alert('Download URL not returned by server.');
                     }
                 } else {
+                    if (newTab) newTab.close();
                     const errText = await response.text();
                     alert(`Download failed: ${errText}`);
                 }
             } catch(e) {
+                if (newTab) newTab.close();
                 console.error(e);
                 alert('Connection error while retrieving file.');
+            } finally {
+                restoreScroll();
+                setTimeout(restoreScroll, 50);
             }
         }
 
@@ -2057,7 +2070,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL
-                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const isCurrentAdmin = isAdminUser(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
@@ -2179,7 +2192,7 @@ pub const PROCESS_HTML: &str = r#"
 
             const fieldsPayload = [];
             let hasError = false;
-            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const isCurrentAdmin = isAdminUser(user);
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
@@ -2376,7 +2389,7 @@ pub const PROCESS_HTML: &str = r#"
             document.getElementById('docPickerModal').style.display = 'flex';
             document.getElementById('picker-new-upload').value = '';
             
-            const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+            const isCurrentAdmin = isAdminUser(user);
             const libraryHeading = document.getElementById('picker-library-heading');
             const libraryContainer = document.getElementById('picker-existing-docs');
             
@@ -2401,7 +2414,8 @@ pub const PROCESS_HTML: &str = r#"
                 });
                 
                 if (response.ok) {
-                    const docs = await response.json();
+                    const allDocs = await response.json();
+                    const docs = allDocs.filter(d => (d.document || d).category === 'RESIDENT_SPECIFIC');
                     const listHtml = docs.map(d => {
                         const doc = d.document || d;
                         return `
@@ -2508,7 +2522,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL from server
-                const isCurrentAdmin = user.roles && (user.roles.includes('admin') || user.roles.includes('Admin'));
+                const isCurrentAdmin = isAdminUser(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;

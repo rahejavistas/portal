@@ -206,7 +206,7 @@ pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
     let config_content = format!(
         r#"
 port = {server_port}
-admin_email = "admin@vistas.com"
+super_admin_email = "superadmin@vistas.com"
 jwt_secret = "modular_integration_test_secret_signing_key"
 jwt_expiry = "1h"
 forgot_password_expiry = "5m"
@@ -320,7 +320,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
     let url = env.server_url();
 
     let _ = ureq::post(&format!("{}/api/v1/forgot-password", url))
-        .send_json(serde_json::json!({ "email": "admin@vistas.com" }))
+        .send_json(serde_json::json!({ "email": "superadmin@vistas.com" }))
         .expect("Failed to call forgot-password");
 
     let options = (*env.db_pool.connect_options()).clone();
@@ -334,7 +334,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
             let tok = sqlx::query_scalar::<_, String>(
                 "SELECT reset_token FROM user_credentials WHERE user_id = (SELECT user_id FROM users WHERE email = $1)"
             )
-            .bind("admin@vistas.com")
+            .bind("superadmin@vistas.com")
             .fetch_one(&pool)
             .await
             .expect("reset token not found in db");
@@ -354,7 +354,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
 
     let login_resp = ureq::post(&format!("{}/api/v1/login", url))
         .send_json(serde_json::json!({
-            "email": "admin@vistas.com",
+            "email": "superadmin@vistas.com",
             "password": "admin_secure_password_123"
         }))
         .expect("Admin login failed");
@@ -454,8 +454,6 @@ pub fn quick_create_document(
     admin_jwt: &str,
     title: &str,
     category: &str,
-    doc_type: &str,
-    access_level: &str,
     flat: Option<(&str, &str)>,
 ) -> String {
     let url = env.server_url();
@@ -466,8 +464,6 @@ pub fn quick_create_document(
         "filename": "seeded.txt",
         "description": "Programmatic helper seeded document",
         "category": category,
-        "document_type": doc_type,
-        "access_level": access_level,
         "metadata": {
             "subcategory": "Seeded",
             "tags": ["seeded", "helper"],

@@ -8,7 +8,6 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[allow(dead_code)]
 pub struct SessionUser(pub authentication::User);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +16,7 @@ pub struct Claims {
     pub email: String,
     pub wing: String,
     pub flat_number: String,
-    pub roles: Vec<authentication::UserRole>,
+    pub designations: Vec<String>,
     pub exp: usize, // expiration timestamp
 }
 
@@ -38,7 +37,7 @@ pub fn generate_token(
         email: user.email.clone(),
         wing: user.wing.clone(),
         flat_number: user.flat_number.clone(),
-        roles: user.roles.clone(),
+        designations: user.designations.clone(),
         exp: expiration,
     };
 
@@ -58,6 +57,10 @@ where
     type Rejection = StatusCode;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        if let Some(user) = parts.extensions.get::<authentication::User>() {
+            return Ok(SessionUser(user.clone()));
+        }
+
         let app_state = AppState::from_ref(state);
 
         let user_id = if let Some(claims) = parts.extensions.get::<Claims>() {
@@ -93,6 +96,7 @@ where
             _ => return Err(StatusCode::UNAUTHORIZED),
         };
 
+        parts.extensions.insert(user.clone());
         Ok(SessionUser(user))
     }
 }

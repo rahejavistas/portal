@@ -11,8 +11,7 @@ async fn test_multipart_document_upload() {
 
     let payload = serde_json::json!({
         "title": "S3 Upload Integration Test",
-        "category": "GENERIC",
-        "document_type": "GENERIC_RULEBOOK",
+        "category": "PUBLIC",
         "filename": "hello.txt"
     });
 

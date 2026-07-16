@@ -13,8 +13,8 @@ pub struct CreateUserPayload {
 #[derive(serde::Deserialize)]
 pub struct UpdateRolePayload {
     pub user_id: i32,
-    /// The target role to set.
-    pub target_role: Option<authentication::UserRole>,
+    /// The target designation code to set ("committee"), or `null` to clear it.
+    pub target_role: Option<String>,
 }
 
 /// List all users.
@@ -107,7 +107,7 @@ pub async fn update_role(
 
     match state
         .permissions_manager
-        .set_user_target_role(payload.user_id, payload.target_role)
+        .set_user_target_role(payload.user_id, payload.target_role.as_deref())
         .await
     {
         Ok(_) => (
