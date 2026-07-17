@@ -159,6 +159,8 @@ pub fn ensure_global_containers_running() {
                 "-c",
                 "until mc alias set myminio http://minio:9000 admin password; do sleep 0.5; done; mc mb myminio/vistas-files || true; mc anonymous set public myminio/vistas-files || true"
             ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .expect("Failed to configure bucket using mc");
 
@@ -206,7 +208,7 @@ pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
     let config_content = format!(
         r#"
 port = {server_port}
-admin_email = "admin@vistas.com"
+super_admin_email = "superadmin@vistas.com"
 jwt_secret = "modular_integration_test_secret_signing_key"
 jwt_expiry = "1h"
 forgot_password_expiry = "5m"
@@ -241,7 +243,7 @@ admin_per_min = 300
         .env("APP_ENV", db_name.clone())
         .env("AWS_ACCESS_KEY_ID", "admin")
         .env("AWS_SECRET_ACCESS_KEY", "password")
-        .stdout(Stdio::inherit())
+        .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
         .expect("Failed to spawn file_server");
@@ -320,7 +322,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
     let url = env.server_url();
 
     let _ = ureq::post(&format!("{}/api/v1/forgot-password", url))
-        .send_json(serde_json::json!({ "email": "admin@vistas.com" }))
+        .send_json(serde_json::json!({ "email": "superadmin@vistas.com" }))
         .expect("Failed to call forgot-password");
 
     let options = (*env.db_pool.connect_options()).clone();
@@ -334,7 +336,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
             let tok = sqlx::query_scalar::<_, String>(
                 "SELECT reset_token FROM user_credentials WHERE user_id = (SELECT user_id FROM users WHERE email = $1)"
             )
-            .bind("admin@vistas.com")
+            .bind("superadmin@vistas.com")
             .fetch_one(&pool)
             .await
             .expect("reset token not found in db");
@@ -354,7 +356,7 @@ pub fn quick_setup_admin(env: &TestEnv) -> String {
 
     let login_resp = ureq::post(&format!("{}/api/v1/login", url))
         .send_json(serde_json::json!({
-            "email": "admin@vistas.com",
+            "email": "superadmin@vistas.com",
             "password": "admin_secure_password_123"
         }))
         .expect("Admin login failed");
@@ -436,16 +438,113 @@ pub fn quick_onboard_user(env: &TestEnv, email: &str, password: &str) -> String 
     login_val["token"].as_str().unwrap().to_string()
 }
 
-/// Promotes a user to the specified target role ('admin' or 'committee') using Admin JWT.
-pub fn quick_promote_user(env: &TestEnv, admin_jwt: &str, user_id: i32, role: &str) {
+/// Creates a new designation via the roles-management API, using the caller's JWT (which
+/// must hold `designations.manage`). Designations are no longer seeded (beyond super_admin),
+/// so tests must create any designation they need before assigning/mapping it.
+pub fn quick_create_designation(env: &TestEnv, caller_jwt: &str, code: &str, label: &str) {
     let url = env.server_url();
-    let _ = ureq::post(&format!("{}/api/v1/admin/users/roles", url))
-        .set("Authorization", &format!("Bearer {}", admin_jwt))
+    let _ = ureq::post(&format!("{}/api/v1/admin/roles/designations/create", url))
+        .set("Authorization", &format!("Bearer {}", caller_jwt))
+        .send_json(serde_json::json!({ "code": code, "label": label }))
+        .expect("Failed to create designation");
+}
+
+/// Creates a new document category via the roles-management API, using the caller's JWT
+/// (which must hold `documents.categories.manage`). Only PUBLIC/RESIDENT_SPECIFIC are
+/// seeded, so tests must create any other category before uploading documents into it.
+pub fn quick_create_document_category(env: &TestEnv, caller_jwt: &str, code: &str, label: &str) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!(
+        "{}/api/v1/admin/roles/document-categories/create",
+        url
+    ))
+    .set("Authorization", &format!("Bearer {}", caller_jwt))
+    .send_json(serde_json::json!({ "code": code, "label": label }))
+    .expect("Failed to create document category");
+}
+
+/// Grants or revokes a permission for a designation via the roles-management API, using
+/// the caller's JWT (which must hold `designations.manage`).
+pub fn quick_toggle_designation_permission(
+    env: &TestEnv,
+    caller_jwt: &str,
+    designation_code: &str,
+    permission_code: &str,
+    enabled: bool,
+) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!(
+        "{}/api/v1/admin/roles/designations/permissions/toggle",
+        url
+    ))
+    .set("Authorization", &format!("Bearer {}", caller_jwt))
+    .send_json(serde_json::json!({
+        "designation_code": designation_code,
+        "permission_code": permission_code,
+        "enabled": enabled
+    }))
+    .expect("Failed to toggle designation permission");
+}
+
+/// Assigns a designation to a user via the roles-management API, using the caller's JWT
+/// (which must hold `users.roles.manage`).
+pub fn quick_assign_designation(
+    env: &TestEnv,
+    caller_jwt: &str,
+    user_id: i32,
+    designation_code: &str,
+) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!("{}/api/v1/admin/roles/designations/assign", url))
+        .set("Authorization", &format!("Bearer {}", caller_jwt))
         .send_json(serde_json::json!({
             "user_id": user_id,
-            "target_role": role
+            "designation_code": designation_code
         }))
-        .expect("Failed to update role");
+        .expect("Failed to assign designation");
+}
+
+/// Revokes a designation from a user via the roles-management API, using the caller's JWT
+/// (which must hold `users.roles.manage`).
+pub fn quick_revoke_designation(
+    env: &TestEnv,
+    caller_jwt: &str,
+    user_id: i32,
+    designation_code: &str,
+) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!("{}/api/v1/admin/roles/designations/revoke", url))
+        .set("Authorization", &format!("Bearer {}", caller_jwt))
+        .send_json(serde_json::json!({
+            "user_id": user_id,
+            "designation_code": designation_code
+        }))
+        .expect("Failed to revoke designation");
+}
+
+/// Grants or revokes a designation's access to a document category via the roles-management
+/// API, using the caller's JWT (which must hold `designations.manage`).
+pub fn quick_set_category_designation(
+    env: &TestEnv,
+    caller_jwt: &str,
+    category: &str,
+    designation_code: &str,
+    can_read: bool,
+    can_manage: bool,
+) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!(
+        "{}/api/v1/admin/roles/document-category-designations/toggle",
+        url
+    ))
+    .set("Authorization", &format!("Bearer {}", caller_jwt))
+    .send_json(serde_json::json!({
+        "category": category,
+        "designation_code": designation_code,
+        "can_read": can_read,
+        "can_manage": can_manage
+    }))
+    .expect("Failed to set category designation");
 }
 
 /// Programmatically creates a document via multipart upload using Admin JWT, returning the `document_id`.
@@ -454,8 +553,6 @@ pub fn quick_create_document(
     admin_jwt: &str,
     title: &str,
     category: &str,
-    doc_type: &str,
-    access_level: &str,
     flat: Option<(&str, &str)>,
 ) -> String {
     let url = env.server_url();
@@ -466,8 +563,6 @@ pub fn quick_create_document(
         "filename": "seeded.txt",
         "description": "Programmatic helper seeded document",
         "category": category,
-        "document_type": doc_type,
-        "access_level": access_level,
         "metadata": {
             "subcategory": "Seeded",
             "tags": ["seeded", "helper"],

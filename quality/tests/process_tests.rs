@@ -87,7 +87,7 @@ impl<'a> TestProcess<'a> {
     async fn review_step(
         &mut self,
         step_id: i32,
-        admin_id: Option<i32>,
+        reviewer_user_id: Option<i32>,
         is_approved: bool,
         notes: Option<&str>,
         flagged_step_ids: &[i32],
@@ -98,7 +98,7 @@ impl<'a> TestProcess<'a> {
             self.template,
             process::db::ReviewStepParams {
                 step_id,
-                admin_id,
+                reviewer_user_id,
                 is_approved,
                 notes,
                 flagged_step_ids,
@@ -171,8 +171,8 @@ async fn test_process_lifecycle_integration() {
     // 4. Save fields in Substep 3 (Owner Documents)
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'agreement.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'agreement.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -309,8 +309,8 @@ async fn test_admin_reopen_and_edit_lifecycle() {
     // Complete all substeps for Step 1 (step_id 2)
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'agreement.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'agreement.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -591,8 +591,8 @@ async fn test_admin_reopen_parent_step_directly() {
     // Complete all substeps for Step 1 (step_id 2)
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'agreement.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'agreement.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -752,8 +752,8 @@ async fn test_field_history_preservation() {
     let doc_id2 = Uuid::new_v4();
     for doc_id in &[doc_id1, doc_id2] {
         sqlx::query(
-            "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-             VALUES ($1, 'doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+            "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+             VALUES ($1, 'doc.pdf', 'PUBLIC', TRUE)",
         )
         .bind(doc_id)
         .execute(&pool)
@@ -833,8 +833,8 @@ async fn test_rejection_resubmission_approval_lifecycle() {
     let doc_id2 = Uuid::new_v4();
     for doc_id in &[doc_id1, doc_id2] {
         sqlx::query(
-            "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-             VALUES ($1, 'doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+            "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+             VALUES ($1, 'doc.pdf', 'PUBLIC', TRUE)",
         )
         .bind(doc_id)
         .execute(&pool)
@@ -1111,7 +1111,7 @@ async fn test_multiple_documents_upload_per_step() {
     let doc2_id = Uuid::new_v4();
 
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) VALUES ($1, 'doc1.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) VALUES ($1, 'doc1.pdf', 'PUBLIC', TRUE)"
     )
     .bind(doc1_id)
     .execute(&pool)
@@ -1119,7 +1119,7 @@ async fn test_multiple_documents_upload_per_step() {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) VALUES ($1, 'doc2.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) VALUES ($1, 'doc2.pdf', 'PUBLIC', TRUE)"
     )
     .bind(doc2_id)
     .execute(&pool)
@@ -1202,8 +1202,8 @@ async fn test_turn_logic_full_lifecycle() {
     // T1: User fills all substeps of Step 1 → Step 1 becomes PendingReview → Admin turn
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'test.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'test.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -1386,8 +1386,8 @@ async fn test_revoke_resubmit_turn_and_note_content() {
 
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'doc.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -1472,8 +1472,8 @@ async fn test_revoke_resubmit_turn_and_note_content() {
     // User re-uploads and resubmits
     let new_doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'new.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'new.pdf', 'PUBLIC', TRUE)",
     )
     .bind(new_doc_id)
     .execute(&pool)
@@ -1534,8 +1534,8 @@ async fn test_access_control_and_cross_document_usage() {
     // A global document (not linked to any process) — any user should be able to reference it
     let doc_global = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'global_doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'global_doc.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_global)
     .execute(&pool)
@@ -1545,8 +1545,8 @@ async fn test_access_control_and_cross_document_usage() {
     // A document created by User A (not linked to any process by the DB — linkage is via process_fields)
     let doc_process = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'process_doc.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'process_doc.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_process)
     .execute(&pool)
@@ -1636,8 +1636,8 @@ async fn test_comprehensive_failure_cases() {
 
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'fail_test.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'fail_test.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -1765,8 +1765,8 @@ async fn test_revoke_without_note_stores_null() {
 
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'x.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'x.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -1841,8 +1841,8 @@ async fn test_review_flagged_step_ids() {
 
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'flag_test.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'flag_test.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)
@@ -1936,8 +1936,8 @@ async fn test_reopen_step_stores_empty_flags() {
 
     let doc_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO documents (document_id, title, category, document_type, access_level, is_user_uploaded) \
-         VALUES ($1, 'reopen_flag.pdf', 'GENERIC', 'GENERIC_RULEBOOK', 'PUBLIC', TRUE)"
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'reopen_flag.pdf', 'PUBLIC', TRUE)",
     )
     .bind(doc_id)
     .execute(&pool)

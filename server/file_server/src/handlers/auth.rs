@@ -106,7 +106,6 @@ pub async fn forgot_password(
     State(state): State<AppState>,
     Json(payload): Json<ForgotPasswordPayload>,
 ) -> Response {
-    // Generate a secure 32-character alphanumeric reset token
     let token: String = thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(32)
@@ -117,7 +116,6 @@ pub async fn forgot_password(
 
     match state.permissions_manager.email_exists(&email).await {
         Ok(true) => {
-            // User exists, set the reset token
             if let Err(e) = state
                 .permissions_manager
                 .create_reset_token(
@@ -138,7 +136,6 @@ pub async fn forgot_password(
             }
         }
         Ok(false) => {
-            // Unregistered email! Do not create dummy data, just return NOT_FOUND
             return (
                 StatusCode::NOT_FOUND,
                 Json(serde_json::json!({
@@ -170,15 +167,7 @@ pub async fn forgot_password(
         ),
     };
 
-    // Log the reset link in server logs for testing/recovery only if configured
-    if state.log_reset_link {
-        println!(
-            "Generated password setup/reset link for '{}': {}",
-            email, reset_link
-        );
-    }
-
-    // Call the generic email carrier, but don't fail the request if it fails
+    // Fire-and-forget: an email delivery failure shouldn't fail the request.
     if let Err(e) = email::send_email(&email_payload).await {
         eprintln!("Email send error: {}", e);
     }

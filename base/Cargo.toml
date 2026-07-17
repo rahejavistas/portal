@@ -3,6 +3,9 @@ name = "base"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [dependencies]
 sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres"] }
 aws-config = "1.1.7"

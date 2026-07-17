@@ -1,96 +1,28 @@
+mod category;
 pub mod manager;
 
-pub use manager::DocumentManager;
+pub use manager::{AdminUploadIntentInput, DocumentManager};
 
+use base::flat::FlatIdentifier;
 use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(type_name = "document_category", rename_all = "SCREAMING_SNAKE_CASE")]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DocumentCategory {
-    ResidentSpecific,
-    ProcessSpecific,
-    Generic,
-    MeetingMinutes,
-    Operational,
-}
+/// The well-known code of the two protected system categories (seeded, never deletable).
+/// Every other category is admin-defined at runtime — see `document_categories` table.
+pub const PUBLIC_CATEGORY: &str = "PUBLIC";
+pub const RESIDENT_SPECIFIC_CATEGORY: &str = "RESIDENT_SPECIFIC";
 
-impl DocumentCategory {
-    /// Returns the enforced default access level for each document category.
-    /// RESIDENT_SPECIFIC documents are always PRIVATE; all other categories default to PUBLIC.
-    pub fn default_access_level(&self) -> DocumentAccessLevel {
-        match self {
-            DocumentCategory::ResidentSpecific => DocumentAccessLevel::Private,
-            DocumentCategory::ProcessSpecific => DocumentAccessLevel::Private,
-            DocumentCategory::Generic => DocumentAccessLevel::Public,
-            DocumentCategory::MeetingMinutes => DocumentAccessLevel::Public,
-            DocumentCategory::Operational => DocumentAccessLevel::Public,
-        }
-    }
-
-    /// Returns the list of valid `DocumentType` variants for this category.
-    /// Used for server-side validation before hitting the DB constraint.
-    pub fn valid_types(&self) -> &[DocumentType] {
-        match self {
-            DocumentCategory::ResidentSpecific => &[
-                DocumentType::ResidentProperty,
-                DocumentType::ResidentKyc,
-                DocumentType::ResidentRental,
-                DocumentType::ResidentGeneral,
-            ],
-            DocumentCategory::ProcessSpecific => &[DocumentType::ProcessGeneral],
-            DocumentCategory::Generic => {
-                &[DocumentType::GenericRulebook, DocumentType::GenericBylaws]
-            }
-            DocumentCategory::MeetingMinutes => &[
-                DocumentType::MinutesAgm,
-                DocumentType::MinutesGbm,
-                DocumentType::MinutesMgmt,
-            ],
-            DocumentCategory::Operational => &[
-                DocumentType::OperationalVendorContract,
-                DocumentType::OperationalPayment,
-                DocumentType::OperationalSla,
-            ],
-        }
-    }
-
-    /// Checks if a `DocumentType` is valid for this category.
-    pub fn is_valid_type(&self, doc_type: DocumentType) -> bool {
-        self.valid_types().contains(&doc_type)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(
-    type_name = "document_access_level",
-    rename_all = "SCREAMING_SNAKE_CASE"
-)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DocumentAccessLevel {
-    Public,
-    CommitteeOnly,
-    Private,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(type_name = "document_type", rename_all = "SCREAMING_SNAKE_CASE")]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DocumentType {
-    ResidentProperty,
-    ResidentKyc,
-    ResidentRental,
-    ResidentGeneral,
-    ProcessGeneral,
-    GenericRulebook,
-    GenericBylaws,
-    MinutesAgm,
-    MinutesGbm,
-    MinutesMgmt,
-    OperationalVendorContract,
-    OperationalPayment,
-    OperationalSla,
+/// A row of the `document_categories` table. Categories are fully dynamic/admin-created
+/// except for the two protected system rows (`is_system = true`): PUBLIC (`is_public_read`,
+/// visible to everyone) and RESIDENT_SPECIFIC (`is_flat_scoped`, scoped by flat ownership).
+/// Every other category's access is governed entirely by `document_category_designations`.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct DocumentCategoryDef {
+    pub code: String,
+    pub label: String,
+    pub is_public_read: bool,
+    pub is_flat_scoped: bool,
+    pub is_system: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -98,14 +30,12 @@ pub struct Document {
     pub document_id: Uuid,
     pub title: String,
     pub description: Option<String>,
-    pub category: DocumentCategory,
-    pub document_type: DocumentType,
-    pub access_level: DocumentAccessLevel,
-    pub restricted_committee_roles: Vec<authentication::UserRole>,
+    pub category: String,
     pub uploaded_date: DateTime<Utc>,
     pub is_deleted: bool,
     pub is_user_uploaded: bool,
     pub is_upload_confirmed: bool,
+    pub uploaded_by: Option<i32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -119,9 +49,27 @@ pub struct GenericDocumentMetadata {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DocumentFlatInfo {
+    #[serde(flatten)]
+    pub flat: FlatIdentifier,
+}
+
+/// A single row of the `document_category_designations` access matrix: whether a
+/// designation can read and/or manage (upload, sign, delete) a document category.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct CategoryDesignation {
+    pub category: String,
+    pub designation_code: String,
+    pub can_read: bool,
+    pub can_manage: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocumentWithMetadata {
     pub document: Document,
     pub metadata: Option<GenericDocumentMetadata>,
+    #[serde(default)]
+    pub flat: Option<DocumentFlatInfo>,
     #[serde(default)]
     pub download_url: Option<String>,
 }
@@ -142,22 +90,31 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
             None
         };
 
+        // wing/flat_number are only present when the query joins document_flats/flats
+        // (e.g. the admin document list); absent otherwise.
+        let flat = match (
+            row.try_get::<String, _>("wing"),
+            row.try_get::<String, _>("flat_number"),
+        ) {
+            (Ok(wing), Ok(flat_number)) => Some(DocumentFlatInfo {
+                flat: FlatIdentifier::from_normalized(wing, flat_number),
+            }),
+            _ => None,
+        };
+
         Ok(Self {
             document,
             metadata,
+            flat,
             download_url: None,
         })
     }
 }
 
-pub fn derive_s3_key(access_level: DocumentAccessLevel, document_id: Uuid) -> String {
-    let prefix = match access_level {
-        DocumentAccessLevel::Public | DocumentAccessLevel::CommitteeOnly => "public",
-        DocumentAccessLevel::Private => "private",
-    };
+pub fn derive_s3_key(document_id: Uuid) -> String {
     let uuid_str = document_id.to_string();
     let first_char = uuid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
-    format!("{}/{}/{}", prefix, first_char, uuid_str)
+    format!("documents/{}/{}", first_char, uuid_str)
 }
 
 /// Structured input for document metadata fields, used by the manager's

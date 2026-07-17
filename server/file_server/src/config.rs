@@ -13,12 +13,18 @@ pub struct RateLimitConfig {
     pub ip_per_min: u32,
     pub user_per_min: u32,
     pub admin_per_min: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub port: u16,
-    pub admin_email: String,
+    pub super_admin_email: String,
     pub postgres: PostgresConfig,
     pub s3: S3Config,
     pub jwt_secret: String,
@@ -28,15 +34,12 @@ pub struct AppConfig {
     pub forgot_password_expiry: std::time::Duration,
     pub telemetry: TelemetryConfig,
     pub rate_limit: RateLimitConfig,
-    pub log_reset_link: Option<bool>,
 }
 
 impl AppConfig {
     pub fn load_config() -> Self {
         let env = std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string());
         let file_name = format!("config_{}.toml", env);
-
-        println!("Loading configuration from {}", file_name);
 
         let config_str = std::fs::read_to_string(&file_name)
             .unwrap_or_else(|e| panic!("Failed to read configuration file {}: {}", file_name, e));
@@ -74,8 +77,8 @@ impl AppConfig {
         if let Ok(s3_bucket) = std::env::var("S3_BUCKET_NAME") {
             config.s3.bucket_name = s3_bucket;
         }
-        if let Ok(admin_email) = std::env::var("ADMIN_EMAIL") {
-            config.admin_email = admin_email;
+        if let Ok(super_admin_email) = std::env::var("SUPER_ADMIN_EMAIL") {
+            config.super_admin_email = super_admin_email;
         }
 
         config

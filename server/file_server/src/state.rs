@@ -13,6 +13,5 @@ pub struct AppState {
     pub jwt_expiry: std::time::Duration,
     pub forgot_password_expiry: std::time::Duration,
     pub rate_limiters: Arc<RateLimiters>,
-    pub log_reset_link: bool,
-    pub admin_email: String,
+    pub super_admin_email: String,
 }

@@ -15,7 +15,6 @@ pub fn init_telemetry(
     let password = password.unwrap_or_default();
 
     if endpoint.is_empty() {
-        println!("Telemetry is disabled (no OTLP_ENDPOINT provided)");
         return Ok(());
     }
 
@@ -43,7 +42,5 @@ pub fn init_telemetry(
         .build()?;
 
     global::set_meter_provider(metrics);
-
-    println!("Telemetry initialized successfully.");
     Ok(())
 }

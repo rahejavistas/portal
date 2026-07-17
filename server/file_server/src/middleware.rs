@@ -16,18 +16,20 @@ use std::time::Instant;
 use tower_http::cors::{Any, CorsLayer};
 
 pub struct RateLimiters {
+    pub enabled: bool,
     pub ip_limiter: RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>,
     pub user_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
     pub admin_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
 }
 
 impl RateLimiters {
-    pub fn new(ip_per_min: u32, user_per_min: u32, admin_per_min: u32) -> Self {
+    pub fn new(enabled: bool, ip_per_min: u32, user_per_min: u32, admin_per_min: u32) -> Self {
         let ip_quota = Quota::per_minute(NonZeroU32::new(ip_per_min.max(1)).unwrap());
         let user_quota = Quota::per_minute(NonZeroU32::new(user_per_min.max(1)).unwrap());
         let admin_quota = Quota::per_minute(NonZeroU32::new(admin_per_min.max(1)).unwrap());
 
         Self {
+            enabled,
             ip_limiter: RateLimiter::keyed(ip_quota),
             user_limiter: RateLimiter::keyed(user_quota),
             admin_limiter: RateLimiter::keyed(admin_quota),
@@ -53,7 +55,7 @@ pub async fn rate_limit_middleware<B>(
             .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
     };
 
-    if state.rate_limiters.ip_limiter.check_key(&ip).is_err() {
+    if state.rate_limiters.enabled && state.rate_limiters.ip_limiter.check_key(&ip).is_err() {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -70,24 +72,15 @@ pub async fn rate_limit_middleware<B>(
             &Validation::default(),
         ) {
             let user_id = data.claims.sub.parse::<i32>().unwrap_or(0);
-            let is_admin = data.claims.roles.contains(&authentication::UserRole::Admin);
+            let is_admin = data.claims.designations.iter().any(|d| d == "super_admin");
 
-            if is_admin {
-                if state
-                    .rate_limiters
-                    .admin_limiter
-                    .check_key(&user_id)
-                    .is_err()
-                {
-                    return Err(StatusCode::TOO_MANY_REQUESTS);
-                }
-            } else {
-                if state
-                    .rate_limiters
-                    .user_limiter
-                    .check_key(&user_id)
-                    .is_err()
-                {
+            if state.rate_limiters.enabled {
+                let limiter = if is_admin {
+                    &state.rate_limiters.admin_limiter
+                } else {
+                    &state.rate_limiters.user_limiter
+                };
+                if limiter.check_key(&user_id).is_err() {
                     return Err(StatusCode::TOO_MANY_REQUESTS);
                 }
             }
@@ -182,25 +175,35 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
     response
 }
 
-/// Middleware to enforce that the request is made by a user with the Admin role.
-pub async fn admin_guard<B>(
-    session_user: crate::extractors::SessionUser,
-    req: Request<B>,
-    next: Next<B>,
-) -> Response {
-    if !session_user
-        .0
-        .roles
-        .contains(&authentication::UserRole::Admin)
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": "Access denied: Administrative privileges required."
-            })),
-        )
-            .into_response();
+/// Requires the caller to hold at least one permission in `required`.
+pub fn require_permission<B>(
+    required: &'static [authentication::Permission],
+) -> impl Fn(
+    crate::extractors::SessionUser,
+    Request<B>,
+    Next<B>,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+       + Clone
+where
+    B: Send + 'static,
+{
+    move |session_user: crate::extractors::SessionUser, req: Request<B>, next: Next<B>| {
+        Box::pin(async move {
+            if !required.iter().any(|p| session_user.0.has_permission(*p)) {
+                let codes: Vec<&str> = required.iter().map(|p| p.code()).collect();
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({
+                        "status": "error",
+                        "message": format!(
+                            "Access denied: one of {:?} permission(s) required.",
+                            codes
+                        )
+                    })),
+                )
+                    .into_response();
+            }
+            next.run(req).await
+        })
     }
-    next.run(req).await
 }

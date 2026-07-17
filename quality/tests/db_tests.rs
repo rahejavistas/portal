@@ -1,4 +1,4 @@
-use authentication::{PermissionsManager, UserRole};
+use authentication::PermissionsManager;
 use base::flat::FlatIdentifier;
 use quality::setup_db_test_env;
 use std::sync::Arc;
@@ -18,14 +18,14 @@ async fn test_permissions_manager_user_crud() {
     let flat_num = "101";
 
     let user = pm
-        .create_user_with_credentials(email, Some("resident_password_xyz1"), wing, flat_num)
+        .create_user_with_credentials(email, Some("resident_password_xyz1"), wing, flat_num, None)
         .await
         .expect("Failed to create user programmatically");
 
     assert_eq!(user.email, email);
     assert_eq!(user.wing, wing);
     assert_eq!(user.flat_number, flat_num);
-    assert!(user.roles.is_empty());
+    assert!(user.designations.is_empty());
 
     let exists_now = pm.email_exists(email).await.unwrap();
     assert!(exists_now);
@@ -68,12 +68,24 @@ async fn test_active_flat_ownership_constraint() {
     let flat_num = "0101";
 
     let _u1 = pm
-        .create_user_with_credentials("owner1@vistas.com", Some("password11"), wing, flat_num)
+        .create_user_with_credentials(
+            "owner1@vistas.com",
+            Some("password11"),
+            wing,
+            flat_num,
+            None,
+        )
         .await
         .unwrap();
 
     let attempt = pm
-        .create_user_with_credentials("owner2@vistas.com", Some("password22"), wing, flat_num)
+        .create_user_with_credentials(
+            "owner2@vistas.com",
+            Some("password22"),
+            wing,
+            flat_num,
+            None,
+        )
         .await;
 
     assert!(attempt.is_err());
@@ -93,21 +105,32 @@ async fn test_permissions_manager_role_transitions() {
     let pm = Arc::new(PermissionsManager::new(pool.clone()));
 
     let user = pm
-        .create_user_with_credentials("role_user@vistas.com", Some("password123"), "A", "101")
+        .create_user_with_credentials(
+            "role_user@vistas.com",
+            Some("password123"),
+            "A",
+            "101",
+            None,
+        )
         .await
         .unwrap();
 
-    pm.set_user_target_role(user.user_id, Some(UserRole::Admin))
+    pm.create_designation("committee", "Committee", None)
+        .await
+        .unwrap();
+    pm.assign_designation(user.user_id, "committee", None)
         .await
         .unwrap();
 
     let promoted = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(promoted.roles.contains(&UserRole::Admin));
+    assert!(promoted.designations.contains(&"committee".to_string()));
 
-    pm.set_user_target_role(user.user_id, None).await.unwrap();
+    pm.revoke_designation(user.user_id, "committee", None)
+        .await
+        .unwrap();
 
     let demoted = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(demoted.roles.is_empty());
+    assert!(demoted.designations.is_empty());
 }
 
 /// Tests direct document creation visibilities and access resolution queries on DocumentManager.
@@ -118,7 +141,13 @@ async fn test_document_manager_visibility_resolution() {
     let pm = Arc::new(PermissionsManager::new(pool.clone()));
 
     let demoted_user = pm
-        .create_user_with_credentials("doc_user@vistas.com", Some("password123"), "A", "0101")
+        .create_user_with_credentials(
+            "doc_user@vistas.com",
+            Some("password123"),
+            "A",
+            "0101",
+            None,
+        )
         .await
         .unwrap();
 
@@ -140,14 +169,15 @@ async fn test_document_manager_visibility_resolution() {
 
     let doc1 = dm
         .admin_create_upload_intent(
-            "Direct Crate Manual",
-            Some("Test document"),
-            file_server::document::DocumentCategory::Generic,
-            file_server::document::DocumentType::GenericRulebook,
-            file_server::document::DocumentAccessLevel::Public,
+            file_server::document::AdminUploadIntentInput {
+                title: "Direct Crate Manual",
+                description: Some("Test document"),
+                category: "PUBLIC",
+                metadata: None,
+                content_type: "application/pdf",
+                uploaded_by: None,
+            },
             None,
-            None,
-            "application/pdf",
         )
         .await
         .expect("Failed to create Doc 1")
@@ -155,14 +185,15 @@ async fn test_document_manager_visibility_resolution() {
 
     let doc2 = dm
         .admin_create_upload_intent(
-            "Direct A-0101 deed",
-            Some("Registry mapping"),
-            file_server::document::DocumentCategory::ResidentSpecific,
-            file_server::document::DocumentType::ResidentProperty,
-            file_server::document::DocumentAccessLevel::Private,
+            file_server::document::AdminUploadIntentInput {
+                title: "Direct A-0101 deed",
+                description: Some("Registry mapping"),
+                category: "RESIDENT_SPECIFIC",
+                metadata: None,
+                content_type: "application/pdf",
+                uploaded_by: None,
+            },
             Some(&flat_id),
-            None,
-            "application/pdf",
         )
         .await
         .expect("Failed to create Doc 2")
@@ -182,14 +213,15 @@ async fn test_document_manager_visibility_resolution() {
 
     let doc3 = dm
         .admin_create_upload_intent(
-            "Direct B-0202 deed",
-            Some("Unrelated flat registry"),
-            file_server::document::DocumentCategory::ResidentSpecific,
-            file_server::document::DocumentType::ResidentProperty,
-            file_server::document::DocumentAccessLevel::Private,
+            file_server::document::AdminUploadIntentInput {
+                title: "Direct B-0202 deed",
+                description: Some("Unrelated flat registry"),
+                category: "RESIDENT_SPECIFIC",
+                metadata: None,
+                content_type: "application/pdf",
+                uploaded_by: None,
+            },
             Some(&flat_b_id),
-            None,
-            "application/pdf",
         )
         .await
         .unwrap()
@@ -207,4 +239,102 @@ async fn test_document_manager_visibility_resolution() {
     assert!(visible_list_ids.contains(&doc1.document.document_id));
     assert!(visible_list_ids.contains(&doc2.document.document_id));
     assert!(!visible_list_ids.contains(&doc3.document.document_id));
+}
+
+/// Verifies `documents.uploaded_by` is recorded correctly across every document creation
+/// path: admin uploads (with and without an uploader), the resident presigned-upload flow,
+/// and the legacy server-proxied resident upload flow.
+#[tokio::test]
+async fn test_document_uploaded_by_tracking() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let pm = Arc::new(PermissionsManager::new(pool.clone()));
+
+    let admin = pm
+        .create_seeded_user("uploader_admin@vistas.com", "super_admin")
+        .await
+        .unwrap();
+    let resident = pm
+        .create_user_with_credentials(
+            "uploader_res@vistas.com",
+            Some("password123"),
+            "C",
+            "0303",
+            None,
+        )
+        .await
+        .unwrap();
+
+    std::env::set_var("AWS_ACCESS_KEY_ID", "admin");
+    std::env::set_var("AWS_SECRET_ACCESS_KEY", "password");
+
+    let s3_accessor = base::s3::S3Accessor::new(&base::config::S3Config {
+        region: "us-east-1".to_string(),
+        bucket_name: "vistas-files".to_string(),
+        endpoint_url: Some(format!("http://localhost:{}", quality::TEST_MINIO_PORT)),
+        public_endpoint_url: Some(format!("http://localhost:{}", quality::TEST_MINIO_PORT)),
+        presigned_expiry: None,
+    })
+    .await;
+
+    let dm = file_server::document::DocumentManager::new(pool.clone(), s3_accessor);
+
+    // Admin upload with a known uploader records that uploader's user_id.
+    let admin_doc = dm
+        .admin_create_upload_intent(
+            file_server::document::AdminUploadIntentInput {
+                title: "Admin Uploaded Doc",
+                description: None,
+                category: "PUBLIC",
+                metadata: None,
+                content_type: "application/pdf",
+                uploaded_by: Some(admin.user_id),
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(admin_doc.document.uploaded_by, Some(admin.user_id));
+
+    // Admin upload with no uploader supplied leaves the column NULL.
+    let system_doc = dm
+        .admin_create_upload_intent(
+            file_server::document::AdminUploadIntentInput {
+                title: "System Doc",
+                description: None,
+                category: "PUBLIC",
+                metadata: None,
+                content_type: "application/pdf",
+                uploaded_by: None,
+            },
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+    assert_eq!(system_doc.document.uploaded_by, None);
+
+    // Resident presigned-upload flow records the resident's own user_id.
+    let (resident_doc, _upload_url, _key) = dm
+        .create_upload_intent(&resident, "Resident Presigned Doc", "application/pdf")
+        .await
+        .unwrap();
+    assert_eq!(resident_doc.document.uploaded_by, Some(resident.user_id));
+
+    // Legacy server-proxied resident upload flow also records the uploader.
+    let proxied_doc = dm
+        .user_create_document_atomic(&resident, "Resident Proxied Doc", None)
+        .await
+        .unwrap();
+    assert_eq!(proxied_doc.document.uploaded_by, Some(resident.user_id));
+
+    // Sanity-check the value is actually persisted in the DB, not just echoed back in-memory.
+    let stored_uploaded_by: Option<i32> =
+        sqlx::query_scalar("SELECT uploaded_by FROM documents WHERE document_id = $1")
+            .bind(resident_doc.document.document_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_uploaded_by, Some(resident.user_id));
 }

@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Resident Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+        // Set the initial tab before the page paints, so the correct panel
+        // is visible from the first frame instead of flashing Profile first.
+        document.documentElement.setAttribute(
+            'data-tab',
+            new URLSearchParams(window.location.search).get('tab') || 'profile'
+        );
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -184,6 +192,14 @@
             background-color: var(--primary);
             color: var(--background);
         }
+        /* Initial-tab state, set synchronously in <head> before first paint
+           (see the inline script above) — avoids a flash to the Profile tab
+           on a fresh page load with ?tab=documents. */
+        #panel-documents { display: none; }
+        html[data-tab="documents"] #panel-profile { display: none; }
+        html[data-tab="documents"] #panel-documents { display: block; }
+        html[data-tab="documents"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
+        html[data-tab="documents"] #tab-btn-documents { background-color: var(--primary); color: var(--background); }
         .admin-btn {
             display: none;
             padding: 12px 16px;
@@ -307,9 +323,6 @@
             .sidebar.open { transform: translateX(0); }
             .sidebar-brand p { display: none; }
             .sidebar-brand h1 { display: none; }
-            /* Hide the standalone bottom logout div on mobile — logout is in nav */
-            .sidebar > div:last-child { display: none; }
-            .logout-btn-mobile-nav { display: block !important; }
             .main-content {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
@@ -561,16 +574,11 @@
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
-                    <button class="logout-btn logout-btn-mobile-nav" id="logout-btn-mobile" style="display:none; margin-top: 8px;">Log Out</button>
+                    <a href="/admin" class="admin-btn" id="admin-link" style="display:none;">
+                        Admin Dashboard &rarr;
+                    </a>
+                    <button class="logout-btn" id="logout-btn" style="margin-top: 8px;">Log Out</button>
                 </nav>
-            </div>
-
-            <div>
-                <!-- Admin Control Room Link -->
-                <a href="/admin" class="admin-btn" id="admin-link">
-                    Admin Suite &rarr;
-                </a>
-                <button class="logout-btn" id="logout-btn">Log Out</button>
             </div>
         </aside>
 
@@ -601,7 +609,7 @@
             </section>
 
             <!-- Documents Info -->
-            <section id="panel-documents" style="display: none;">
+            <section id="panel-documents">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 16px;">
                     <div>
                         <h2 style="margin-top: 0;">Documents</h2>
@@ -609,18 +617,10 @@
                     </div>
                     <button class="download-btn" onclick="openUploadModal()">Upload Document</button>
                 </div>
-                <!-- Category Filter Bar (Desktop & Mobile) -->
+                <!-- Category Filter Bar (Desktop & Mobile) — chips are built dynamically from
+                     the categories actually present in this resident's own document list. -->
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
-                    <button class="filter-chip" id="user-filter-resident-specific" onclick="filterDocs('RESIDENT_SPECIFIC')">My Flat Documents</button>
-                    <button class="filter-chip" id="user-filter-generic" onclick="filterDocs('GENERIC')">Generic</button>
-                    <button class="filter-chip" id="user-filter-meeting-minutes" onclick="filterDocs('MEETING_MINUTES')">Minutes</button>
-                    <button class="filter-chip" id="user-filter-operational" onclick="filterDocs('OPERATIONAL')">Operational</button>
-                </div>
-
-                <!-- Sub-Category Filter Bar (Dynamic) -->
-                <div class="category-filter-bar" id="user-sub-filter-bar" style="display: none; gap: 8px; margin-top: -12px; margin-bottom: 24px; padding-bottom: 4px;">
-                    <!-- Dynamically populated sub-category chips -->
                 </div>
 
                 <!-- Desktop Table -->
@@ -629,7 +629,7 @@
                         <thead>
                             <tr>
                                 <th>File Details</th>
-                                <th>Category</th>
+                                <th>Document Category</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -666,9 +666,9 @@
                     </div>
                     <div>
                         <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: 4px; text-transform: uppercase;">File</label>
-                        <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
+                        <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px;">
+                    <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 8px;">
                         <button type="button" onclick="closeUploadModal()" class="filter-chip">Cancel</button>
                         <button type="submit" id="upload-submit-btn" class="download-btn" style="padding: 10px 24px;">Upload</button>
                     </div>
@@ -711,42 +711,68 @@
                  .replace(/'/g, "&#039;");
         }
 
+        // API error bodies are either a bare JSON string or a {message: "..."} object —
+        // reading the raw response text directly would show the JSON quoting/escaping
+        // to the user. This unwraps either shape down to a plain message.
+        async function readErrorMessage(response) {
+            const raw = await response.text();
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') return parsed;
+                if (parsed && typeof parsed.message === 'string') return parsed.message;
+            } catch (e) {}
+            return raw;
+        }
+
+        function isAdminUser(user) {
+            return !!(user && (
+                user.can_view_users || user.can_manage_users ||
+                user.can_manage_documents || user.can_manage_roles ||
+                user.can_manage_designations || user.can_manage_categories ||
+                user.can_review_process || user.can_view_roles || user.can_view_all_processes
+            ));
+        }
+
         const API_BASE = "";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
-        
+
         function renderProfile(user) {
             document.getElementById('user-email').textContent = user.email;
-            
+
             const rolesContainer = document.getElementById('user-roles');
             rolesContainer.innerHTML = '';
-            
-            let isAdminUser = false;
-            
-            if (user.roles && user.roles.length > 0) {
-                user.roles.forEach(role => {
+
+            const isAdmin = isAdminUser(user);
+
+            if (user.designations && user.designations.length > 0) {
+                user.designations.forEach(designation => {
                     const pill = document.createElement('span');
-                    pill.className = 'role-pill ' + role.toLowerCase();
-                    if (role === 'Admin') isAdminUser = true;
-                    pill.textContent = role;
+                    pill.className = 'role-pill ' + designation.toLowerCase();
+                    pill.textContent = designation;
                     rolesContainer.appendChild(pill);
                 });
             } else {
                 rolesContainer.innerHTML = '<span style="color: var(--muted-foreground); font-size: 13px; font-weight: 600;">Standard Resident</span>';
             }
 
-            if (isAdminUser || user.wing === 'TBD' || user.flat_number === 'TBD') {
+            const hasFlat = user.wing !== 'TBD' && user.flat_number !== 'TBD';
+
+            // No flat means nothing on this page is actually useful to them (no profile
+            // mapping, no personal documents) — send admin-capable accounts straight to
+            // the Admin Dashboard instead of showing an empty resident view.
+            if (!hasFlat && isAdmin) {
+                window.location.replace('/admin');
+                return;
+            }
+
+            if (!hasFlat) {
                 document.getElementById('user-flat').innerHTML = '<span style="color: var(--foreground); font-style: italic;">Administrative Account</span>';
             } else {
                 document.getElementById('user-flat').textContent = `${user.wing}-${user.flat_number}`;
             }
 
-            if (isAdminUser) {
-                window.location.replace('/admin');
-                return;
-            } else {
-                document.getElementById('admin-link').style.display = 'none';
-            }
+            document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
         }
 
         if (!token || !userStr) {
@@ -785,14 +811,6 @@
             localStorage.clear();
             window.location.href = '/login';
         });
-        const mobileLogoutBtn = document.getElementById('logout-btn-mobile');
-        if (mobileLogoutBtn) {
-            mobileLogoutBtn.addEventListener('click', () => {
-                localStorage.clear();
-                window.location.href = '/login';
-            });
-            if (window.innerWidth <= 768) mobileLogoutBtn.style.display = 'block';
-        }
 
         // Parse URL params for initial tab
         const urlParams = new URLSearchParams(window.location.search);
@@ -800,6 +818,11 @@
 
         // Tabs switcher
         function switchTab(tabName) {
+            // Keep the FOUC-prevention attribute (set once from the URL at page load,
+            // see the inline <head> script) in sync so its CSS overrides don't fight
+            // the .active class toggled below on later clicks.
+            document.documentElement.setAttribute('data-tab', tabName);
+
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.getElementById(`tab-btn-${tabName}`).classList.add('active');
             
@@ -816,7 +839,6 @@
 
         let allResidentDocs = [];
         let currentCategoryFilter = 'ALL';
-        let currentTypeFilter = 'ALL';
 
         async function loadResidentDocuments() {
             try {
@@ -828,6 +850,7 @@
                 });
                 if (response.ok) {
                     allResidentDocs = await response.json();
+                    renderCategoryFilterChips();
                     applyFiltersAndRender();
                 } else {
                     document.getElementById('doc-rows-target').innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--foreground); font-weight: 600;">Failed to fetch documents.</td></tr>';
@@ -840,80 +863,32 @@
         // Apply initial tab
         switchTab(initialTab);
 
-        const SUB_CATEGORIES = {
-            'RESIDENT_SPECIFIC': [
-                { type: 'ALL', label: 'All Flat Docs' },
-                { type: 'RESIDENT_PROPERTY', label: 'Property Docs' },
-                { type: 'RESIDENT_KYC', label: 'KYC Docs' },
-                { type: 'RESIDENT_RENTAL', label: 'Rental Agreements' }
-            ],
-            'GENERIC': [
-                { type: 'ALL', label: 'All Generic Docs' },
-                { type: 'GENERIC_RULEBOOK', label: 'Rulebooks' },
-                { type: 'GENERIC_BYLAWS', label: 'Bylaws' }
-            ],
-            'MEETING_MINUTES': [
-                { type: 'ALL', label: 'All Minutes' },
-                { type: 'MINUTES_AGM', label: 'AGM Minutes' },
-                { type: 'MINUTES_GBM', label: 'GBM Minutes' },
-                { type: 'MINUTES_MGMT', label: 'Management Minutes' }
-            ],
-            'OPERATIONAL': [
-                { type: 'ALL', label: 'All Operational' },
-                { type: 'OPERATIONAL_VENDOR_CONTRACT', label: 'Vendor Contracts' },
-                { type: 'OPERATIONAL_PAYMENT', label: 'Payment Receipts' },
-                { type: 'OPERATIONAL_SLA', label: 'SLA Contracts' }
-            ]
-        };
+        function renderCategoryFilterChips() {
+            const bar = document.getElementById('user-filter-bar');
+            const categories = [...new Set(allResidentDocs.map(d => d.document.category))];
+
+            // Keep "All" first, then one chip per category actually present in what this
+            // resident can see — no hardcoded list, so a resident only ever sees chips for
+            // Public/their own flat plus whatever else a designation grants them.
+            bar.innerHTML = '<button class="filter-chip active" id="user-filter-all" onclick="filterDocs(\'ALL\')">All</button>' +
+                categories.map(cat => {
+                    const chipId = 'user-filter-' + cat.toLowerCase().replace(/_/g, '-');
+                    return `<button class="filter-chip" id="${chipId}" onclick="filterDocs('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                }).join('');
+
+            if (currentCategoryFilter !== 'ALL' && !categories.includes(currentCategoryFilter)) {
+                currentCategoryFilter = 'ALL';
+            }
+        }
 
         function filterDocs(category) {
             currentCategoryFilter = category;
-            currentTypeFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#user-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'user-filter-' + category.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
-
-            renderUserSubFilters(category);
-            applyFiltersAndRender();
-        }
-
-        function renderUserSubFilters(category) {
-            const subBar = document.getElementById('user-sub-filter-bar');
-            if (category === 'ALL' || !SUB_CATEGORIES[category]) {
-                subBar.style.display = 'none';
-                subBar.innerHTML = '';
-                return;
-            }
-
-            subBar.style.display = 'flex';
-            subBar.innerHTML = '';
-            
-            SUB_CATEGORIES[category].forEach(sub => {
-                const button = document.createElement('button');
-                button.className = 'sub-filter-chip' + (currentTypeFilter === sub.type ? ' active' : '');
-                button.textContent = sub.label;
-                button.onclick = () => filterDocsBySubtype(sub.type);
-                subBar.appendChild(button);
-            });
-        }
-
-        function filterDocsBySubtype(subtype) {
-            currentTypeFilter = subtype;
-            
-            // Update active state of sub-filter chips
-            document.querySelectorAll('#user-sub-filter-bar .sub-filter-chip').forEach((el, index) => {
-                const categoryList = SUB_CATEGORIES[currentCategoryFilter];
-                if (categoryList && categoryList[index]) {
-                    if (categoryList[index].type === subtype) {
-                        el.classList.add('active');
-                    } else {
-                        el.classList.remove('active');
-                    }
-                }
-            });
 
             applyFiltersAndRender();
         }
@@ -923,29 +898,22 @@
             if (currentCategoryFilter !== 'ALL') {
                 filtered = filtered.filter(item => item.document.category === currentCategoryFilter);
             }
-            if (currentTypeFilter !== 'ALL') {
-                filtered = filtered.filter(item => item.document.document_type === currentTypeFilter);
-            }
             renderResidentDocsTable(filtered);
         }
 
         function formatCategory(cat) {
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'My Flat Documents';
-                case 'GENERIC': return 'Generic';
-                case 'MEETING_MINUTES': return 'Minutes';
-                case 'OPERATIONAL': return 'Operational';
-                default: return cat;
+                case 'PUBLIC': return 'Public';
+                default: return cat.toLowerCase().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             }
         }
 
         function getCategoryBadgeClass(cat) {
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'cat-resident';
-                case 'GENERIC': return 'cat-generic';
-                case 'MEETING_MINUTES': return 'cat-minutes';
-                case 'OPERATIONAL': return 'cat-operational';
-                default: return '';
+                case 'PUBLIC': return 'cat-generic';
+                default: return 'cat-operational';
             }
         }
 
@@ -1025,7 +993,7 @@
                         alert('No download link returned by server.');
                     }
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to get download link: ${errText}`);
                 }
             } catch (err) {
@@ -1052,11 +1020,11 @@
             }
 
             // Client side ext check
-            const allowedExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt'];
+            const allowedExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'jpg', 'jpeg', 'png'];
             const ext = file.name.split('.').pop().toLowerCase();
             if (!allowedExts.includes(ext)) {
                 statusEl.style.color = '#EF4444';
-                statusEl.textContent = 'Error: Only PDF, Word, Excel, and Text files are allowed.';
+                statusEl.textContent = 'Error: Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.';
                 return;
             }
 
@@ -1080,7 +1048,7 @@
                 });
 
                 if (!urlRes.ok) {
-                    const errText = await urlRes.text();
+                    const errText = await readErrorMessage(urlRes);
                     statusEl.style.color = '#EF4444';
                     statusEl.textContent = `Failed: ${errText}`;
                     return;
@@ -1114,7 +1082,7 @@
                 });
 
                 if (!confirmRes.ok) {
-                    const errText = await confirmRes.text();
+                    const errText = await readErrorMessage(confirmRes);
                     statusEl.style.color = '#EF4444';
                     statusEl.textContent = `Confirmation failed: ${errText}`;
                     return;

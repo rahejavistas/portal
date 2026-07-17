@@ -94,7 +94,6 @@ pub async fn send_email(email_payload: &Email) -> Result<(), String> {
 
     match mailer.send(email).await {
         Ok(_) => {
-            println!("Email sent successfully to {}", to_email);
             counter.add(1, &[opentelemetry::KeyValue::new("status", "success")]);
         }
         Err(e) => {
