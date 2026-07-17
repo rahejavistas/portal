@@ -18,7 +18,7 @@ async fn test_permissions_manager_user_crud() {
     let flat_num = "101";
 
     let user = pm
-        .create_user_with_credentials(email, Some("resident_password_xyz1"), wing, flat_num)
+        .create_user_with_credentials(email, Some("resident_password_xyz1"), wing, flat_num, None)
         .await
         .expect("Failed to create user programmatically");
 
@@ -68,12 +68,24 @@ async fn test_active_flat_ownership_constraint() {
     let flat_num = "0101";
 
     let _u1 = pm
-        .create_user_with_credentials("owner1@vistas.com", Some("password11"), wing, flat_num)
+        .create_user_with_credentials(
+            "owner1@vistas.com",
+            Some("password11"),
+            wing,
+            flat_num,
+            None,
+        )
         .await
         .unwrap();
 
     let attempt = pm
-        .create_user_with_credentials("owner2@vistas.com", Some("password22"), wing, flat_num)
+        .create_user_with_credentials(
+            "owner2@vistas.com",
+            Some("password22"),
+            wing,
+            flat_num,
+            None,
+        )
         .await;
 
     assert!(attempt.is_err());
@@ -93,18 +105,29 @@ async fn test_permissions_manager_role_transitions() {
     let pm = Arc::new(PermissionsManager::new(pool.clone()));
 
     let user = pm
-        .create_user_with_credentials("role_user@vistas.com", Some("password123"), "A", "101")
+        .create_user_with_credentials(
+            "role_user@vistas.com",
+            Some("password123"),
+            "A",
+            "101",
+            None,
+        )
         .await
         .unwrap();
 
-    pm.set_user_target_role(user.user_id, Some("committee"))
+    pm.create_designation("committee", "Committee", None)
+        .await
+        .unwrap();
+    pm.assign_designation(user.user_id, "committee", None)
         .await
         .unwrap();
 
     let promoted = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
     assert!(promoted.designations.contains(&"committee".to_string()));
 
-    pm.set_user_target_role(user.user_id, None).await.unwrap();
+    pm.revoke_designation(user.user_id, "committee", None)
+        .await
+        .unwrap();
 
     let demoted = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
     assert!(demoted.designations.is_empty());
@@ -118,7 +141,13 @@ async fn test_document_manager_visibility_resolution() {
     let pm = Arc::new(PermissionsManager::new(pool.clone()));
 
     let demoted_user = pm
-        .create_user_with_credentials("doc_user@vistas.com", Some("password123"), "A", "0101")
+        .create_user_with_credentials(
+            "doc_user@vistas.com",
+            Some("password123"),
+            "A",
+            "0101",
+            None,
+        )
         .await
         .unwrap();
 
@@ -143,7 +172,7 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::AdminUploadIntentInput {
                 title: "Direct Crate Manual",
                 description: Some("Test document"),
-                category: file_server::document::DocumentCategory::Public,
+                category: "PUBLIC",
                 metadata: None,
                 content_type: "application/pdf",
                 uploaded_by: None,
@@ -159,7 +188,7 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::AdminUploadIntentInput {
                 title: "Direct A-0101 deed",
                 description: Some("Registry mapping"),
-                category: file_server::document::DocumentCategory::ResidentSpecific,
+                category: "RESIDENT_SPECIFIC",
                 metadata: None,
                 content_type: "application/pdf",
                 uploaded_by: None,
@@ -187,7 +216,7 @@ async fn test_document_manager_visibility_resolution() {
             file_server::document::AdminUploadIntentInput {
                 title: "Direct B-0202 deed",
                 description: Some("Unrelated flat registry"),
-                category: file_server::document::DocumentCategory::ResidentSpecific,
+                category: "RESIDENT_SPECIFIC",
                 metadata: None,
                 content_type: "application/pdf",
                 uploaded_by: None,
@@ -226,7 +255,13 @@ async fn test_document_uploaded_by_tracking() {
         .await
         .unwrap();
     let resident = pm
-        .create_user_with_credentials("uploader_res@vistas.com", Some("password123"), "C", "0303")
+        .create_user_with_credentials(
+            "uploader_res@vistas.com",
+            Some("password123"),
+            "C",
+            "0303",
+            None,
+        )
         .await
         .unwrap();
 
@@ -250,7 +285,7 @@ async fn test_document_uploaded_by_tracking() {
             file_server::document::AdminUploadIntentInput {
                 title: "Admin Uploaded Doc",
                 description: None,
-                category: file_server::document::DocumentCategory::Public,
+                category: "PUBLIC",
                 metadata: None,
                 content_type: "application/pdf",
                 uploaded_by: Some(admin.user_id),
@@ -268,7 +303,7 @@ async fn test_document_uploaded_by_tracking() {
             file_server::document::AdminUploadIntentInput {
                 title: "System Doc",
                 description: None,
-                category: file_server::document::DocumentCategory::Public,
+                category: "PUBLIC",
                 metadata: None,
                 content_type: "application/pdf",
                 uploaded_by: None,

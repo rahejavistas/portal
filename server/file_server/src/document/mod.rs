@@ -1,20 +1,28 @@
+mod category;
 pub mod manager;
 
 pub use manager::{AdminUploadIntentInput, DocumentManager};
 
+use base::flat::FlatIdentifier;
 use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
-#[sqlx(type_name = "document_category", rename_all = "SCREAMING_SNAKE_CASE")]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum DocumentCategory {
-    Public,
-    ResidentSpecific,
-    Committee,
-    Finance,
-    Governance,
-    Operational,
+/// The well-known code of the two protected system categories (seeded, never deletable).
+/// Every other category is admin-defined at runtime — see `document_categories` table.
+pub const PUBLIC_CATEGORY: &str = "PUBLIC";
+pub const RESIDENT_SPECIFIC_CATEGORY: &str = "RESIDENT_SPECIFIC";
+
+/// A row of the `document_categories` table. Categories are fully dynamic/admin-created
+/// except for the two protected system rows (`is_system = true`): PUBLIC (`is_public_read`,
+/// visible to everyone) and RESIDENT_SPECIFIC (`is_flat_scoped`, scoped by flat ownership).
+/// Every other category's access is governed entirely by `document_category_designations`.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct DocumentCategoryDef {
+    pub code: String,
+    pub label: String,
+    pub is_public_read: bool,
+    pub is_flat_scoped: bool,
+    pub is_system: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -22,7 +30,7 @@ pub struct Document {
     pub document_id: Uuid,
     pub title: String,
     pub description: Option<String>,
-    pub category: DocumentCategory,
+    pub category: String,
     pub uploaded_date: DateTime<Utc>,
     pub is_deleted: bool,
     pub is_user_uploaded: bool,
@@ -42,8 +50,18 @@ pub struct GenericDocumentMetadata {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DocumentFlatInfo {
-    pub wing: String,
-    pub flat_number: String,
+    #[serde(flatten)]
+    pub flat: FlatIdentifier,
+}
+
+/// A single row of the `document_category_designations` access matrix: whether a
+/// designation can read and/or manage (upload, sign, delete) a document category.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct CategoryDesignation {
+    pub category: String,
+    pub designation_code: String,
+    pub can_read: bool,
+    pub can_manage: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -78,7 +96,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
             row.try_get::<String, _>("wing"),
             row.try_get::<String, _>("flat_number"),
         ) {
-            (Ok(wing), Ok(flat_number)) => Some(DocumentFlatInfo { wing, flat_number }),
+            (Ok(wing), Ok(flat_number)) => Some(DocumentFlatInfo {
+                flat: FlatIdentifier::from_normalized(wing, flat_number),
+            }),
             _ => None,
         };
 
@@ -91,14 +111,10 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
     }
 }
 
-pub fn derive_s3_key(category: DocumentCategory, document_id: Uuid) -> String {
-    let prefix = match category {
-        DocumentCategory::ResidentSpecific => "private",
-        _ => "public",
-    };
+pub fn derive_s3_key(document_id: Uuid) -> String {
     let uuid_str = document_id.to_string();
     let first_char = uuid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
-    format!("{}/{}/{}", prefix, first_char, uuid_str)
+    format!("documents/{}/{}", first_char, uuid_str)
 }
 
 /// Structured input for document metadata fields, used by the manager's

@@ -62,7 +62,12 @@ fn main() {
     .unwrap();
     fs::write(
         dist_dir.join("process.html"),
-        process_html(views::process::PROCESS_HTML, &api_base),
+        process_html(&views::process::process_html(), &api_base),
+    )
+    .unwrap();
+    fs::write(
+        dist_dir.join("admin-process.html"),
+        process_html(&views::process::admin_process_html(), &api_base),
     )
     .unwrap();
 

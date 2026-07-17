@@ -21,6 +21,17 @@ pub struct ProcessStateRequest {
     pub process_id: Option<Uuid>,
     pub template_id: Option<String>,
     pub flat_id: Option<i32>,
+    /// Set by the plain /process page: forces "just my own process" behavior even for
+    /// a caller who also holds process.reviewer/process.view, so which page you're on
+    /// fully determines what you see — no client-side permission branching needed.
+    #[serde(default)]
+    pub personal_only: bool,
+}
+
+#[derive(Deserialize, Default)]
+pub struct ProcessListRequest {
+    #[serde(default)]
+    pub personal_only: bool,
 }
 
 #[derive(Serialize)]
@@ -256,12 +267,10 @@ async fn resolve_or_init_process(
     template_id: &str,
     flat_id: Option<i32>,
 ) -> Result<(Uuid, String, Option<i32>), ApiError> {
-    // Fetch active ownerships
     let active_ownerships = get_active_ownerships_for_user(conn, user.user_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    // Determine which ownership_id to use
     let selected_ownership = match flat_id {
         Some(fid) => {
             let oid = active_ownerships
@@ -290,7 +299,6 @@ async fn resolve_or_init_process(
         }
     };
 
-    // Always initialize a new process if none was explicitly passed (as requested by user)
     let template = process::ProcessTemplate::load_by_version(template_id).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -411,6 +419,7 @@ pub struct ProcessListResponse {
 pub async fn list_user_processes(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
+    Json(payload): Json<ProcessListRequest>,
 ) -> Result<Json<ProcessListResponse>, ApiError> {
     let mut conn = state
         .pg_pool
@@ -418,14 +427,18 @@ pub async fn list_user_processes(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.is_admin();
-    let mut items = if is_admin {
+    // Read-only oversight (process.view) sees every resident's process list, same as a
+    // reviewer, but never gains the write bypass reviewers get further down the flow.
+    // personal_only (set by the plain /process page) always forces the caller's own view.
+    let can_view_all = !payload.personal_only
+        && (user.has_permission(authentication::Permission::ProcessReviewer)
+            || user.has_permission(authentication::Permission::ProcessView));
+    let mut items = if can_view_all {
         process::db::list_all_processes(&mut conn).await
     } else {
         list_processes_for_user(&mut conn, user.user_id).await
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-    // Evaluate accurate overall status for each process
     for item in items.iter_mut() {
         let mut resolved = false;
         if let Ok(template) = process::ProcessTemplate::load_by_version(&item.template_id) {
@@ -477,21 +490,20 @@ pub async fn get_process_state(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.is_admin();
+    // Read-only oversight (process.view) sees any resident's process state, same as a
+    // reviewer — this handler never writes to another user's process, only the caller's own.
+    // personal_only (set by the plain /process page) always forces the caller's own view.
+    let can_view_all = !payload.personal_only
+        && (user.has_permission(authentication::Permission::ProcessReviewer)
+            || user.has_permission(authentication::Permission::ProcessView));
 
     // --- Resolve process_id, template_id, ownership_id ---
     let (process_id, template_id, ownership_id) = match payload.process_id {
         Some(pid) => {
-            let (info, _) = load_authorized_process(&mut tx, &user, pid, is_admin).await?;
+            let (info, _) = load_authorized_process(&mut tx, &user, pid, can_view_all).await?;
             (pid, info.template_id, info.ownership_id)
         }
         None => {
-            if is_admin {
-                return Err((
-                    StatusCode::BAD_REQUEST,
-                    Json("process_id is required for administrative users".to_string()),
-                ));
-            }
             let target_template_id = payload.template_id.clone().ok_or_else(|| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -631,8 +643,8 @@ pub async fn get_process_state(
     let is_completed =
         statuses.get(&template.step_id) == Some(&process::state_machine::StepStatus::Completed);
 
-    // --- Fetch admin-only comments (only for admin callers) ---
-    let admin_comments = if is_admin {
+    // --- Fetch admin-only comments (visible to anyone with oversight access) ---
+    let admin_comments = if can_view_all {
         get_admin_comments(&mut tx, process_id)
             .await
             .unwrap_or_default()
@@ -671,7 +683,9 @@ pub async fn save_process_step(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
 
-    let is_admin = user.is_admin();
+    // Write path: deliberately NOT widened to process.view — that permission is read-only
+    // oversight and must never gain the ability to save a step on someone else's process.
+    let is_admin = user.has_permission(authentication::Permission::ProcessReviewer);
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
 
@@ -705,11 +719,10 @@ pub async fn save_process_step(
                     ));
                 }
                 // Process fields only ever hold flat-scoped documents. Other categories
-                // (PUBLIC, COMMITTEE, FINANCE, GOVERNANCE, OPERATIONAL) are visible in a
-                // user's document list but must never be attachable to a process step.
+                // are visible in a user's document list but must never be attachable to a
+                // process step.
                 Some(ref doc)
-                    if doc.document.category
-                        != crate::document::DocumentCategory::ResidentSpecific =>
+                    if doc.document.category != crate::document::RESIDENT_SPECIFIC_CATEGORY =>
                 {
                     return Err((
                         StatusCode::BAD_REQUEST,
@@ -973,15 +986,13 @@ pub async fn process_admin_upload_url(
 
     // flat_id is already an Option<i32>
 
-    use crate::document::DocumentCategory;
-
     let (result, upload_url, _key) = state
         .document_manager
         .admin_create_upload_intent_by_id(
             crate::document::AdminUploadIntentInput {
                 title: &payload.title,
                 description: None,
-                category: DocumentCategory::ResidentSpecific,
+                category: crate::document::RESIDENT_SPECIFIC_CATEGORY,
                 metadata: None,
                 content_type: &content_type,
                 uploaded_by: Some(user.user_id),
@@ -1007,22 +1018,43 @@ pub async fn process_download_url(
     State(state): State<AppState>,
     Json(payload): Json<DocumentUrlRequest>,
 ) -> Result<Json<DocumentUrlResponse>, ApiError> {
-    let is_admin = user.is_admin();
+    // Read-only oversight (process.view) can download documents attached to any process,
+    // same as a reviewer — this handler never writes anything.
+    let can_view_all = user.has_permission(authentication::Permission::ProcessReviewer)
+        || user.has_permission(authentication::Permission::ProcessView);
 
-    // Auth check
-    {
+    // Auth check: is the caller allowed to view this process at all?
+    let owner_id = {
         let mut conn = state
             .pg_pool
             .acquire()
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-        load_authorized_process(&mut conn, &user, payload.process_id, is_admin).await?;
-    }
+        let (info, _) =
+            load_authorized_process(&mut conn, &user, payload.process_id, can_view_all).await?;
+        info.user_id
+    };
 
-    // Fetch the document using the centralized document manager which enforces authorization
+    // Documents aren't necessarily attached to a process step yet when this is called
+    // (e.g. previewing an entry from the resident's own library before submitting it),
+    // so document access is evaluated as the process OWNER would see it, not the caller —
+    // being cleared to view/review this process authorizes whatever its owner can see,
+    // regardless of the caller's own unrelated category/flat grants.
+    let owner = state
+        .permissions_manager
+        .get_user_by_id(owner_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+        .ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json("Process owner not found".to_string()),
+            )
+        })?;
+
     let doc = state
         .document_manager
-        .get_document(payload.document_id, &user)
+        .get_document(payload.document_id, &owner)
         .await
         .map_err(|e| {
             if e == "FORBIDDEN" {

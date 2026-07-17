@@ -1,4 +1,4 @@
-pub const LOGIN_HTML: &str = r#"
+pub(crate) const LOGIN_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>

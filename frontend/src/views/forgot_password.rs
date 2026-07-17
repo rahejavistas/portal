@@ -1,4 +1,4 @@
-pub const FORGOT_PASSWORD_HTML: &str = r#"
+pub(crate) const FORGOT_PASSWORD_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>

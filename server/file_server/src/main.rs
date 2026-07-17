@@ -30,10 +30,8 @@ async fn main() {
         .expect("Failed to create Postgres pool");
 
     // Run database migrations automatically on startup (SQLx embeds them in the binary)
-    println!("Running database migrations...");
-    match sqlx::migrate!("../../infra/migrations").run(&pg_pool).await {
-        Ok(_) => println!("Database migrations ran successfully!"),
-        Err(e) => eprintln!("WARNING: Database migrations failed: {}", e),
+    if let Err(e) = sqlx::migrate!("../../infra/migrations").run(&pg_pool).await {
+        eprintln!("WARNING: Database migrations failed: {}", e);
     }
 
     let s3_accessor = base::s3::S3Accessor::new(&config.s3).await;
@@ -54,6 +52,7 @@ async fn main() {
     .await;
 
     let rate_limiters = Arc::new(middleware::RateLimiters::new(
+        config.rate_limit.enabled,
         config.rate_limit.ip_per_min,
         config.rate_limit.user_per_min,
         config.rate_limit.admin_per_min,
@@ -68,16 +67,30 @@ async fn main() {
         jwt_expiry: config.jwt_expiry,
         forgot_password_expiry: config.forgot_password_expiry,
         rate_limiters,
-        log_reset_link: config.log_reset_link.unwrap_or(false),
         super_admin_email: config.super_admin_email.clone(),
     };
 
     macro_rules! make_app {
         ($state:expr) => {{
-            let admin_routes = Router::new()
+            // Each admin route group requires a specific permission.
+            use authentication::Permission;
+
+            // Also reachable by roles-management/view permissions since the User Designations
+            // subtab needs this same listing to know who to assign designations to.
+            let users_view_routes = Router::new()
                 .route("/users/list", post(handlers::admin::list_users))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[
+                        Permission::UsersView,
+                        Permission::UsersManage,
+                        Permission::UsersRolesManage,
+                        Permission::UsersRolesView,
+                    ]),
+                ));
+
+            let users_manage_routes = Router::new()
                 .route("/users/create", post(handlers::admin::create_user))
-                .route("/users/roles", post(handlers::admin::update_role))
                 .route(
                     "/users/revoke-flat",
                     post(handlers::admin::admin_revoke_flat),
@@ -86,9 +99,20 @@ async fn main() {
                     "/users/upload",
                     post(handlers::bulk_users_upload::upload_users),
                 )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::UsersManage]),
+                ));
+
+            // No blanket permission layer — each handler checks per-category access.
+            let documents_manage_routes = Router::new()
                 .route(
                     "/documents/list",
                     post(handlers::documents::admin_list_documents),
+                )
+                .route(
+                    "/documents/categories",
+                    post(handlers::documents::admin_list_manageable_categories),
                 )
                 .route(
                     "/documents/upload-url",
@@ -103,13 +127,11 @@ async fn main() {
                     post(handlers::documents::admin_get_document),
                 )
                 .route(
-                    "/documents/:id/update",
-                    post(handlers::documents::admin_update_document),
-                )
-                .route(
                     "/documents/:id/delete",
                     post(handlers::documents::admin_delete_document),
-                )
+                );
+
+            let process_reviewer_routes = Router::new()
                 .route(
                     "/process/review",
                     post(handlers::process::admin_review_step),
@@ -128,8 +150,104 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::admin_guard,
+                    middleware::require_permission(&[Permission::ProcessReviewer]),
                 ));
+
+            // Assigning/revoking an existing designation to/from a user.
+            let roles_user_designation_routes = Router::new()
+                .route(
+                    "/roles/designations/assign",
+                    post(handlers::roles::assign_designation),
+                )
+                .route(
+                    "/roles/designations/revoke",
+                    post(handlers::roles::revoke_designation),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::UsersRolesManage]),
+                ));
+
+            // Creating designations and editing their permissions/category access.
+            let roles_designation_definition_routes = Router::new()
+                .route(
+                    "/roles/designations/create",
+                    post(handlers::roles::create_designation),
+                )
+                .route(
+                    "/roles/designations/delete",
+                    post(handlers::roles::delete_designation),
+                )
+                .route(
+                    "/roles/designations/rename",
+                    post(handlers::roles::rename_designation),
+                )
+                .route(
+                    "/roles/designations/permissions/toggle",
+                    post(handlers::roles::toggle_designation_permission),
+                )
+                .route(
+                    "/roles/document-category-designations/toggle",
+                    post(handlers::roles::toggle_document_category_designation),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::DesignationsManage]),
+                ));
+
+            let document_categories_manage_routes = Router::new()
+                .route(
+                    "/roles/document-categories/create",
+                    post(handlers::roles::create_document_category),
+                )
+                .route(
+                    "/roles/document-categories/delete",
+                    post(handlers::roles::delete_document_category),
+                )
+                .route(
+                    "/roles/document-categories/rename",
+                    post(handlers::roles::rename_document_category),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::DocumentsCategoriesManage]),
+                ));
+
+            // Read-only listings shared by the roles/category-management capabilities above.
+            let roles_shared_read_routes = Router::new()
+                .route(
+                    "/roles/designations",
+                    post(handlers::roles::list_designations),
+                )
+                .route(
+                    "/roles/permissions",
+                    post(handlers::roles::list_permissions),
+                )
+                .route(
+                    "/roles/document-category-designations",
+                    post(handlers::roles::list_document_category_designations),
+                )
+                .route(
+                    "/roles/document-categories",
+                    post(handlers::roles::list_document_categories),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[
+                        Permission::UsersRolesManage,
+                        Permission::DesignationsManage,
+                        Permission::DocumentsCategoriesManage,
+                    ]),
+                ));
+
+            let admin_routes = users_view_routes
+                .merge(users_manage_routes)
+                .merge(documents_manage_routes)
+                .merge(process_reviewer_routes)
+                .merge(roles_user_designation_routes)
+                .merge(roles_designation_definition_routes)
+                .merge(document_categories_manage_routes)
+                .merge(roles_shared_read_routes);
 
             Router::new()
                 .route("/health", get(handlers::health::health_check))
@@ -192,14 +310,12 @@ async fn main() {
     let is_lambda = std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok();
 
     if is_lambda {
-        println!("Starting in AWS Lambda mode");
         let app = make_app!(state);
         // Do NOT apply the Rust CORS layer in Lambda. AWS Function URL handles CORS!
         lambda_http::run(app).await.unwrap();
     } else {
         let app = make_app!(state).layer(middleware::get_cors_layer()); // Only apply CORS locally
         let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-        println!("Server running locally on http://0.0.0.0:{}", config.port);
 
         axum::Server::bind(&addr)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
@@ -215,21 +331,14 @@ async fn seed_admin_user_or_die(
 ) {
     match permissions_manager.email_exists(email).await {
         Ok(false) => {
-            println!(
-                "Admin user '{}' not found. Seeding programmatically...",
-                email
-            );
-            match permissions_manager
+            if let Err(e) = permissions_manager
                 .create_seeded_user(email, designation_code)
                 .await
             {
-                Ok(_) => println!("Admin user '{}' successfully seeded.", email),
-                Err(e) => eprintln!("Failed to seed admin user: {}", e),
+                eprintln!("Failed to seed admin user: {}", e);
             }
         }
-        Ok(true) => {
-            println!("Admin user '{}' already exists in database.", email);
-        }
+        Ok(true) => {}
         Err(e) => {
             eprintln!("Error checking admin user existence: {}", e);
         }

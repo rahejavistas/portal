@@ -3,6 +3,9 @@ name = "frontend"
 version = "0.1.0"
 edition = "2021"
 
+[lints]
+workspace = true
+
 [dependencies]
 ureq = { version = "2.9", features = ["json"] }
 tokio = { version = "1", features = ["full"] }

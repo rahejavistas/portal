@@ -1,4 +1,4 @@
-pub const RESET_PASSWORD_HTML: &str = r#"
+pub(crate) const RESET_PASSWORD_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>

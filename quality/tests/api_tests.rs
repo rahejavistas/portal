@@ -1,6 +1,7 @@
 use quality::{
-    quick_create_document, quick_create_user, quick_onboard_user, quick_promote_user,
-    quick_setup_admin, setup_api_test_env,
+    quick_assign_designation, quick_create_designation, quick_create_document,
+    quick_create_document_category, quick_create_user, quick_onboard_user,
+    quick_set_category_designation, quick_setup_admin, setup_api_test_env,
 };
 
 /// Tests admin authentication flow, blank user directory listing, and
@@ -93,6 +94,8 @@ async fn test_document_permissions_and_soft_delete() {
 
     let _rid2 = quick_create_user(&env, &admin_jwt, "resident2@vistas.com", "B", "202");
 
+    quick_create_document_category(&env, &admin_jwt, "COMMITTEE", "Committee");
+
     let doc1_id = quick_create_document(&env, &admin_jwt, "Handbook 2026", "PUBLIC", None);
     let doc2_id = quick_create_document(
         &env,
@@ -143,7 +146,9 @@ async fn test_document_permissions_and_soft_delete() {
         .send_json(serde_json::json!({}));
     assert_eq!(get_doc4.unwrap_err().into_response().unwrap().status(), 403);
 
-    quick_promote_user(&env, &admin_jwt, rid1, "committee");
+    quick_create_designation(&env, &admin_jwt, "committee", "Committee");
+    quick_set_category_designation(&env, &admin_jwt, "COMMITTEE", "committee", true, false);
+    quick_assign_designation(&env, &admin_jwt, rid1, "committee");
 
     let list_resp2 = ureq::post(&format!("{}/api/v1/documents", url))
         .set("Authorization", &res1_auth_header)
@@ -171,7 +176,7 @@ async fn test_document_permissions_and_soft_delete() {
     assert!(doc4_fetched["download_url"]
         .as_str()
         .unwrap()
-        .starts_with("http://localhost:9009/vistas-files/public/"));
+        .starts_with("http://localhost:9009/vistas-files/documents/"));
 
     let delete_resp = ureq::post(&format!(
         "{}/api/v1/admin/documents/{}/delete",

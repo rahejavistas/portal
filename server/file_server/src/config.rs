@@ -13,6 +13,12 @@ pub struct RateLimitConfig {
     pub ip_per_min: u32,
     pub user_per_min: u32,
     pub admin_per_min: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -28,15 +34,12 @@ pub struct AppConfig {
     pub forgot_password_expiry: std::time::Duration,
     pub telemetry: TelemetryConfig,
     pub rate_limit: RateLimitConfig,
-    pub log_reset_link: Option<bool>,
 }
 
 impl AppConfig {
     pub fn load_config() -> Self {
         let env = std::env::var("APP_ENV").unwrap_or_else(|_| "local".to_string());
         let file_name = format!("config_{}.toml", env);
-
-        println!("Loading configuration from {}", file_name);
 
         let config_str = std::fs::read_to_string(&file_name)
             .unwrap_or_else(|e| panic!("Failed to read configuration file {}: {}", file_name, e));

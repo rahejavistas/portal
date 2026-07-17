@@ -1,4 +1,4 @@
-pub const ADMIN_HTML: &str = r#"
+pub(crate) const ADMIN_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -204,6 +204,25 @@ pub const ADMIN_HTML: &str = r#"
         .back-btn:hover {
             background-color: var(--muted);
             transform: scale(1.03);
+        }
+        .admin-btn {
+            display: block;
+            padding: 12px 16px;
+            background-color: #FEF3C7;
+            color: #D97706;
+            border-radius: var(--radius-md);
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-align: center;
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+        }
+        .admin-btn:hover {
+            background-color: #FDE68A;
+            transform: scale(1.05);
         }
         .logout-btn {
             background-color: var(--background);
@@ -462,6 +481,29 @@ pub const ADMIN_HTML: &str = r#"
             color: #059669;
         }
 
+        /* Permission info icon (click to open a description popup — works on touch, unlike hover tooltips) */
+        .perm-info-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            margin-left: 6px;
+            border-radius: 50%;
+            border: 1px solid var(--muted-foreground);
+            background: transparent;
+            color: var(--muted-foreground);
+            font-size: 10px;
+            font-style: italic;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0;
+        }
+        .perm-info-btn:hover, .perm-info-btn:focus {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
 
         /* Table */
         .table-container {
@@ -651,14 +693,20 @@ pub const ADMIN_HTML: &str = r#"
                 <p>Raheja Vistas Admin Room</p>
                 
                 <nav class="nav-menu">
-                    <button class="nav-item active" id="suite-btn-residents" onclick="switchSuite('residents'); closeSidebar()">
+                    <button class="nav-item" id="suite-btn-residents" style="display:none;" onclick="switchSuite('residents'); closeSidebar()">
                         Residents
                     </button>
-                    <button class="nav-item" id="suite-btn-documents" onclick="switchSuite('documents'); closeSidebar()">
+                    <button class="nav-item" id="suite-btn-documents" style="display:none;" onclick="switchSuite('documents'); closeSidebar()">
                         Documents
+                    </button>
+                    <button class="nav-item" id="suite-btn-roles" style="display:none;" onclick="switchSuite('roles'); closeSidebar()">
+                        Roles
                     </button>
                     <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
+                    </a>
+                    <a href="/dashboard" class="admin-btn" id="my-flat-dashboard-link" style="display:none;">
+                        My Flat Dashboard &rarr;
                     </a>
                     <button class="logout-btn" id="logout-btn">Log Out</button>
                 </nav>
@@ -674,9 +722,9 @@ pub const ADMIN_HTML: &str = r#"
             <section class="suite-panel active" id="suite-residents">
                 <h2>Residents</h2>
                 
-                <div class="split-grid">
-                    <!-- Left: Add Form & Upload Form -->
-                    <div style="display: flex; flex-direction: column; gap: 32px;">
+                <div class="split-grid" id="residents-split-grid">
+                    <!-- Left: Add Form & Upload Form (requires users.manage) -->
+                    <div id="residents-left-column" style="display: flex; flex-direction: column; gap: 32px;">
                         <div class="card">
                             <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Resident</h3>
                             <form id="onboard-form">
@@ -731,20 +779,19 @@ pub const ADMIN_HTML: &str = r#"
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Registry</h3>
                         <div style="margin-bottom: 24px;">
-                            <input type="text" id="search-input" placeholder="Search residents...">
+                            <input type="text" id="search-input" placeholder="Search User...">
                         </div>
                         <div class="table-container">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Resident</th>
-                                        <th>Role</th>
-                                        <th>Update Role</th>
+                                        <th>User</th>
+                                        <th style="text-align:center;">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="user-rows-target">
                                     <tr>
-                                        <td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading registry...</td>
+                                        <td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading registry...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -761,6 +808,7 @@ pub const ADMIN_HTML: &str = r#"
                 <div class="subtab-bar">
                     <button class="subtab-btn active" id="subtab-btn-db" onclick="switchSubtab('db')">Explorer</button>
                     <button class="subtab-btn" id="subtab-btn-register" onclick="switchSubtab('register')">Add Document</button>
+                    <button class="subtab-btn" id="subtab-btn-categories" style="display:none;" onclick="switchSubtab('categories')">Categories</button>
                 </div>
 
                 <!-- Subtab 1: Document Database Explorer -->
@@ -769,12 +817,6 @@ pub const ADMIN_HTML: &str = r#"
                     <!-- Category Filter Bar (Desktop & Mobile) -->
                     <div class="category-filter-bar" id="admin-filter-bar">
                         <button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar('ALL')">All</button>
-                        <button class="filter-chip" id="admin-filter-public" onclick="filterAdminDocsBySubbar('PUBLIC')">Public</button>
-                        <button class="filter-chip" id="admin-filter-resident-specific" onclick="filterAdminDocsBySubbar('RESIDENT_SPECIFIC')">Resident Specific</button>
-                        <button class="filter-chip" id="admin-filter-committee" onclick="filterAdminDocsBySubbar('COMMITTEE')">Committee</button>
-                        <button class="filter-chip" id="admin-filter-finance" onclick="filterAdminDocsBySubbar('FINANCE')">Finance</button>
-                        <button class="filter-chip" id="admin-filter-governance" onclick="filterAdminDocsBySubbar('GOVERNANCE')">Governance</button>
-                        <button class="filter-chip" id="admin-filter-operational" onclick="filterAdminDocsBySubbar('OPERATIONAL')">Operational</button>
                     </div>
 
                     <div class="card">
@@ -797,7 +839,7 @@ pub const ADMIN_HTML: &str = r#"
                                 <thead>
                                     <tr>
                                         <th>Document</th>
-                                        <th>Category</th>
+                                        <th>Document Category</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
@@ -829,14 +871,9 @@ pub const ADMIN_HTML: &str = r#"
                                 <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required style="padding: 8px; width: 100%; background-color: var(--muted);">
                             </div>
                             <div class="form-group">
-                                <label for="doc-category">Category</label>
+                                <label for="doc-category">Document Category</label>
                                 <select id="doc-category" required onchange="handleCategoryChange()">
-                                    <option value="PUBLIC">Public</option>
-                                    <option value="RESIDENT_SPECIFIC">Resident Specific</option>
-                                    <option value="COMMITTEE">Committee</option>
-                                    <option value="FINANCE">Finance</option>
-                                    <option value="GOVERNANCE">Governance</option>
-                                    <option value="OPERATIONAL">Operational</option>
+                                    <option value="">Loading categories...</option>
                                 </select>
                             </div>
 
@@ -890,6 +927,137 @@ pub const ADMIN_HTML: &str = r#"
                         <div class="feedback-box" id="doc-feedback"></div>
                     </div>
                 </div>
+
+                <!-- Subtab 3: Document Categories (create + designation access matrix — requires documents.categories.manage) -->
+                <div class="subtab-panel" id="subtab-panel-categories">
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Categories</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Public and Resident Specific are protected system categories and cannot be deleted.</p>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Label</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="categories-list-rows-target">
+                                    <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td><input type="text" id="new-category-label" placeholder="e.g. Maintenance" style="margin:0;"></td>
+                                        <td><button type="button" id="create-category-submit-btn" class="submit-btn" style="width:auto; padding:8px 16px; margin:0;" onclick="submitCreateCategory()">Add New</button></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <div class="feedback-box" id="create-category-feedback" style="margin-top:15px;"></div>
+                    </div>
+
+                    <div class="card" id="category-access-card" style="display:none;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Per designation, whether it can read and/or manage (upload, sign, delete) each category. Super Admin always has full access. Public and Resident Specific are not shown; they're governed by visibility rules, not this matrix.</p>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Designation</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="category-access-designations-rows-target">
+                                    <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ROLES SUITE PANEL (visible only if the caller can manage roles and/or designations) -->
+            <section class="suite-panel" id="suite-roles">
+                <h2>Roles</h2>
+
+                <!-- Subtabs Menu -->
+                <div class="subtab-bar">
+                    <button class="subtab-btn active" id="subtab-btn-user-designations" style="display:none;" onclick="switchSubtab('user-designations')">User Designations</button>
+                    <button class="subtab-btn" id="subtab-btn-manage-designations" style="display:none;" onclick="switchSubtab('manage-designations')">Manage Designations</button>
+                </div>
+
+                <!-- Subtab 1: User Designations (assign/revoke — requires users.roles.manage) -->
+                <div class="subtab-panel active" id="subtab-panel-user-designations">
+                    <div class="card">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">User Designations</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Assign or revoke designations for any resident. Super Admin accounts and your own account are managed separately and cannot be edited here.</p>
+                        <div style="margin-bottom: 24px;">
+                            <input type="text" id="roles-search-input" placeholder="Search User...">
+                        </div>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Resident</th>
+                                        <th>Designations</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="roles-user-rows-target">
+                                    <tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Subtab 2: Manage Designations (create + their permissions/document access — requires designations.manage) -->
+                <div class="subtab-panel" id="subtab-panel-manage-designations">
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Designations</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Super Admin is a protected system designation and cannot be deleted. A designation still assigned to a user cannot be deleted either; revoke it from everyone first.</p>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Label</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="designations-list-rows-target">
+                                    <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td><input type="text" id="new-designation-label" placeholder="e.g. Maintenance Lead" style="margin:0;"></td>
+                                        <td><button type="button" class="submit-btn" style="width:auto; padding:8px 16px; margin:0;" onclick="submitCreateDesignation()">Add New</button></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <div class="feedback-box" id="create-designation-feedback" style="margin-top:15px;"></div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Designation Permissions</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Controls what each designation can do. Super Admin always holds every permission and isn't shown here.</p>
+                        <div class="table-container">
+                            <table id="designation-permissions-table">
+                                <thead>
+                                    <tr id="designation-permissions-header">
+                                        <th>Designation</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="designation-permissions-rows-target">
+                                    <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+                            <button id="save-designation-permissions-btn" class="submit-btn" style="width:auto; padding:10px 20px;" onclick="saveDesignationPermissions()">Save Changes</button>
+                        </div>
+                        <div class="feedback-box" id="designation-permissions-feedback" style="margin-top: 15px; display:none;"></div>
+                    </div>
+                </div>
             </section>
         </main>
     </div>
@@ -908,16 +1076,94 @@ pub const ADMIN_HTML: &str = r#"
             <input type="hidden" id="revoke-flat-user-id">
             <div class="feedback-box" id="revoke-feedback" style="margin-bottom: 15px;"></div>
             
-            <div style="display:flex; justify-content:flex-end; gap:12px;">
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:12px;">
                 <button onclick="closeRevokeFlatModal()" style="padding:10px 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
                 <button onclick="submitRevokeFlat()" class="del-action-btn" style="padding:10px 16px;">Revoke Flat</button>
             </div>
         </div>
     </div>
 
+    <!-- Manage Designations Modal -->
+    <div id="manage-designations-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+        <div style="background:var(--background); padding:28px; border-radius:12px; width:min(440px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 id="manage-designations-title" style="margin-top:0; margin-bottom:20px; color:var(--foreground); font-size:18px; word-break:break-word;">Manage Designations</h3>
+
+            <div class="form-group">
+                <div id="manage-designations-checklist" style="display:flex; flex-direction:column; gap:4px; max-height:280px; overflow-y:auto; padding:8px; border:1px solid var(--border); border-radius:8px; box-sizing:border-box;"></div>
+            </div>
+
+            <input type="hidden" id="manage-designations-user-id">
+            <div class="feedback-box" id="manage-designations-feedback" style="margin-top: 15px;"></div>
+
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeManageDesignationsModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+                <button id="manage-designations-save-btn" onclick="saveManageDesignations()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Category Access Modal -->
+    <div id="manage-category-access-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
+        <div style="background:var(--background); padding:28px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 id="manage-category-access-title" style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px; word-break:break-word;">Category Access</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Read lets this designation view documents in a category. Manage adds upload, sign, and delete.</p>
+
+            <div id="manage-category-access-warning" style="display:none; background:#FFFBEB; color:#B45309; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px; font-size:13px; line-height:1.5; margin-bottom:16px;"></div>
+
+            <div style="display:flex; font-size:11px; font-weight:700; text-transform:uppercase; color:var(--muted-foreground); padding:0 8px; margin-bottom:6px;">
+                <div style="flex:1;">Document Category</div>
+                <div style="width:60px; text-align:center;">Read</div>
+                <div style="width:70px; text-align:center;">Manage</div>
+            </div>
+            <div id="manage-category-access-checklist" style="display:flex; flex-direction:column; gap:4px; max-height:320px; overflow-y:auto; padding:8px; border:1px solid var(--border); border-radius:8px; box-sizing:border-box;"></div>
+
+            <input type="hidden" id="manage-category-access-designation-code">
+            <div class="feedback-box" id="manage-category-access-feedback" style="margin-top: 15px;"></div>
+
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeManageCategoryAccessModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+                <button id="manage-category-access-save-btn" onclick="saveManageCategoryAccess()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Permission Info Popup -->
+    <div id="perm-info-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closePermInfoModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(360px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 id="perm-info-title" style="margin-top:0; margin-bottom:10px; color:var(--foreground); font-size:16px;"></h3>
+            <p id="perm-info-desc" style="color:var(--muted-foreground); font-size:14px; line-height:1.5; margin-bottom:20px;"></p>
+            <div style="display:flex; justify-content:flex-end;">
+                <button onclick="closePermInfoModal()" style="box-sizing:border-box; height:38px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Modal (shared by designations + document categories) -->
+    <div id="rename-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closeRenameModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 id="rename-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Rename</h3>
+            <input type="hidden" id="rename-modal-kind">
+            <input type="hidden" id="rename-modal-code">
+            <div class="form-group">
+                <label for="rename-modal-input">New label</label>
+                <input type="text" id="rename-modal-input" onkeydown="if (event.key === 'Enter') submitRenameModal()">
+            </div>
+            <div class="feedback-box" id="rename-modal-feedback" style="margin-top: 15px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button id="rename-modal-save-btn" onclick="submitRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         function isAdminUser(user) {
-            return !!(user && user.designations && (user.designations.includes('super_admin')));
+            return !!(user && (
+                user.can_view_users || user.can_manage_users ||
+                user.can_manage_documents || user.can_manage_roles ||
+                user.can_manage_designations || user.can_manage_categories ||
+                user.can_review_process || user.can_view_roles || user.can_view_all_processes
+            ));
         }
 
         // ---- Sidebar toggle (mobile) ----
@@ -951,11 +1197,88 @@ pub const ADMIN_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        // API error bodies are either a bare JSON string or a {message: "..."} object —
+        // reading the raw response text directly would show the JSON quoting/escaping
+        // to the user. This unwraps either shape down to a plain message.
+        async function readErrorMessage(response) {
+            const raw = await response.text();
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') return parsed;
+                if (parsed && typeof parsed.message === 'string') return parsed.message;
+            } catch (e) {}
+            return raw;
+        }
+
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
         const user = userStr ? JSON.parse(userStr) : null;
-        
+        const canManageRoles = !!(user && user.can_manage_roles);
+        const canManageDesignations = !!(user && user.can_manage_designations);
+        const canManageCategories = !!(user && user.can_manage_categories);
+        const canViewUsers = !!(user && user.can_view_users);
+        const canManageUsers = !!(user && user.can_manage_users);
+        const canManageDocuments = !!(user && user.can_manage_documents);
+        const canViewRoles = !!(user && user.can_view_roles);
+        let defaultRolesSubtab = 'user-designations';
+        if (canManageRoles || canManageDesignations || canViewRoles) {
+            const rolesBtn = document.getElementById('suite-btn-roles');
+            if (rolesBtn) rolesBtn.style.display = 'block';
+            const userDesigBtn = document.getElementById('subtab-btn-user-designations');
+            const manageDesigBtn = document.getElementById('subtab-btn-manage-designations');
+            if ((canManageRoles || canViewRoles) && userDesigBtn) userDesigBtn.style.display = 'inline-block';
+            if (canManageDesignations && manageDesigBtn) manageDesigBtn.style.display = 'inline-block';
+            defaultRolesSubtab = (canManageRoles || canViewRoles) ? 'user-designations' : 'manage-designations';
+        }
+        if (canManageCategories || canManageDesignations) {
+            const categoriesBtn = document.getElementById('subtab-btn-categories');
+            if (categoriesBtn) categoriesBtn.style.display = 'inline-block';
+        }
+        // Explorer/Add Document deal with actual document content, gated on
+        // canManageDocuments — a categories-only manager has no business there and
+        // should land straight on (and only ever see) the Categories subtab.
+        if (!canManageDocuments) {
+            const dbBtn = document.getElementById('subtab-btn-db');
+            if (dbBtn) dbBtn.style.display = 'none';
+            const registerBtn = document.getElementById('subtab-btn-register');
+            if (registerBtn) registerBtn.style.display = 'none';
+        }
+        if (canManageDesignations) {
+            const categoryAccessCard = document.getElementById('category-access-card');
+            if (categoryAccessCard) categoryAccessCard.style.display = 'block';
+        }
+        if (canViewUsers) {
+            const residentsBtn = document.getElementById('suite-btn-residents');
+            if (residentsBtn) residentsBtn.style.display = 'block';
+        }
+        if (!canManageUsers) {
+            const leftColumn = document.getElementById('residents-left-column');
+            if (leftColumn) leftColumn.style.display = 'none';
+            const splitGrid = document.getElementById('residents-split-grid');
+            if (splitGrid) splitGrid.style.gridTemplateColumns = '1fr';
+        }
+        if (canManageDocuments || canManageCategories) {
+            const documentsBtn = document.getElementById('suite-btn-documents');
+            if (documentsBtn) documentsBtn.style.display = 'block';
+        }
+        const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+        const canViewAllProcesses = !!(user && user.can_view_all_processes);
+        const myFlatDashboardLink = document.getElementById('my-flat-dashboard-link');
+        if (myFlatDashboardLink) myFlatDashboardLink.style.display = hasFlat ? 'block' : 'none';
+        // Only show a Processes link here if this account actually holds process oversight
+        // permission. Personal-flat processes are NOT admin business — they're already
+        // reachable via "My Flat Dashboard →" -> /dashboard -> Processes, so duplicating
+        // that here off of hasFlat alone just clutters the admin nav with a dead-end link
+        // for accounts that have a flat but no process-related permission at all.
+        const workflowsBtn = document.getElementById('suite-btn-workflows');
+        if (workflowsBtn) {
+            workflowsBtn.style.display = canViewAllProcesses ? 'block' : 'none';
+            workflowsBtn.href = '/admin-process';
+            workflowsBtn.textContent = 'Process Review';
+        }
+        const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : null));
+
         if (!token || !user) {
             localStorage.clear();
             window.location.href = '/login';
@@ -978,6 +1301,16 @@ pub const ADMIN_HTML: &str = r#"
                         localStorage.setItem('vfs_user', JSON.stringify(freshUser));
                         if (!isAdminUser(freshUser)) {
                             window.location.href = '/dashboard';
+                            return;
+                        }
+                        // All capability flags above (canManageRoles, canViewRoles, etc.) were
+                        // computed once, synchronously, from the localStorage snapshot at page
+                        // load. If a designation/permission was granted or revoked after this
+                        // tab's last login, that snapshot is stale — reload so every gate on
+                        // this page recomputes from the fresh grant instead of silently sitting
+                        // on outdated access until the user manually logs out and back in.
+                        if (JSON.stringify(freshUser) !== JSON.stringify(user)) {
+                            window.location.reload();
                         }
                     } else if (response.status === 401) {
                         localStorage.clear();
@@ -996,23 +1329,52 @@ pub const ADMIN_HTML: &str = r#"
         }
 
         function handleCategoryChange() {
-            const cat = document.getElementById('doc-category').value;
+            const select = document.getElementById('doc-category');
+            const cat = select.value;
 
             // Show/hide flat mapping section for RESIDENT_SPECIFIC category
             const flatSection = document.getElementById('flat-mapping-section');
             flatSection.style.display = (cat === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
+
+            // Toggling that section shifts page layout right below the still-focused
+            // select — browsers then auto-scroll to keep it in view, which reads as an
+            // unwanted jump right as the dropdown closes. Blurring avoids that.
+            select.blur();
+        }
+
+        async function loadUploadCategories() {
+            const select = document.getElementById('doc-category');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/categories`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resp.ok) {
+                    const categories = await resp.json();
+                    select.innerHTML = categories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
+                } else {
+                    select.innerHTML = '<option value="">No categories available</option>';
+                }
+            } catch (err) {
+                select.innerHTML = '<option value="">No categories available</option>';
+            }
+            handleCategoryChange();
         }
 
         // Initialize category dynamic selection
-        handleCategoryChange();
+        loadUploadCategories();
 
         // Suite initialization from URL parameter
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab');
-        if (initialTab === 'documents') {
+        if (initialTab === 'documents' && (canManageDocuments || canManageCategories)) {
             switchSuite('documents');
-        } else {
+        } else if (initialTab === 'roles' && (canManageRoles || canManageDesignations || canViewRoles)) {
+            switchSuite('roles');
+        } else if (initialTab === 'residents' && canViewUsers) {
             switchSuite('residents');
+        } else if (defaultSuite) {
+            switchSuite(defaultSuite);
         }
 
         // High Level Suite Toggle
@@ -1029,9 +1391,17 @@ pub const ADMIN_HTML: &str = r#"
             // Switch panels
             document.getElementById('suite-residents').style.display = suiteName === 'residents' ? 'block' : 'none';
             document.getElementById('suite-documents').style.display = suiteName === 'documents' ? 'block' : 'none';
+            const rolesPanel = document.getElementById('suite-roles');
+            if (rolesPanel) rolesPanel.style.display = suiteName === 'roles' ? 'block' : 'none';
 
             if (suiteName === 'documents') {
-                loadAdminDocuments();
+                // Always explicitly (re-)select the right subtab on entry — otherwise
+                // whichever subtab was left active from a previous visit stays shown
+                // without its data ever being (re-)loaded, and the suite renders blank.
+                switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
+            } else if (suiteName === 'roles') {
+                switchSubtab(defaultRolesSubtab);
+                loadRolesData();
             }
         }
 
@@ -1045,6 +1415,8 @@ pub const ADMIN_HTML: &str = r#"
             
             if (subName === 'db') {
                 loadAdminDocuments();
+            } else if (subName === 'categories') {
+                loadCategoriesTabData();
             }
         }
 
@@ -1248,19 +1620,22 @@ pub const ADMIN_HTML: &str = r#"
             tbody.innerHTML = '';
 
             if (usersList.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No residents found.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No residents found.</td></tr>';
                 return;
             }
 
             usersList.forEach(u => {
                 const tr = document.createElement('tr');
                 const hasAdmin = u.designations.includes('super_admin');
-                const hasCommittee = u.designations.includes('committee');
-                const isSelf = u.user_id === user.user_id;
-                
+
                 let mappingText = '';
-                if (hasAdmin || u.wing === 'TBD' || u.flat_number === 'TBD') {
+                if (hasAdmin) {
                     mappingText = `<span style="color:var(--foreground); font-style:italic;">Admin Account</span>`;
+                } else if (u.wing === 'TBD' || u.flat_number === 'TBD') {
+                    // No active flat mapping (e.g. revoked) — not necessarily an admin;
+                    // they may still hold a non-admin designation, which is why they're
+                    // listed at all (see get_all_users' WHERE clause).
+                    mappingText = `<span style="color:var(--muted-foreground); font-style:italic;">No Flat Assigned</span>`;
                 } else {
                     const wings = u.wing.split(', ');
                     const flats = u.flat_number.split(', ');
@@ -1268,19 +1643,11 @@ pub const ADMIN_HTML: &str = r#"
                     mappingText = `Flats: <strong>${mappings}</strong>`;
                 }
 
-                // Only show Revoke Flat if they actually have a flat assigned
+                // Only show Revoke Flat if they actually have a flat assigned, and the caller can manage users
                 const hasRealFlat = u.wing !== 'TBD' && u.flat_number !== 'TBD';
-                const revokeFlatHtml = hasRealFlat 
-                    ? `<button class="del-action-btn" style="font-size: 11px; padding: 6px 10px; white-space: nowrap;" onclick="openRevokeFlatModal(${u.user_id}, '${escapeHtml(u.wing)}', '${escapeHtml(u.flat_number)}')">Revoke Flat</button>` 
+                const revokeFlatHtml = (hasRealFlat && canManageUsers)
+                    ? `<button class="del-action-btn" style="font-size: 11px; padding: 6px 10px; white-space: nowrap;" onclick="openRevokeFlatModal(${u.user_id}, '${escapeHtml(u.wing)}', '${escapeHtml(u.flat_number)}')">Revoke Flat</button>`
                     : '';
-
-                // Super Admins (seed-only, not promotable via this UI): show label instead of dropdown
-                const roleControlHtml = (isSelf || hasAdmin)
-                    ? `<span style="color:var(--foreground); font-weight:700; font-size:12px;">${isSelf ? 'Super Admin (You)' : 'Super Admin'}</span>`
-                    : `<select class="action-select" id="role-select-${escapeHtml(u.user_id)}">
-                            <option value="resident" ${!hasCommittee ? 'selected' : ''}>Set Resident</option>
-                            <option value="committee" ${hasCommittee ? 'selected' : ''}>Set Committee</option>
-                       </select>`;
 
                 tr.innerHTML = `
                     <td>
@@ -1288,28 +1655,11 @@ pub const ADMIN_HTML: &str = r#"
                         <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 3px;">${mappingText}</div>
                     </td>
                     <td>
-                        ${u.designations.length > 0
-                            ? u.designations.map(d => `<span class="badge ${d.toLowerCase()}">${escapeHtml(d)}</span>`).join('')
-                            : '<span style="color:var(--muted-foreground); font-size:12px;">Resident</span>'}
-                    </td>
-                    <td>
-                        <div style="display: flex; flex-direction: row; align-items: center; justify-content: flex-end; gap: 10px;">
-                            ${roleControlHtml}
+                        <div style="display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 10px;">
                             ${revokeFlatHtml}
                         </div>
                     </td>
                 `;
-
-                // Only attach change listener for non-self users
-                if (!isSelf) {
-                    const sel = tr.querySelector(`#role-select-${u.user_id}`);
-                    sel.addEventListener('change', async () => {
-                        const val = sel.value;
-                        const targetRole = val === 'committee' ? val : null;
-                        await changeRole(u.user_id, targetRole);
-                        loadUsers();
-                    });
-                }
 
                 tbody.appendChild(tr);
             });
@@ -1325,25 +1675,713 @@ pub const ADMIN_HTML: &str = r#"
             renderUsers(filtered);
         });
 
-        async function changeRole(user_id, target_role) {
+        // ==========================================
+        // ROLES TAB — user designations + document category access matrix
+        // ==========================================
+
+        let allNonSystemDesignations = [];
+        let allPermissions = [];
+        let allNonSystemCategories = [];
+
+        // Fixed display order + friendly copy for the permission matrix. Any permission
+        // the backend returns that isn't listed here still renders (falls back to its raw
+        // code/label), appended after these — keeps the UI forward-compatible with new
+        // permissions the server adds before this map is updated.
+        const PERMISSION_ORDER = [
+            'users.view', 'users.manage', 'users.roles.view', 'users.roles.manage',
+            'designations.manage', 'documents.all.manage', 'documents.categories.manage',
+            'process.view', 'process.reviewer',
+        ];
+        const PERMISSION_INFO = {
+            'users.view': { title: 'View Residents', desc: 'View all residents.' },
+            'users.manage': { title: 'Manage Residents', desc: 'View and manage all residents.' },
+            'users.roles.view': { title: 'View Designations', desc: 'View the designations held by users. This naturally also gives view access to the full resident list.' },
+            'users.roles.manage': { title: 'Manage Users Designations', desc: 'Change which designation(s) a user holds. This naturally also gives view access to the full resident list.' },
+            'designations.manage': { title: 'Manage Designation Setup', desc: 'Add new designations, modify the permissions a designation grants, and change which document categories it can view or manage.' },
+            'documents.all.manage': { title: 'Manage All Documents', desc: 'View and manage documents in every category, regardless of per-category access.' },
+            'documents.categories.manage': { title: 'Manage Document Categories', desc: 'Add new document categories.' },
+            'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
+            'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
+        };
+
+        function sortPermissionsForDisplay(permissions) {
+            const rank = code => {
+                const i = PERMISSION_ORDER.indexOf(code);
+                return i === -1 ? PERMISSION_ORDER.length : i;
+            };
+            return [...permissions].sort((a, b) => rank(a.code) - rank(b.code));
+        }
+
+        function showPermInfo(code) {
+            const info = PERMISSION_INFO[code];
+            const perm = allPermissions.find(p => p.code === code);
+            document.getElementById('perm-info-title').textContent = (info && info.title) || (perm && perm.label) || code;
+            document.getElementById('perm-info-desc').textContent = (info && info.desc) || (perm && perm.label) || 'No description available.';
+            document.getElementById('perm-info-modal').style.display = 'flex';
+        }
+
+        function closePermInfoModal() {
+            document.getElementById('perm-info-modal').style.display = 'none';
+        }
+
+        async function loadRolesData() {
+            await loadNonSystemDesignations();
+
+            if (canManageRoles || canViewRoles) {
+                await loadUsers();
+                renderRolesUserTable(allUsers);
+            }
+
+            if (canManageDesignations) {
+                renderDesignationsList();
+                await loadPermissionsCatalog();
+                renderDesignationPermissionsMatrix();
+            }
+        }
+
+        async function loadCategoriesTabData() {
+            await loadNonSystemDesignations();
+            await loadNonSystemCategories();
+            renderCategoriesList();
+            await loadCategoryMatrix();
+        }
+
+        let allCategories = [];
+        // Categories a designation can be granted read/manage access to. This is
+        // deliberately broader than allNonSystemCategories (which drives the All
+        // Categories CRUD list, where is_system rows correctly can't be renamed/deleted):
+        // PUBLIC is is_system but designations still need to be grantable manage access
+        // to it (so e.g. a non-admin role can be allowed to post public documents).
+        // RESIDENT_SPECIFIC stays excluded — it's inherently flat-scoped/personal, not
+        // something granted to a designation.
+        let allAccessGrantableCategories = [];
+
+        async function loadNonSystemCategories() {
             try {
-                await fetch(`${API_BASE}/api/v1/admin/users/roles`, {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-categories`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${token}`
-                    },
-                    body: JSON.stringify({ user_id, target_role })
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
+                if (resp.ok) {
+                    allCategories = await resp.json();
+                    allNonSystemCategories = allCategories.filter(c => !c.is_system);
+                    allAccessGrantableCategories = allCategories.filter(c => c.code !== 'RESIDENT_SPECIFIC');
+                }
             } catch (err) {
-                alert('Failed to connect and adjust user role.');
+                console.error('Failed to load document categories:', err);
+            }
+        }
+
+        function renderCategoriesList() {
+            const tbody = document.getElementById('categories-list-rows-target');
+            if (allCategories.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No categories yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = allCategories.map(c => `
+                <tr>
+                    <td style="font-weight:700;">${escapeHtml(c.label)}</td>
+                    <td>
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentCategory('${escapeHtml(c.code)}', '${escapeHtml(c.label)}')">Rename</button>` : ''}
+                        ${c.is_system
+                            ? '<span style="color:var(--muted-foreground); font-style:italic; font-size:12px;">System</span>'
+                            : (canManageCategories ? `<button class="del-action-btn" onclick="deleteDocumentCategory('${escapeHtml(c.code)}')">Delete</button>` : '')}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renameDocumentCategory(code, currentLabel) {
+            openRenameModal('category', code, currentLabel);
+        }
+
+        async function submitCreateCategory() {
+            const feedback = document.getElementById('create-category-feedback');
+            const labelInput = document.getElementById('new-category-label');
+            const label = labelInput.value.trim();
+            const code = label.toUpperCase().replace(/\s+/g, '_');
+
+            feedback.style.display = 'none';
+            if (!label) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-categories/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code, label })
+                });
+                const data = await resp.json();
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">✓</span> Category "${escapeHtml(label)}" created.`;
+                    labelInput.value = '';
+                    await loadNonSystemCategories();
+                    renderCategoriesList();
+                    await loadCategoryMatrix();
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create category.')}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            }
+        }
+
+        let allDesignations = [];
+
+        async function loadNonSystemDesignations() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resp.ok) {
+                    allDesignations = await resp.json();
+                    allNonSystemDesignations = allDesignations.filter(d => !d.is_system);
+                }
+            } catch (err) {
+                console.error('Failed to load designations:', err);
+            }
+        }
+
+        function renderDesignationsList() {
+            const tbody = document.getElementById('designations-list-rows-target');
+            if (allDesignations.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No designations yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = allDesignations.map(d => `
+                <tr>
+                    <td style="font-weight:700;">${escapeHtml(d.label)}</td>
+                    <td>
+                        <button class="action-select" style="cursor:pointer;" onclick="renameDesignation('${escapeHtml(d.code)}', '${escapeHtml(d.label)}')">Rename</button>
+                        ${d.is_system
+                            ? '<span style="color:var(--muted-foreground); font-style:italic; font-size:12px;">System</span>'
+                            : `<button class="del-action-btn" onclick="deleteDesignation('${escapeHtml(d.code)}')">Delete</button>`}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renameDesignation(code, currentLabel) {
+            openRenameModal('designation', code, currentLabel);
+        }
+
+        function openRenameModal(kind, code, currentLabel) {
+            document.getElementById('rename-modal-kind').value = kind;
+            document.getElementById('rename-modal-code').value = code;
+            document.getElementById('rename-modal-title').textContent = kind === 'category' ? 'Rename Category' : 'Rename Designation';
+            const input = document.getElementById('rename-modal-input');
+            input.value = currentLabel;
+            document.getElementById('rename-modal-feedback').innerHTML = '';
+            document.getElementById('rename-modal-feedback').style.display = 'none';
+            document.getElementById('rename-modal').style.display = 'flex';
+            input.focus();
+            input.select();
+        }
+
+        function closeRenameModal() {
+            document.getElementById('rename-modal').style.display = 'none';
+        }
+
+        async function submitRenameModal() {
+            const kind = document.getElementById('rename-modal-kind').value;
+            const code = document.getElementById('rename-modal-code').value;
+            const newLabel = document.getElementById('rename-modal-input').value.trim();
+            const feedback = document.getElementById('rename-modal-feedback');
+            const saveBtn = document.getElementById('rename-modal-save-btn');
+
+            if (!newLabel) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = 'Label cannot be empty.';
+                return;
+            }
+
+            const url = kind === 'category'
+                ? `${API_BASE}/api/v1/admin/roles/document-categories/rename`
+                : `${API_BASE}/api/v1/admin/roles/designations/rename`;
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code, label: newLabel })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    closeRenameModal();
+                    if (kind === 'category') {
+                        await loadNonSystemCategories();
+                        renderCategoriesList();
+                        await loadCategoryMatrix();
+                    } else {
+                        await loadNonSystemDesignations();
+                        renderDesignationsList();
+                        renderDesignationPermissionsMatrix();
+                    }
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = data.message || 'Failed to rename.';
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = 'Network error communicating with server.';
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+            }
+        }
+
+        async function deleteDesignation(code) {
+            if (!confirm(`Delete designation "${code}"? This only works if no users currently hold it.`)) return;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    await loadNonSystemDesignations();
+                    renderDesignationsList();
+                    renderDesignationPermissionsMatrix();
+                } else {
+                    alert(data.message || 'Failed to delete designation.');
+                }
+            } catch (err) {
+                alert('Network error communicating with server.');
+            }
+        }
+
+        function renderRolesUserTable(usersList) {
+            const tbody = document.getElementById('roles-user-rows-target');
+            tbody.innerHTML = '';
+
+            // Everyone (including yourself) is listed here — this is a visibility list,
+            // not just an edit queue. Self-demotion protection only disables the Manage
+            // Designations action on your own row (and is independently enforced by the
+            // backend); it must never make you disappear from a list you have permission
+            // to view.
+            const manageable = usersList
+                .filter(u => !u.designations.includes('super_admin'))
+                .sort((a, b) => (b.designations.length > 0 ? 1 : 0) - (a.designations.length > 0 ? 1 : 0));
+
+            if (manageable.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No residents found.</td></tr>';
+                return;
+            }
+
+            manageable.forEach(u => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><div style="font-weight: 700; color: var(--foreground);">${escapeHtml(u.email)}</div></td>
+                    <td>
+                        ${u.designations.length > 0
+                            ? u.designations.map(d => `<span class="badge ${d.toLowerCase()}">${escapeHtml(d)}</span>`).join('')
+                            : '<span style="color:var(--muted-foreground); font-size:12px;">Resident</span>'}
+                    </td>
+                    <td>
+                        ${canManageRoles && u.user_id !== user.user_id
+                            ? `<button class="action-select" style="cursor:pointer;" onclick="openManageDesignationsModal(${u.user_id}, '${escapeHtml(u.email)}')">Manage Designations</button>`
+                            : (u.user_id === user.user_id
+                                ? '<span style="color:var(--muted-foreground); font-size:12px;">(You)</span>'
+                                : '')}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        document.getElementById('roles-search-input').addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            const filtered = allUsers.filter(u => u.email.toLowerCase().includes(query));
+            renderRolesUserTable(filtered);
+        });
+
+        function openManageDesignationsModal(userId, email) {
+            const u = allUsers.find(x => x.user_id === userId);
+            if (!u) return;
+
+            document.getElementById('manage-designations-user-id').value = userId;
+            document.getElementById('manage-designations-title').textContent = `Manage Designations: ${email}`;
+
+            const currentNonSystem = u.designations.filter(d => d !== 'super_admin');
+            const checklist = document.getElementById('manage-designations-checklist');
+            checklist.innerHTML = allNonSystemDesignations.length > 0
+                ? allNonSystemDesignations.map(d => `
+                    <label style="display:flex; align-items:center; gap:12px; font-size:15px; cursor:pointer; padding:10px 8px; border-radius:6px; transition: background 0.15s;"
+                        onmouseover="this.style.background='var(--muted)';" onmouseout="this.style.background='transparent';">
+                        <input type="checkbox" class="designation-checklist-checkbox" data-designation="${escapeHtml(d.code)}" style="width:20px; height:20px; flex-shrink:0; margin:0;" ${currentNonSystem.includes(d.code) ? 'checked' : ''}>
+                        <span style="word-break:break-word;">${escapeHtml(d.label)}</span>
+                    </label>
+                `).join('')
+                : '<span style="color:var(--muted-foreground); font-size:12px;">No designations exist yet.</span>';
+
+            document.getElementById('manage-designations-feedback').innerHTML = '';
+            document.getElementById('manage-designations-modal').style.display = 'flex';
+        }
+
+        function closeManageDesignationsModal() {
+            document.getElementById('manage-designations-modal').style.display = 'none';
+        }
+
+        async function saveManageDesignations() {
+            const feedback = document.getElementById('manage-designations-feedback');
+            const saveBtn = document.getElementById('manage-designations-save-btn');
+            const userId = parseInt(document.getElementById('manage-designations-user-id').value, 10);
+            const u = allUsers.find(x => x.user_id === userId);
+            if (!u) return;
+
+            const currentNonSystem = u.designations.filter(d => d !== 'super_admin');
+            const changes = [];
+            document.querySelectorAll('.designation-checklist-checkbox').forEach(cb => {
+                const designationCode = cb.dataset.designation;
+                const wasAssigned = currentNonSystem.includes(designationCode);
+                if (cb.checked !== wasAssigned) {
+                    changes.push({ designationCode, action: cb.checked ? 'assign' : 'revoke' });
+                }
+            });
+
+            if (changes.length === 0) {
+                feedback.className = 'feedback-box';
+                feedback.innerHTML = 'No changes to save.';
+                return;
+            }
+
+            const removals = changes.filter(c => c.action === 'revoke');
+            if (removals.length > 0) {
+                const names = removals.map(c => c.designationCode).join(', ');
+                if (!confirm(`Remove designation(s) ${names} from this user? They will lose whatever access those grant.`)) {
+                    return;
+                }
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                for (const c of changes) {
+                    const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/${c.action}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ user_id: userId, designation_code: c.designationCode })
+                    });
+                    if (!resp.ok) {
+                        const data = await resp.json();
+                        throw new Error(data.message || 'Failed to update designation.');
+                    }
+                }
+                await loadUsers();
+                renderRolesUserTable(allUsers);
+                closeManageDesignationsModal();
+            } catch (err) {
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(err.message || 'Network error communicating with server.')}`;
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Changes';
+            }
+        }
+
+        let allCategoryDesignationRows = [];
+
+        async function loadCategoryMatrix() {
+            const tbody = document.getElementById('category-access-designations-rows-target');
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-category-designations`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!resp.ok) {
+                    tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--danger);">Failed to load access data.</td></tr>';
+                    return;
+                }
+                allCategoryDesignationRows = await resp.json();
+                renderCategoryAccessDesignationsList();
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--danger);">Connection error.</td></tr>';
+            }
+        }
+
+        function renderCategoryAccessDesignationsList() {
+            const tbody = document.getElementById('category-access-designations-rows-target');
+
+            if (allNonSystemDesignations.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No designations yet.</td></tr>';
+                return;
+            }
+            if (allAccessGrantableCategories.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No categories yet.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = allNonSystemDesignations.map(d => `
+                <tr>
+                    <td style="font-weight:700;">${escapeHtml(d.label)}</td>
+                    <td>${canManageDesignations
+                        ? `<button class="action-select" style="cursor:pointer;" onclick="openManageCategoryAccessModal('${escapeHtml(d.code)}', '${escapeHtml(d.label)}')">Manage Access</button>`
+                        : ''}</td>
+                </tr>
+            `).join('');
+        }
+
+        function openManageCategoryAccessModal(designationCode, designationLabel) {
+            document.getElementById('manage-category-access-designation-code').value = designationCode;
+            document.getElementById('manage-category-access-title').textContent = `Category Access: ${designationLabel}`;
+
+            const designation = allNonSystemDesignations.find(d => d.code === designationCode);
+            const hasManageAll = !!(designation && (designation.permission_codes || []).includes('documents.all.manage'));
+            const warning = document.getElementById('manage-category-access-warning');
+            if (hasManageAll) {
+                warning.style.display = 'block';
+                warning.textContent = `${designationLabel} already has the "Manage All Documents" permission, which gives it full access to every category. Changing anything below won't have any effect unless that permission is removed.`;
+            } else {
+                warning.style.display = 'none';
+            }
+
+            const byKey = new Map(allCategoryDesignationRows.map(r => [`${r.category}::${r.designation_code}`, r]));
+            const checklist = document.getElementById('manage-category-access-checklist');
+            checklist.innerHTML = allAccessGrantableCategories.length > 0
+                ? allAccessGrantableCategories.map(cat => {
+                    const cell = byKey.get(`${cat.code}::${designationCode}`) || { can_read: false, can_manage: false };
+                    // PUBLIC is readable by every authenticated user regardless of this
+                    // matrix (see document access resolution) — Read is always on and
+                    // not something to toggle off; only Manage (upload/sign/delete) is
+                    // a real choice here.
+                    const isPublic = cat.code === 'PUBLIC';
+                    return `
+                        <div style="display:flex; align-items:center; padding:8px; border-radius:6px;">
+                            <div style="flex:1; font-size:14px; word-break:break-word;">${escapeHtml(cat.label)}</div>
+                            <div style="width:60px; text-align:center;">
+                                <input type="checkbox" class="category-access-checkbox" data-category="${escapeHtml(cat.code)}" data-field="can_read" style="width:20px; height:20px;" ${(isPublic || cell.can_read) ? 'checked' : ''} ${isPublic ? 'disabled' : ''}>
+                            </div>
+                            <div style="width:70px; text-align:center;">
+                                <input type="checkbox" class="category-access-checkbox" data-category="${escapeHtml(cat.code)}" data-field="can_manage" style="width:20px; height:20px;" ${cell.can_manage ? 'checked' : ''}>
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+                : '<span style="color:var(--muted-foreground); font-size:12px;">No categories exist yet.</span>';
+
+            document.getElementById('manage-category-access-feedback').innerHTML = '';
+            document.getElementById('manage-category-access-modal').style.display = 'flex';
+        }
+
+        function closeManageCategoryAccessModal() {
+            document.getElementById('manage-category-access-modal').style.display = 'none';
+        }
+
+        async function saveManageCategoryAccess() {
+            const feedback = document.getElementById('manage-category-access-feedback');
+            const saveBtn = document.getElementById('manage-category-access-save-btn');
+            const designationCode = document.getElementById('manage-category-access-designation-code').value;
+            const byKey = new Map(allCategoryDesignationRows.map(r => [`${r.category}::${r.designation_code}`, r]));
+
+            const changes = [];
+            allAccessGrantableCategories.forEach(cat => {
+                const cell = byKey.get(`${cat.code}::${designationCode}`) || { can_read: false, can_manage: false };
+                const readCb = document.querySelector(`.category-access-checkbox[data-category="${cat.code}"][data-field="can_read"]`);
+                const manageCb = document.querySelector(`.category-access-checkbox[data-category="${cat.code}"][data-field="can_manage"]`);
+                if (readCb.checked !== !!cell.can_read || manageCb.checked !== !!cell.can_manage) {
+                    changes.push({ category: cat.code, can_read: readCb.checked, can_manage: manageCb.checked });
+                }
+            });
+
+            if (changes.length === 0) {
+                feedback.className = 'feedback-box';
+                feedback.innerHTML = 'No changes to save.';
+                return;
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                await Promise.all(changes.map(c => fetch(`${API_BASE}/api/v1/admin/roles/document-category-designations/toggle`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ category: c.category, designation_code: designationCode, can_read: c.can_read, can_manage: c.can_manage })
+                })));
+                await loadCategoryMatrix();
+                closeManageCategoryAccessModal();
+            } catch (err) {
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Failed to save changes.`;
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Changes';
+            }
+        }
+
+        async function deleteDocumentCategory(code) {
+            if (!confirm(`Delete category "${code}"? This only works if no documents use it.`)) return;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-categories/delete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code })
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    await loadNonSystemCategories();
+                    await loadCategoryMatrix();
+                } else {
+                    alert(data.message || 'Failed to delete category.');
+                }
+            } catch (err) {
+                alert('Connection error while deleting category.');
+            }
+        }
+
+        async function loadPermissionsCatalog() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/permissions`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (resp.ok) {
+                    allPermissions = sortPermissionsForDisplay(await resp.json());
+                }
+            } catch (err) {
+                console.error('Failed to load permissions catalog:', err);
+            }
+        }
+
+        function renderDesignationPermissionsMatrix() {
+            const headerRow = document.getElementById('designation-permissions-header');
+            const tbody = document.getElementById('designation-permissions-rows-target');
+
+            headerRow.innerHTML = '<th style="position:sticky; left:0; z-index:2; background-color:var(--background); box-shadow: 2px 0 4px rgba(0,0,0,0.06);">Designation</th>' +
+                allPermissions.map(p => {
+                    const info = PERMISSION_INFO[p.code];
+                    const title = (info && info.title) || p.label;
+                    return `<th style="white-space:nowrap;">
+                        <span>${escapeHtml(title)}</span>
+                        <button type="button" class="perm-info-btn" onclick="showPermInfo('${escapeHtml(p.code)}')" aria-label="What does ${escapeHtml(title)} do?">i</button>
+                    </th>`;
+                }).join('');
+
+            if (allNonSystemDesignations.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${allPermissions.length + 1}" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No designations yet.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = allNonSystemDesignations.map(d => {
+                // A caller can never edit the permissions of a designation they themselves
+                // hold — self-escalation guard, enforced server-side too (see toggle_designation_permission).
+                const isOwn = !!(user && (user.designations || []).includes(d.code));
+                return `
+                <tr>
+                    <td style="font-weight:700; position:sticky; left:0; z-index:1; background-color:var(--background); box-shadow: 2px 0 4px rgba(0,0,0,0.06);">
+                        ${escapeHtml(d.label)}
+                        ${isOwn ? '<span title="You hold this designation — only another admin can change its permissions." style="color:var(--muted-foreground); font-size:11px; font-weight:600; margin-left:6px;">(yours)</span>' : ''}
+                    </td>
+                    ${allPermissions.map(p => `
+                        <td style="text-align:center;">
+                            <input type="checkbox" class="perm-matrix-checkbox" data-designation="${escapeHtml(d.code)}" data-permission="${escapeHtml(p.code)}"
+                                onmousedown="event.preventDefault()"
+                                ${isOwn ? 'disabled' : ''}
+                                ${(d.permission_codes || []).includes(p.code) ? 'checked' : ''}>
+                        </td>
+                    `).join('')}
+                </tr>
+            `;
+            }).join('');
+        }
+
+        async function saveDesignationPermissions() {
+            const feedback = document.getElementById('designation-permissions-feedback');
+            const saveBtn = document.getElementById('save-designation-permissions-btn');
+            const changes = [];
+            document.querySelectorAll('.perm-matrix-checkbox').forEach(cb => {
+                const designationCode = cb.dataset.designation;
+                const permissionCode = cb.dataset.permission;
+                const designation = allNonSystemDesignations.find(d => d.code === designationCode);
+                const wasEnabled = !!(designation && (designation.permission_codes || []).includes(permissionCode));
+                if (cb.checked !== wasEnabled) {
+                    changes.push({ designationCode, permissionCode, enabled: cb.checked });
+                }
+            });
+
+            if (changes.length === 0) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box';
+                feedback.innerHTML = 'No changes to save.';
+                return;
+            }
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                await Promise.all(changes.map(c => fetch(`${API_BASE}/api/v1/admin/roles/designations/permissions/toggle`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ designation_code: c.designationCode, permission_code: c.permissionCode, enabled: c.enabled })
+                })));
+                await loadNonSystemDesignations();
+                renderDesignationPermissionsMatrix();
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box success';
+                feedback.innerHTML = `<span class="icon">✓</span> Saved ${changes.length} change(s).`;
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Failed to save changes.`;
+                await loadNonSystemDesignations();
+                renderDesignationPermissionsMatrix();
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Changes';
+            }
+        }
+
+        async function submitCreateDesignation() {
+            const feedback = document.getElementById('create-designation-feedback');
+            const labelInput = document.getElementById('new-designation-label');
+            const label = labelInput.value.trim();
+            const code = label.toLowerCase().replace(/\s+/g, '_');
+
+            feedback.style.display = 'none';
+            if (!label) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code, label })
+                });
+                const data = await resp.json();
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">✓</span> Designation "${escapeHtml(label)}" created.`;
+                    labelInput.value = '';
+                    await loadNonSystemDesignations();
+                    renderDesignationsList();
+                    renderDesignationPermissionsMatrix();
+                    await loadCategoryMatrix();
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create designation.')}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
             }
         }
 
         // ==========================================
         // DOCUMENT CONTROL ROOM ACTIONS
         // ==========================================
-        
+
         let allAdminDocs = [];
         let subbarCategoryFilter = 'ALL';
 
@@ -1356,12 +2394,28 @@ pub const ADMIN_HTML: &str = r#"
 
                 if (response.ok) {
                     allAdminDocs = await response.json();
+                    renderAdminCategoryFilterChips();
                     filterAdminDocs();
                 } else {
                     document.getElementById('admin-doc-rows-target').innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--foreground);">Failed to fetch database files.</td></tr>`;
                 }
             } catch (err) {
                 document.getElementById('admin-doc-rows-target').innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--foreground);">Database connection offline.</td></tr>';
+            }
+        }
+
+        function renderAdminCategoryFilterChips() {
+            const bar = document.getElementById('admin-filter-bar');
+            const categories = [...new Set(allAdminDocs.map(d => d.document.category))];
+
+            bar.innerHTML = '<button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar(\'ALL\')">All</button>' +
+                categories.map(cat => {
+                    const chipId = 'admin-filter-' + cat.toLowerCase().replace(/_/g, '-');
+                    return `<button class="filter-chip" id="${chipId}" onclick="filterAdminDocsBySubbar('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                }).join('');
+
+            if (subbarCategoryFilter !== 'ALL' && !categories.includes(subbarCategoryFilter)) {
+                subbarCategoryFilter = 'ALL';
             }
         }
 
@@ -1396,11 +2450,7 @@ pub const ADMIN_HTML: &str = r#"
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'cat-resident';
                 case 'PUBLIC': return 'cat-generic';
-                case 'COMMITTEE': return 'cat-minutes';
-                case 'FINANCE': return 'cat-minutes';
-                case 'GOVERNANCE': return 'cat-minutes';
-                case 'OPERATIONAL': return 'cat-operational';
-                default: return '';
+                default: return 'cat-operational';
             }
         }
 
@@ -1408,11 +2458,7 @@ pub const ADMIN_HTML: &str = r#"
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'Resident Specific';
                 case 'PUBLIC': return 'Public';
-                case 'COMMITTEE': return 'Committee';
-                case 'FINANCE': return 'Finance';
-                case 'GOVERNANCE': return 'Governance';
-                case 'OPERATIONAL': return 'Operational';
-                default: return cat;
+                default: return cat.toLowerCase().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             }
         }
 
@@ -1497,7 +2543,7 @@ pub const ADMIN_HTML: &str = r#"
                         alert('No download link returned by server.');
                     }
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to get download link: ${errText}`);
                 }
             } catch (err) {
@@ -1618,7 +2664,7 @@ pub const ADMIN_HTML: &str = r#"
                 });
 
                 if (!urlRes.ok) {
-                    const errText = await urlRes.text();
+                    const errText = await readErrorMessage(urlRes);
                     docFeedback.textContent = `Error: ${errText}`;
                     docFeedback.className = 'feedback-box error';
                     docFeedback.style.display = 'block';
@@ -1657,7 +2703,7 @@ pub const ADMIN_HTML: &str = r#"
                 });
 
                 if (!confirmRes.ok) {
-                    const errText = await confirmRes.text();
+                    const errText = await readErrorMessage(confirmRes);
                     docFeedback.textContent = `Confirmation failed: ${errText}`;
                     docFeedback.className = 'feedback-box error';
                     return;

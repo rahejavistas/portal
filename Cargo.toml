@@ -11,3 +11,11 @@ members = [
     "process"
 ]
 resolver = "2"
+
+# `unreachable_pub` catches items marked `pub` that are never actually reachable from
+# outside their defining crate (nothing re-exports them) — the gap `dead_code` leaves,
+# since `dead_code` conservatively assumes any `pub` item could be used externally.
+# Narrowing a flagged item to `pub(crate)` (or private) then lets `dead_code` itself
+# catch it if it's truly unused nowhere, not just externally.
+[workspace.lints.rust]
+unreachable_pub = "warn"

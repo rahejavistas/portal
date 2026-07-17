@@ -1,6 +1,4 @@
-use crate::document::{
-    Document, DocumentCategory, DocumentWithMetadata, GenericDocumentMetadata, MetadataInput,
-};
+use crate::document::{Document, DocumentWithMetadata, GenericDocumentMetadata, MetadataInput};
 use base::flat::FlatIdentifier;
 use chrono::NaiveDate;
 use sqlx::PgPool;
@@ -12,14 +10,11 @@ pub struct DocumentManager {
     pub s3_accessor: base::s3::S3Accessor,
 }
 
-/// Bundled input for `admin_create_upload_intent`/`admin_create_upload_intent_by_id`.
-/// Groups the fields common to both (title/description/category/metadata/content_type/
-/// uploaded_by), leaving flat targeting as a separate argument since the two functions
-/// differ in how the flat is identified (`FlatIdentifier` vs a raw `flat_id`).
+/// Shared input for `admin_create_upload_intent`/`admin_create_upload_intent_by_id`.
 pub struct AdminUploadIntentInput<'a> {
     pub title: &'a str,
     pub description: Option<&'a str>,
-    pub category: DocumentCategory,
+    pub category: &'a str,
     pub metadata: Option<MetadataInput<'a>>,
     pub content_type: &'a str,
     pub uploaded_by: Option<i32>,
@@ -34,7 +29,7 @@ impl DocumentManager {
     }
 
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
-        let key = super::derive_s3_key(doc.category, doc.document_id);
+        let key = super::derive_s3_key(doc.document_id);
         self.s3_accessor
             .create_presigned_url(&key)
             .await
@@ -48,9 +43,7 @@ impl DocumentManager {
     ) -> Result<std::collections::HashSet<Uuid>, String> {
         let mut allowed_ids = std::collections::HashSet::new();
 
-        let is_admin = user.is_admin();
-
-        if is_admin {
+        if user.has_permission(authentication::Permission::DocumentsAllManage) {
             let admin_ids: Vec<Uuid> =
                 sqlx::query_scalar("SELECT document_id FROM documents WHERE NOT is_deleted")
                     .fetch_all(&self.pg_pool)
@@ -59,22 +52,24 @@ impl DocumentManager {
             return Ok(admin_ids.into_iter().collect());
         }
 
-        // 1. PUBLIC documents are visible to everyone
+        // 1. Documents in any is_public_read category are visible to everyone
         let public_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT document_id FROM documents WHERE category = 'PUBLIC' AND NOT is_deleted",
+            "SELECT d.document_id FROM documents d \
+             JOIN document_categories dc ON dc.code = d.category \
+             WHERE dc.is_public_read = TRUE AND NOT d.is_deleted",
         )
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(public_ids);
 
-        // 2. Documents whose category is mapped to one of the user's active designations
+        // 2. Documents whose category is read-mapped to one of the user's active designations
         let designation_mapped_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT d.document_id \
              FROM documents d \
              JOIN document_category_designations dcd ON dcd.category = d.category \
              JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
-             WHERE ud.user_id = $1 AND ud.is_active = TRUE AND NOT d.is_deleted",
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE AND dcd.can_read = TRUE AND NOT d.is_deleted",
         )
         .bind(user.user_id)
         .fetch_all(&self.pg_pool)
@@ -105,7 +100,6 @@ impl DocumentManager {
         document_id: Uuid,
         user: &authentication::User,
     ) -> Result<Option<DocumentWithMetadata>, String> {
-        // A. Check if the document exists (excluding soft-deleted)
         let exists: Option<(Uuid,)> = sqlx::query_as(
             "SELECT document_id FROM documents WHERE document_id = $1 AND NOT is_deleted",
         )
@@ -118,13 +112,11 @@ impl DocumentManager {
             return Ok(None);
         }
 
-        // B. Get precomputed allowed document IDs for this user
         let allowed_ids = self.get_allowed_document_ids(user).await?;
         if !allowed_ids.contains(&document_id) {
             return Err("FORBIDDEN".to_string());
         }
 
-        // C. Fetch the authorized document
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
                 d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
@@ -199,7 +191,7 @@ impl DocumentManager {
         .await?;
 
         if let Some(flat_id) = flat {
-            Self::assign_flat_with_executor(&mut *tx, doc.document_id, flat_id).await?;
+            Self::assign_flat(&mut *tx, doc.document_id, flat_id).await?;
         }
 
         let meta = if let Some(m) = input.metadata {
@@ -221,8 +213,7 @@ impl DocumentManager {
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
-        // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.category, doc.document_id);
+        let key = super::derive_s3_key(doc.document_id);
         let upload_url = self
             .s3_accessor
             .create_presigned_put_url(&key, input.content_type)
@@ -264,7 +255,7 @@ impl DocumentManager {
         .await?;
 
         if let Some(fid) = flat_id {
-            Self::assign_flat_by_id_with_executor(&mut *tx, doc.document_id, fid).await?;
+            Self::assign_flat_by_id(&mut *tx, doc.document_id, fid).await?;
         }
 
         let meta = if let Some(m) = input.metadata {
@@ -286,8 +277,7 @@ impl DocumentManager {
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
-        // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.category, doc.document_id);
+        let key = super::derive_s3_key(doc.document_id);
         let upload_url = self
             .s3_accessor
             .create_presigned_put_url(&key, input.content_type)
@@ -306,56 +296,6 @@ impl DocumentManager {
         ))
     }
 
-    /// Atomically updates a document with flat re-assignment and metadata upsert in a single transaction.
-    /// Note: soft-deletion is handled by the dedicated `admin_soft_delete_document` endpoint.
-    pub async fn admin_update_document_atomic(
-        &self,
-        document_id: Uuid,
-        title: &str,
-        description: Option<&str>,
-        category: DocumentCategory,
-        flat: Option<&FlatIdentifier>,
-        metadata: Option<MetadataInput<'_>>,
-    ) -> Result<DocumentWithMetadata, String> {
-        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let doc =
-            Self::update_document(&mut *tx, document_id, title, description, category).await?;
-
-        // Clear old flat mappings and re-assign within the same transaction
-        Self::clear_flat_mappings_with_executor(&mut *tx, document_id).await?;
-        if let Some(flat_id) = flat {
-            Self::assign_flat_with_executor(&mut *tx, document_id, flat_id).await?;
-        }
-
-        let meta = if let Some(m) = metadata {
-            Some(
-                Self::upsert_metadata(
-                    &mut *tx,
-                    document_id,
-                    m.subcategory,
-                    m.tags,
-                    m.document_date,
-                    m.valid_from,
-                    m.valid_until,
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-
-        tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(DocumentWithMetadata {
-            document: doc,
-            metadata: meta,
-            flat: None,
-            download_url: None,
-        })
-    }
-
     /// Atomically creates a user-uploaded document linked to their flat
     pub async fn user_create_document_atomic(
         &self,
@@ -367,33 +307,34 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Find the user's active flat_id
-        let flat_id_opt = user
-            .get_active_flat_id(&mut *tx)
+        let flat_ids = user
+            .get_active_flat_ids(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
-        let flat_id =
-            flat_id_opt.ok_or_else(|| "User does not have an active flat ownership".to_string())?;
+        if flat_ids.is_empty() {
+            return Err("User does not have an active flat ownership".to_string());
+        }
 
         let doc = Self::insert_document(
             &mut *tx,
             title,
             description,
-            DocumentCategory::ResidentSpecific,
+            super::RESIDENT_SPECIFIC_CATEGORY,
             true, // is_user_uploaded
             true, // is_upload_confirmed: server-proxied upload
             Some(user.user_id),
         )
         .await?;
 
-        // Insert into document_flats directly since we already have the flat_id
-        sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
-            .bind(doc.document_id)
-            .bind(flat_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        for flat_id in &flat_ids {
+            sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
+                .bind(doc.document_id)
+                .bind(flat_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -409,7 +350,7 @@ impl DocumentManager {
         executor: E,
         title: &str,
         description: Option<&str>,
-        category: DocumentCategory,
+        category: &str,
         is_user_uploaded: bool,
         is_upload_confirmed: bool,
         uploaded_by: Option<i32>,
@@ -425,30 +366,6 @@ impl DocumentManager {
         .bind(is_user_uploaded)
         .bind(is_upload_confirmed)
         .bind(uploaded_by)
-        .fetch_one(executor)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        Ok(doc)
-    }
-
-    async fn update_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
-        executor: E,
-        document_id: Uuid,
-        title: &str,
-        description: Option<&str>,
-        category: DocumentCategory,
-    ) -> Result<Document, String> {
-        let doc: Document = sqlx::query_as(
-            "UPDATE documents \
-             SET title = $1, description = $2, category = $3 \
-             WHERE document_id = $4 \
-             RETURNING document_id, title, description, category, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
-        )
-        .bind(title)
-        .bind(description)
-        .bind(category)
-        .bind(document_id)
         .fetch_one(executor)
         .await
         .map_err(|e| e.to_string())?;
@@ -483,59 +400,11 @@ impl DocumentManager {
         Ok(meta)
     }
 
-    async fn upsert_metadata<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
-        executor: E,
-        document_id: Uuid,
-        subcategory: Option<&str>,
-        tags: &[String],
-        document_date: NaiveDate,
-        valid_from: Option<NaiveDate>,
-        valid_until: Option<NaiveDate>,
-    ) -> Result<GenericDocumentMetadata, String> {
-        let meta: GenericDocumentMetadata = sqlx::query_as(
-            "INSERT INTO generic_document_metadata (document_id, subcategory, tags, document_date, valid_from, valid_until) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
-             ON CONFLICT (document_id) DO UPDATE \
-             SET subcategory = EXCLUDED.subcategory, tags = EXCLUDED.tags, document_date = EXCLUDED.document_date, \
-                 valid_from = EXCLUDED.valid_from, valid_until = EXCLUDED.valid_until \
-             RETURNING document_id, subcategory, tags, document_date, valid_from, valid_until",
-        )
-        .bind(document_id)
-        .bind(subcategory)
-        .bind(tags)
-        .bind(document_date)
-        .bind(valid_from)
-        .bind(valid_until)
-        .fetch_one(executor)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        Ok(meta)
-    }
-
-    async fn clear_flat_mappings_with_executor<
-        'e,
-        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-    >(
-        executor: E,
-        document_id: Uuid,
-    ) -> Result<(), String> {
-        sqlx::query("DELETE FROM document_flats WHERE document_id = $1")
-            .bind(document_id)
-            .execute(executor)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    /// Resolves a FlatIdentifier to a flat_id and inserts a document_flats mapping
-    /// in a single SQL statement, compatible with any sqlx Executor (including transactions).
-    async fn assign_flat_with_executor<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    async fn assign_flat<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         document_id: Uuid,
         flat: &FlatIdentifier,
     ) -> Result<(), String> {
-        // Combined lookup + insert in a single statement to avoid consuming the executor twice
         let result = sqlx::query(
             "INSERT INTO document_flats (document_id, flat_id) \
              SELECT $1, flat_id FROM flats WHERE wing = $2 AND flat_number = $3 \
@@ -555,16 +424,12 @@ impl DocumentManager {
         Ok(())
     }
 
-    /// Assigns a document to a flat using the flat's integer primary key directly
-    async fn assign_flat_by_id_with_executor<
-        'e,
-        E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-    >(
+    async fn assign_flat_by_id<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         document_id: Uuid,
         flat_id: i32,
     ) -> Result<(), String> {
-        let result = sqlx::query(
+        sqlx::query(
             "INSERT INTO document_flats (document_id, flat_id) \
              VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
@@ -573,12 +438,6 @@ impl DocumentManager {
         .execute(executor)
         .await
         .map_err(|e| e.to_string())?;
-
-        if result.rows_affected() == 0 {
-            // It either didn't exist or there was a conflict.
-            // But since flat_id is a foreign key, if it doesn't exist, it will violate FK constraint
-            // rather than affecting 0 rows. 0 rows affected here just means conflict (already exists).
-        }
 
         Ok(())
     }
@@ -666,16 +525,6 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// Permanently deletes a document from the database (e.g. on S3 upload failure rollback).
-    pub async fn delete_document_permanently(&self, document_id: Uuid) -> Result<(), String> {
-        sqlx::query("DELETE FROM documents WHERE document_id = $1")
-            .bind(document_id)
-            .execute(&self.pg_pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
     // ==========================================
     // PRESIGNED UPLOAD FLOW
     // ==========================================
@@ -694,38 +543,38 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        // Find the user's active flat_id
-        let flat_id_opt = user
-            .get_active_flat_id(&mut *tx)
+        let flat_ids = user
+            .get_active_flat_ids(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
-        let flat_id =
-            flat_id_opt.ok_or_else(|| "User does not have an active flat ownership".to_string())?;
+        if flat_ids.is_empty() {
+            return Err("User does not have an active flat ownership".to_string());
+        }
 
         let doc = Self::insert_document(
             &mut *tx,
             title,
             None,
-            DocumentCategory::ResidentSpecific,
+            super::RESIDENT_SPECIFIC_CATEGORY,
             true,  // is_user_uploaded
             false, // is_upload_confirmed: NOT confirmed until client finishes S3 upload
             Some(user.user_id),
         )
         .await?;
 
-        // Link document to user's flat
-        sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
-            .bind(doc.document_id)
-            .bind(flat_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        for flat_id in &flat_ids {
+            sqlx::query("INSERT INTO document_flats (document_id, flat_id) VALUES ($1, $2)")
+                .bind(doc.document_id)
+                .bind(flat_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
-        // Generate presigned PUT URL for the exact S3 key
-        let key = super::derive_s3_key(doc.category, doc.document_id);
+        let key = super::derive_s3_key(doc.document_id);
         let upload_url = self
             .s3_accessor
             .create_presigned_put_url(&key, content_type)
@@ -748,23 +597,21 @@ impl DocumentManager {
     /// that the file actually exists on S3 via a HEAD request, then sets
     /// `is_upload_confirmed = true` in the DB.
     pub async fn confirm_upload(&self, document_id: Uuid) -> Result<(), String> {
-        // Verify the document exists and is unconfirmed
-        let row: Option<(bool, DocumentCategory)> = sqlx::query_as(
-            "SELECT is_upload_confirmed, category FROM documents WHERE document_id = $1 AND NOT is_deleted",
+        let row: Option<(bool,)> = sqlx::query_as(
+            "SELECT is_upload_confirmed FROM documents WHERE document_id = $1 AND NOT is_deleted",
         )
         .bind(document_id)
         .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
 
-        let category = match row {
+        match row {
             None => return Err("Document not found".to_string()),
-            Some((true, _)) => return Ok(()), // Already confirmed, idempotent
-            Some((false, category)) => category, // Proceed with confirmation
-        };
+            Some((true,)) => return Ok(()),
+            Some((false,)) => {}
+        }
 
-        // HEAD the S3 object to verify the file landed
-        let key = super::derive_s3_key(category, document_id);
+        let key = super::derive_s3_key(document_id);
         let head_result = self
             .s3_accessor
             .head_object(&key)
@@ -781,10 +628,9 @@ impl DocumentManager {
                     size
                 ));
             }
-            Some(_) => {} // Size is within limits
+            Some(_) => {}
         }
 
-        // Mark as confirmed
         sqlx::query("UPDATE documents SET is_upload_confirmed = TRUE WHERE document_id = $1")
             .bind(document_id)
             .execute(&self.pg_pool)

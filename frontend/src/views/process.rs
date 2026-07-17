@@ -1,4 +1,7 @@
-pub const PROCESS_HTML: &str = r#"
+/// Shared by both /process (personal) and /admin-process (reviewer/auditor queue) — the
+/// `__PROCESS_MODE__` placeholder is swapped for a hardcoded `true`/`false` per route, so
+/// the page's JS never has to guess its own mode from scattered permission checks.
+const PROCESS_HTML_TEMPLATE: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -196,6 +199,24 @@ pub const PROCESS_HTML: &str = r#"
         .back-btn:hover {
             background-color: var(--muted);
             transform: scale(1.03);
+        }
+        .admin-btn {
+            display: block;
+            padding: 12px 16px;
+            background-color: #FEF3C7;
+            color: #D97706;
+            border-radius: var(--radius-md);
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+        .admin-btn:hover {
+            background-color: #FDE68A;
+            transform: scale(1.05);
         }
         .logout-btn {
             background-color: var(--background);
@@ -934,9 +955,9 @@ pub const PROCESS_HTML: &str = r#"
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px;">
                     <div>
                         <h2>Processes</h2>
-                        <p class="section-desc" style="margin-bottom: 0;">Manage Your Processes</p>
+                        <p class="section-desc" style="margin-bottom: 0;" id="processes-section-desc">Manage Your Processes</p>
                     </div>
-                    <button class="btn" onclick="openStartProcessModal()">Start New Process</button>
+                    <button class="btn" id="start-process-btn" onclick="openStartProcessModal()">Start New Process</button>
                 </div>
 
                 <div class="subtab-bar" id="process-subtab-bar" style="display: none;">
@@ -1037,7 +1058,7 @@ pub const PROCESS_HTML: &str = r#"
                     </select>
                 </div>
                 <div id="start-process-status" style="margin-top: 12px; font-size: 0.875rem; font-weight: 600;"></div>
-                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px;">
                     <button type="button" class="btn btn-secondary" onclick="closeStartProcessModal()">Cancel</button>
                     <button type="submit" class="btn" id="start-process-submit-btn">Start</button>
                 </div>
@@ -1046,8 +1067,32 @@ pub const PROCESS_HTML: &str = r#"
     </div>
 
     <script>
+        // Baked in per-route at build time (see frontend/src/views/process.rs::process_html).
+        // /process always renders false (your own process, full stop); /admin-process
+        // always renders true (the reviewer/auditor queue). No client-side guessing.
+        const IS_ADMIN_PROCESS_PAGE = __PROCESS_MODE__;
+
+        // Broad "has some admin capability" — used only for sidebar branding/nav links.
         function isAdminUser(user) {
-            return !!(user && user.designations && (user.designations.includes('super_admin')));
+            return !!(user && (
+                user.can_view_users || user.can_manage_users ||
+                user.can_manage_documents || user.can_manage_roles ||
+                user.can_manage_designations || user.can_manage_categories ||
+                user.can_review_process || user.can_view_roles || user.can_view_all_processes
+            ));
+        }
+
+        // Whether this user reviews OTHER people's process steps (write access: approve,
+        // reject, upload as admin, edit admin-role fields). Only ever relevant/rendered
+        // on the /admin-process page — the personal page never shows these regardless.
+        function canReviewProcess(user) {
+            return IS_ADMIN_PROCESS_PAGE && !!(user && user.can_review_process);
+        }
+
+        // Access gate for /admin-process itself — reviewers and the read-only process.view
+        // auditor role may enter; everyone else gets bounced to the personal /process page.
+        function canAccessAdminProcessPage(user) {
+            return !!(user && user.can_view_all_processes);
         }
 
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
@@ -1100,28 +1145,77 @@ pub const PROCESS_HTML: &str = r#"
         // Redirect if not logged in
         if (!token || !user) {
             window.location.href = '/login';
+        } else if (IS_ADMIN_PROCESS_PAGE && !canAccessAdminProcessPage(user)) {
+            // Not a reviewer or auditor — nothing on this page applies to them.
+            window.location.href = '/process';
         }
 
-        // Populate sidebar based on role
+        // Starting a process is a personal-page action — doesn't belong on the oversight queue.
+        if (IS_ADMIN_PROCESS_PAGE) {
+            const startProcessBtn = document.getElementById('start-process-btn');
+            if (startProcessBtn) startProcessBtn.style.display = 'none';
+            const sectionDesc = document.getElementById('processes-section-desc');
+            if (sectionDesc) sectionDesc.textContent = 'Review resident processes';
+        }
+
+        // Populate sidebar based on which PAGE this is, not on the viewer's permissions.
+        // The full "Admin" re-branding (header, Residents/Documents/Roles links) only
+        // ever applies on /admin-process — that page IS an admin tool. The personal
+        // /process page always stays "Vistas / Resident Portal", even for admin-capable
+        // hybrid users, exactly like /dashboard: it just adds an "Admin Dashboard" cross-link.
         const isAdmin = isAdminUser(user);
+        const showAdminBranding = IS_ADMIN_PROCESS_PAGE;
         const sidebarBrandContainer = document.getElementById('sidebar-brand-container');
         // Set mobile brand label
         const mobileBrandLabel = document.getElementById('mobile-brand-label');
-        if (mobileBrandLabel) mobileBrandLabel.textContent = isAdmin ? 'Admin' : 'Vistas';
+        if (mobileBrandLabel) mobileBrandLabel.textContent = showAdminBranding ? 'Admin' : 'Vistas';
         if (sidebarBrandContainer) {
             const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
-            if (isAdmin) {
+            if (showAdminBranding) {
+                const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
+                const residentsLink = (user && user.can_view_users)
+                    ? `<a href="/admin?tab=residents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>`
+                    : '';
+                const documentsLink = (user && (user.can_manage_documents || user.can_manage_categories))
+                    ? `<a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>`
+                    : '';
+                const rolesLink = canManageRoles
+                    ? `<a href="/admin?tab=roles" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Roles</a>`
+                    : '';
+                const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+                const myFlatDashboardLink = hasFlat
+                    ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
+                    : '';
+                // The self link always points at whichever process page is actually loaded.
+                const processesLink = IS_ADMIN_PROCESS_PAGE
+                    ? `<a href="/admin-process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : `<a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
+                // Cross-link from the personal page to the admin review queue only.
+                // No reverse link — the admin review queue is an admin tool, not a place
+                // to bounce back to a personal process from.
+                const otherProcessLink = !IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user)
+                    ? `<a href="/admin-process" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : '';
                 sidebarBrandContainer.innerHTML = `
                     <h1>Admin</h1>
                     <p>Raheja Vistas Admin Room</p>
                     <nav class="nav-menu">
-                        <a href="/admin" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>
-                        <a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
-                        <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        ${residentsLink}
+                        ${documentsLink}
+                        ${rolesLink}
+                        ${processesLink}
+                        ${otherProcessLink}
+                        ${myFlatDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             } else {
+                // Personal /process page: always the resident shell, even for admin-capable
+                // hybrid users — matches /dashboard's "Admin Dashboard" cross-link pattern
+                // rather than re-branding the whole sidebar into admin mode.
+                const adminDashboardLink = isAdmin
+                    ? `<a href="/admin" class="admin-btn" style="text-decoration: none;">Admin Dashboard &rarr;</a>`
+                    : '';
                 sidebarBrandContainer.innerHTML = `
                     <h1>Vistas</h1>
                     <p>Resident Portal</p>
@@ -1129,6 +1223,7 @@ pub const PROCESS_HTML: &str = r#"
                         <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        ${adminDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
@@ -1144,6 +1239,19 @@ pub const PROCESS_HTML: &str = r#"
                 .replace(/>/g, "&gt;")
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
+        }
+
+        // API error bodies are either a bare JSON string or a {message: "..."} object —
+        // reading the raw response text directly would show the JSON quoting/escaping
+        // to the user. This unwraps either shape down to a plain message.
+        async function readErrorMessage(response) {
+            const raw = await response.text();
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') return parsed;
+                if (parsed && typeof parsed.message === 'string') return parsed.message;
+            } catch (e) {}
+            return raw;
         }
 
         // Helper to format ISO dates to "05 Jan 2026, 04:10PM" format
@@ -1183,7 +1291,7 @@ pub const PROCESS_HTML: &str = r#"
 
         // Load process list from backend
         async function loadProcesses() {
-            if (isAdminUser(user)) {
+            if (IS_ADMIN_PROCESS_PAGE) {
                 const adminEmailGroup = document.getElementById('admin-email-filter-group');
                 if (adminEmailGroup) adminEmailGroup.style.display = 'flex';
                 const adminFlatGroup = document.getElementById('admin-flat-filter-group');
@@ -1198,8 +1306,10 @@ pub const PROCESS_HTML: &str = r#"
                 const response = await fetch(`${API_BASE}/api/v1/process/list`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ personal_only: !IS_ADMIN_PROCESS_PAGE })
                 });
                 if (response.ok) {
                     const data = await response.json();
@@ -1209,7 +1319,7 @@ pub const PROCESS_HTML: &str = r#"
                 } else if (response.status === 401) {
                     window.location.href = '/login';
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     document.getElementById('process-rows-target').innerHTML = `
                         <tr>
                             <td colspan="5" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
@@ -1243,7 +1353,7 @@ pub const PROCESS_HTML: &str = r#"
             const searchQuery = document.getElementById('filter-search').value.trim().toLowerCase();
             const flatQuery = document.getElementById('filter-flat').value.trim().toLowerCase();
             const emailQuery = document.getElementById('filter-email').value.trim().toLowerCase();
-            const isAdmin = isAdminUser(user);
+            const isAdmin = IS_ADMIN_PROCESS_PAGE;
 
             // Sort by creation date descending (oldest one should be below)
             allProcesses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -1334,7 +1444,7 @@ pub const PROCESS_HTML: &str = r#"
             document.getElementById('start-process-modal').style.display = 'flex';
 
             // Admins cannot start a process for themselves
-            if (isAdminUser(user)) {
+            if (canReviewProcess(user)) {
                 statusEl.style.color = 'var(--danger)';
                 statusEl.textContent = 'Administrative accounts cannot initiate processes directly. Please use the resident view.';
                 document.getElementById('start-process-submit-btn').disabled = true;
@@ -1386,7 +1496,8 @@ pub const PROCESS_HTML: &str = r#"
             try {
                 const payload = {
                     template_id: templateId,
-                    flat_id: flatId
+                    flat_id: flatId,
+                    personal_only: true
                 };
 
                 const response = await fetch(`${API_BASE}/api/v1/process/state`, {
@@ -1404,7 +1515,7 @@ pub const PROCESS_HTML: &str = r#"
                     await loadProcesses();
                     viewProcessDetail(data.process_id);
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     statusEl.style.color = 'var(--danger)';
                     statusEl.textContent = `Failed to start process: ${errText}`;
                 }
@@ -1456,14 +1567,14 @@ pub const PROCESS_HTML: &str = r#"
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ process_id: processId })
+                    body: JSON.stringify({ process_id: processId, personal_only: !IS_ADMIN_PROCESS_PAGE })
                 });
 
                 if (response.ok) {
                     currentProcessDetails = await response.json();
                     renderProcessDetails();
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     document.getElementById('details-process-title').textContent = 'Error Loading Process';
                     document.getElementById('details-process-meta').innerHTML = `<span style="font-size:0.8125rem;color:#EF4444;">${escapeHtml(errText)}</span>`;
                     document.getElementById('details-sidebar-target').innerHTML = '';
@@ -1568,10 +1679,6 @@ pub const PROCESS_HTML: &str = r#"
                     pillBar.scrollLeft = tsScroll + (tsX - e.touches[0].clientX);
                 }, { passive: true });
                 pillBar.addEventListener('touchend', () => { tsDragging = false; }, { passive: true });
-
-                // Scroll active pill into view
-                const activePill = pillBar.querySelector('.mobile-step-pill.active');
-                if (activePill) activePill.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             }
 
             // Render the currently selected step content in the content panel
@@ -1596,7 +1703,7 @@ pub const PROCESS_HTML: &str = r#"
         // Helper to render fields list for a step/substep
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
             let html = '';
-            const isCurrentAdmin = isAdminUser(user);
+            const isCurrentAdmin = canReviewProcess(user);
             
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
@@ -1607,7 +1714,10 @@ pub const PROCESS_HTML: &str = r#"
                 let inputHtml = '';
                 let isReadOnly = true;
                 if (stepStatus === 'OPEN' || parentStatus === 'OPEN') {
-                    if (filledBy === 'user' && !isCurrentAdmin) {
+                    // 'user' fields belong to the process author and are only ever
+                    // editable from the resident-facing page (never the admin/oversight
+                    // page — process.view holders land there too, and are read-only).
+                    if (filledBy === 'user' && !IS_ADMIN_PROCESS_PAGE) {
                         isReadOnly = false;
                     } else if (filledBy === 'admin' && isCurrentAdmin) {
                         isReadOnly = false;
@@ -1688,7 +1798,7 @@ pub const PROCESS_HTML: &str = r#"
             // Save button for this step
             const hasEditableTextFields = fields.some(f => {
                 const isFUser = f.filled_by === 'user';
-                return (isFUser && !isCurrentAdmin && f.type === 'text') || (!isFUser && isCurrentAdmin && f.type === 'text');
+                return (isFUser && !IS_ADMIN_PROCESS_PAGE && f.type === 'text') || (!isFUser && isCurrentAdmin && f.type === 'text');
             });
             const canSave = (stepStatus === 'OPEN' || parentStatus === 'OPEN') && hasEditableTextFields;
 
@@ -1888,7 +1998,7 @@ pub const PROCESS_HTML: &str = r#"
                 html += `<div style="display: flex; flex-direction: column; gap: 24px; margin-top: 16px;">`;
 
                 // Hoist admin context and latest-review flags so each substep card can render the checkbox
-                const isAdminForSubsteps = isAdminUser(user);
+                const isAdminForSubsteps = canReviewProcess(user);
                 const latestRevForCards = (p.reviews || []).reduce((latest, r) => {
                     if (!latest) return r;
                     return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
@@ -1952,7 +2062,7 @@ pub const PROCESS_HTML: &str = r#"
             // Admin review logic moved above
 
             // Render admin action panel (Approve / Reject) if user is admin
-            const isCurrentAdmin = isAdminUser(user);
+            const isCurrentAdmin = canReviewProcess(user);
             if (isCurrentAdmin) {
                 const isCompleted = stepStatus === 'COMPLETED';
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
@@ -1986,8 +2096,6 @@ pub const PROCESS_HTML: &str = r#"
             }
 
             contentPanel.innerHTML = html;
-            // Always scroll content panel to top when a step is selected
-            contentPanel.scrollTop = 0;
         }
 
         // Fetch presigned URL and download file
@@ -2036,7 +2144,7 @@ pub const PROCESS_HTML: &str = r#"
                     }
                 } else {
                     if (newTab) newTab.close();
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Download failed: ${errText}`);
                 }
             } catch(e) {
@@ -2070,7 +2178,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL
-                const isCurrentAdmin = isAdminUser(user);
+                const isCurrentAdmin = canReviewProcess(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
@@ -2099,7 +2207,7 @@ pub const PROCESS_HTML: &str = r#"
                 });
 
                 if (!urlRes.ok) {
-                    const errText = await urlRes.text();
+                    const errText = await readErrorMessage(urlRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Failed.';
                     alert(`Failed to get upload URL: ${errText}`);
@@ -2140,7 +2248,7 @@ pub const PROCESS_HTML: &str = r#"
                 });
 
                 if (!confirmRes.ok) {
-                    const errText = await confirmRes.text();
+                    const errText = await readErrorMessage(confirmRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Confirmation failed.';
                     alert(`Confirmation failed: ${errText}`);
@@ -2172,7 +2280,7 @@ pub const PROCESS_HTML: &str = r#"
                     progressEl.textContent = 'Success!';
                     await viewProcessDetail(processId);
                 } else {
-                    const err = await saveRes.text();
+                    const err = await readErrorMessage(saveRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Save failed.';
                     alert(`Failed to save step: ${err}`);
@@ -2192,11 +2300,11 @@ pub const PROCESS_HTML: &str = r#"
 
             const fieldsPayload = [];
             let hasError = false;
-            const isCurrentAdmin = isAdminUser(user);
+            const isCurrentAdmin = canReviewProcess(user);
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
-                const isFieldEditable = (f.filled_by === 'user' && !isCurrentAdmin) || (f.filled_by === 'admin' && isCurrentAdmin);
+                const isFieldEditable = (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) || (f.filled_by === 'admin' && isCurrentAdmin);
                 
                 if (isFieldEditable) {
                     if (f.type === 'text') {
@@ -2259,7 +2367,7 @@ pub const PROCESS_HTML: &str = r#"
                     alert('Step inputs saved successfully!');
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to save step inputs: ${errText}`);
                 }
             } catch(e) {
@@ -2304,7 +2412,7 @@ pub const PROCESS_HTML: &str = r#"
                     alert(`Step review submitted successfully: ${isApproved ? 'Approved' : 'Rejected'}`);
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to submit review: ${errText}`);
                 }
             } catch(e) {
@@ -2342,7 +2450,7 @@ pub const PROCESS_HTML: &str = r#"
                     alert('Step has been successfully reopened for resident action.');
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to reopen step: ${errText}`);
                 }
             } catch(e) {
@@ -2389,7 +2497,7 @@ pub const PROCESS_HTML: &str = r#"
             document.getElementById('docPickerModal').style.display = 'flex';
             document.getElementById('picker-new-upload').value = '';
             
-            const isCurrentAdmin = isAdminUser(user);
+            const isCurrentAdmin = canReviewProcess(user);
             const libraryHeading = document.getElementById('picker-library-heading');
             const libraryContainer = document.getElementById('picker-existing-docs');
             
@@ -2490,7 +2598,7 @@ pub const PROCESS_HTML: &str = r#"
                     closeAdminNoteModal();
                     await viewProcessDetail(currentProcessDetails.process_id); 
                 } else {
-                    const err = await response.text();
+                    const err = await readErrorMessage(response);
                     alert(`Failed to add note: ${err}`);
                 }
             } catch(e) {
@@ -2522,7 +2630,7 @@ pub const PROCESS_HTML: &str = r#"
 
             try {
                 // Step 1: Get presigned PUT URL from server
-                const isCurrentAdmin = isAdminUser(user);
+                const isCurrentAdmin = canReviewProcess(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
@@ -2551,7 +2659,7 @@ pub const PROCESS_HTML: &str = r#"
                 });
 
                 if (!urlRes.ok) {
-                    const errText = await urlRes.text();
+                    const errText = await readErrorMessage(urlRes);
                     alert('Failed to get upload URL: ' + errText);
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
                     return;
@@ -2593,7 +2701,7 @@ pub const PROCESS_HTML: &str = r#"
                 });
 
                 if (!confirmRes.ok) {
-                    const errText = await confirmRes.text();
+                    const errText = await readErrorMessage(confirmRes);
                     alert('Upload confirmation failed: ' + errText);
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Confirmation failed'; }
                     return;
@@ -2639,7 +2747,7 @@ pub const PROCESS_HTML: &str = r#"
                     if(progressEl) { progressEl.style.color = 'var(--secondary)'; progressEl.textContent = 'Success!'; }
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
-                    alert('Failed to save step: ' + await saveRes.text());
+                    alert('Failed to save step: ' + await readErrorMessage(saveRes));
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
                 }
             } catch (e) {
@@ -2691,7 +2799,7 @@ pub const PROCESS_HTML: &str = r#"
                 </p>
                 <textarea id="adminNoteInput" style="width: 100%; min-height: 120px; padding: 12px; border: 1px solid #D8B4FE; border-radius: var(--radius-md); font-family: inherit; font-size: 0.9375rem; line-height: 1.5; resize: vertical;" placeholder="Type your internal note here..."></textarea>
                 
-                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px;">
+                <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px;">
                     <button class="btn" style="background-color: white; color: var(--foreground); border: 1px solid var(--border);" onclick="closeAdminNoteModal()">Cancel</button>
                     <button id="adminNoteSubmitBtn" class="btn btn-primary" style="background-color: #9333EA; border: none;" onclick="submitAdminNote()">Save Note</button>
                 </div>
@@ -2701,3 +2809,30 @@ pub const PROCESS_HTML: &str = r#"
 </body>
 </html>
 "#;
+
+/// Renders the personal /process page — always just the caller's own process.
+pub(crate) fn process_html() -> String {
+    render_process_page(false)
+}
+
+/// Renders the /admin-process page — the reviewer/auditor queue over every resident's
+/// process. Access itself is still enforced server-side by the underlying APIs; this page
+/// just won't render anything useful for a caller without process.reviewer/process.view.
+pub(crate) fn admin_process_html() -> String {
+    render_process_page(true)
+}
+
+fn render_process_page(is_admin_view: bool) -> String {
+    let mode = if is_admin_view { "true" } else { "false" };
+    let title = if is_admin_view {
+        "Vistas Portal - Process Review"
+    } else {
+        "Vistas Portal - Processes"
+    };
+    PROCESS_HTML_TEMPLATE
+        .replace("__PROCESS_MODE__", mode)
+        .replace(
+            "<title>Vistas Portal - Processes</title>",
+            &format!("<title>{}</title>", title),
+        )
+}

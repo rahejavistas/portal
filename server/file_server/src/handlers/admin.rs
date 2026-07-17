@@ -10,13 +10,6 @@ pub struct CreateUserPayload {
     pub flat_number: String,
 }
 
-#[derive(serde::Deserialize)]
-pub struct UpdateRolePayload {
-    pub user_id: i32,
-    /// The target designation code to set ("committee"), or `null` to clear it.
-    pub target_role: Option<String>,
-}
-
 /// List all users.
 pub async fn list_users(
     State(state): State<AppState>,
@@ -38,7 +31,7 @@ pub async fn list_users(
 /// Create new user.
 pub async fn create_user(
     State(state): State<AppState>,
-    _session_user: SessionUser,
+    SessionUser(caller): SessionUser,
     Json(payload): Json<CreateUserPayload>,
 ) -> impl IntoResponse {
     let email = payload.email.trim().to_lowercase();
@@ -54,7 +47,6 @@ pub async fn create_user(
             .into_response();
     }
 
-    // Validate flat wing and number
     let flat = match FlatIdentifier::new(&payload.wing, &payload.flat_number) {
         Ok(f) => f,
         Err(e) => {
@@ -69,10 +61,15 @@ pub async fn create_user(
         }
     };
 
-    // Save user inside DB
     match state
         .permissions_manager
-        .create_user_with_credentials(&email, None, flat.wing(), flat.flat_number())
+        .create_user_with_credentials(
+            &email,
+            None,
+            flat.wing(),
+            flat.flat_number(),
+            Some(caller.user_id),
+        )
         .await
     {
         Ok(user) => (StatusCode::CREATED, Json(user)).into_response(),
@@ -81,48 +78,6 @@ pub async fn create_user(
             Json(serde_json::json!({
                 "status": "error",
                 "message": format!("Failed to create user: {}", e)
-            })),
-        )
-            .into_response(),
-    }
-}
-
-/// Update user role.
-pub async fn update_role(
-    State(state): State<AppState>,
-    session_user: SessionUser,
-    Json(payload): Json<UpdateRolePayload>,
-) -> impl IntoResponse {
-    // Protect self-demotion.
-    if payload.user_id == session_user.0.user_id {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": "You cannot modify your own admin role. Another admin must make this change."
-            })),
-        )
-            .into_response();
-    }
-
-    match state
-        .permissions_manager
-        .set_user_target_role(payload.user_id, payload.target_role.as_deref())
-        .await
-    {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "success",
-                "message": "User role updated successfully."
-            })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": format!("Failed to update user role: {}", e)
             })),
         )
             .into_response(),
@@ -141,9 +96,23 @@ pub async fn admin_revoke_flat(
     _session_user: SessionUser,
     Json(payload): Json<RevokeFlatPayload>,
 ) -> impl IntoResponse {
+    let flat = match FlatIdentifier::new(&payload.wing, &payload.flat_number) {
+        Ok(f) => f,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": format!("Invalid flat identifier: {}", e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
     match state
         .permissions_manager
-        .revoke_flat_ownership(payload.user_id, &payload.wing, &payload.flat_number)
+        .revoke_flat_ownership(payload.user_id, flat.wing(), flat.flat_number())
         .await
     {
         Ok(_) => (

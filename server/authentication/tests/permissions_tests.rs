@@ -12,7 +12,7 @@ async fn test_user_creation_and_retrieval() {
     assert!(!exists);
 
     let created = pm
-        .create_user_with_credentials(email, Some("password123"), "A", "101")
+        .create_user_with_credentials(email, Some("password123"), "A", "101", None)
         .await
         .unwrap();
     assert_eq!(created.email, email);
@@ -35,7 +35,7 @@ async fn test_authentication_verification() {
 
     let email = "auth_test@vistas.com";
     let _ = pm
-        .create_user_with_credentials(email, Some("secure_pass_123"), "B", "202")
+        .create_user_with_credentials(email, Some("secure_pass_123"), "B", "202", None)
         .await
         .unwrap();
 
@@ -77,7 +77,7 @@ async fn test_admin_seeding_and_role() {
 
     let retrieved = pm.get_user_by_id(admin.user_id).await.unwrap().unwrap();
     assert!(retrieved.has_designation("super_admin"));
-    assert!(retrieved.is_committee_or_admin());
+    assert!(retrieved.is_admin());
 }
 
 /// Tests password setup reset token generation, token verification, and password updates.
@@ -88,7 +88,7 @@ async fn test_reset_tokens_and_password_updates() {
 
     let email = "token_user@vistas.com";
     let _ = pm
-        .create_user_with_credentials(email, Some("old_password1"), "A", "101")
+        .create_user_with_credentials(email, Some("old_password1"), "A", "101", None)
         .await
         .unwrap();
 
@@ -120,60 +120,66 @@ async fn test_reset_tokens_and_password_updates() {
     assert!(matches!(old_fail, AuthResult::InvalidCredentials));
 }
 
-/// Tests role assignment changes, successive promotions/demotions, and dynamic audit history queries.
+/// Tests generic designation assign/revoke, successive promotions/demotions, idempotent
+/// re-assignment, and rejection of unknown designation codes.
 #[tokio::test]
 async fn test_role_promotions_and_demotions() {
     let env = setup_db_test_env().await;
     let pm = PermissionsManager::new(env.db_pool.clone());
 
     let user = pm
-        .create_user_with_credentials("promoted@vistas.com", Some("password123"), "C", "303")
+        .create_user_with_credentials("promoted@vistas.com", Some("password123"), "C", "303", None)
         .await
         .unwrap();
     assert!(user.designations.is_empty());
 
+    pm.create_designation("committee", "Committee", None)
+        .await
+        .unwrap();
+
     // 1. Promote to Committee
-    pm.set_user_target_role(user.user_id, Some("committee"))
+    pm.assign_designation(user.user_id, "committee", None)
         .await
         .unwrap();
     let u_committee1 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
     assert!(u_committee1.has_designation("committee"));
-    assert!(u_committee1.is_committee_or_admin());
 
     // 2. Demote back to Resident
-    pm.set_user_target_role(user.user_id, None).await.unwrap();
+    pm.revoke_designation(user.user_id, "committee", None)
+        .await
+        .unwrap();
     let u_resident1 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
     assert!(u_resident1.designations.is_empty());
-    assert!(!u_resident1.is_committee_or_admin());
 
     // 3. Re-promote to Committee
-    pm.set_user_target_role(user.user_id, Some("committee"))
+    pm.assign_designation(user.user_id, "committee", None)
         .await
         .unwrap();
     let u_committee2 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
     assert!(u_committee2.has_designation("committee"));
-    assert!(u_committee2.is_committee_or_admin());
 
-    // 4. "admin" is no longer a valid target — super_admin is seed-only, promoted via this
-    // endpoint only supports "committee".
+    // 4. Assigning an unknown designation code is rejected.
     assert!(pm
-        .set_user_target_role(user.user_id, Some("admin"))
+        .assign_designation(user.user_id, "admin", None)
         .await
         .is_err());
 
-    // 5. Demote to Resident
-    pm.set_user_target_role(user.user_id, None).await.unwrap();
-    let u_resident2 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_resident2.designations.is_empty());
-    assert!(!u_resident2.is_committee_or_admin());
-
-    // 6. Re-promote to Committee again
-    pm.set_user_target_role(user.user_id, Some("committee"))
+    // 5. Re-assigning a designation the user already actively holds is a no-op, not a
+    // duplicate active row (exercises the partial-unique-index ON CONFLICT fix).
+    pm.assign_designation(user.user_id, "committee", None)
         .await
         .unwrap();
-    let u_committee3 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
-    assert!(u_committee3.has_designation("committee"));
-    assert!(u_committee3.is_committee_or_admin());
+    assert_eq!(
+        pm.get_user_designations(user.user_id).await.unwrap(),
+        vec!["committee".to_string()]
+    );
+
+    // 6. Demote to Resident
+    pm.revoke_designation(user.user_id, "committee", None)
+        .await
+        .unwrap();
+    let u_resident2 = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
+    assert!(u_resident2.designations.is_empty());
 }
 
 /// Tests aggregated list fetching for all registered users.
@@ -183,11 +189,11 @@ async fn test_list_all_users_aggregation() {
     let pm = PermissionsManager::new(env.db_pool.clone());
 
     let u1 = pm
-        .create_user_with_credentials("member1@vistas.com", Some("password123"), "A", "101")
+        .create_user_with_credentials("member1@vistas.com", Some("password123"), "A", "101", None)
         .await
         .unwrap();
     let _u2 = pm
-        .create_user_with_credentials("member2@vistas.com", Some("password123"), "B", "202")
+        .create_user_with_credentials("member2@vistas.com", Some("password123"), "B", "202", None)
         .await
         .unwrap();
     let admin = pm
@@ -216,7 +222,13 @@ async fn test_revoke_flat_ownership() {
     let pm = PermissionsManager::new(env.db_pool.clone());
 
     let user = pm
-        .create_user_with_credentials("revoke_me@vistas.com", Some("password123"), "C", "303")
+        .create_user_with_credentials(
+            "revoke_me@vistas.com",
+            Some("password123"),
+            "C",
+            "303",
+            None,
+        )
         .await
         .unwrap();
 
@@ -261,13 +273,19 @@ async fn test_multiple_flat_ownership_and_conflict() {
 
     // User 1 gets flat D-404
     let user1 = pm
-        .create_user_with_credentials("investor@vistas.com", Some("password1"), "D", "404")
+        .create_user_with_credentials("investor@vistas.com", Some("password1"), "D", "404", None)
         .await
         .unwrap();
 
     // User 1 ALSO gets flat D-405 (same email, new flat)
     let user1_second = pm
-        .create_user_with_credentials("investor@vistas.com", Some("pass2_ignored"), "D", "405")
+        .create_user_with_credentials(
+            "investor@vistas.com",
+            Some("pass2_ignored"),
+            "D",
+            "405",
+            None,
+        )
         .await
         .unwrap();
 
@@ -282,7 +300,7 @@ async fn test_multiple_flat_ownership_and_conflict() {
 
     // User 2 tries to claim D-404 which is owned by User 1
     let conflict = pm
-        .create_user_with_credentials("thief@vistas.com", Some("password3"), "D", "404")
+        .create_user_with_credentials("thief@vistas.com", Some("password3"), "D", "404", None)
         .await;
 
     assert!(conflict.is_err());
@@ -300,7 +318,7 @@ async fn test_restore_orphaned_user() {
 
     // 1. Create a user
     let user = pm
-        .create_user_with_credentials("comeback@vistas.com", Some("password123"), "E", "505")
+        .create_user_with_credentials("comeback@vistas.com", Some("password123"), "E", "505", None)
         .await
         .unwrap();
 
@@ -315,7 +333,7 @@ async fn test_restore_orphaned_user() {
 
     // 3. Admin re-adds them to a new flat (F-606) using the same email
     let restored = pm
-        .create_user_with_credentials("comeback@vistas.com", None, "F", "606")
+        .create_user_with_credentials("comeback@vistas.com", None, "F", "606", None)
         .await
         .unwrap();
 
@@ -338,6 +356,12 @@ async fn test_designations_and_permissions() {
     let env = setup_db_test_env().await;
     let pm = PermissionsManager::new(env.db_pool.clone());
 
+    // Only super_admin is seeded; every other designation is created through the UI.
+    let designations = pm.list_designations().await.unwrap();
+    let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
+    assert_eq!(codes, vec!["super_admin"]);
+
+    pm.create_designation("staff", "Staff", None).await.unwrap();
     let designations = pm.list_designations().await.unwrap();
     let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
     assert!(codes.contains(&"super_admin"));
@@ -352,13 +376,13 @@ async fn test_designations_and_permissions() {
     assert!(super_admin_perms.contains(&"users.manage".to_string()));
     assert!(super_admin_perms.contains(&"documents.all.manage".to_string()));
     assert!(super_admin_perms.contains(&"process.reviewer".to_string()));
-    assert_eq!(super_admin_perms.len(), 13);
+    assert_eq!(super_admin_perms.len(), 9);
 
     let staff_perms = pm.get_designation_permissions("staff").await.unwrap();
     assert!(staff_perms.is_empty());
 
     let user = pm
-        .create_user_with_credentials("staffer@vistas.com", Some("password123"), "A", "101")
+        .create_user_with_credentials("staffer@vistas.com", Some("password123"), "A", "101", None)
         .await
         .unwrap();
 
@@ -381,7 +405,9 @@ async fn test_designations_and_permissions() {
         vec!["staff".to_string()]
     );
 
-    pm.revoke_designation(user.user_id, "staff").await.unwrap();
+    pm.revoke_designation(user.user_id, "staff", None)
+        .await
+        .unwrap();
 
     assert!(pm
         .get_user_designations(user.user_id)

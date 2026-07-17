@@ -13,13 +13,11 @@ pub struct NotificationContext {
 
 // ---------------------------------------------------------------------------
 // Internal dispatch helper — every public function delegates here.
-// Logs the event and sends the email; failures are logged but never propagated
-// so that callers never gate business logic on notification delivery.
+// Failures are logged but never propagated, so callers never gate business
+// logic on notification delivery.
 // ---------------------------------------------------------------------------
 
-async fn dispatch(tag: &str, to: &str, subject: String, body: String, process_id: Uuid) {
-    println!("[NOTIFICATION] [{}] Process: {} → {}", tag, process_id, to);
-
+async fn dispatch(to: &str, subject: String, body: String, process_id: Uuid) {
     let payload = email::Email::Generic {
         to: to.to_string(),
         subject,
@@ -51,7 +49,6 @@ pub async fn notify_admin_pending_review(
     step_name: &str,
 ) {
     dispatch(
-        "ADMIN",
         &ctx.admin_email,
         format!("[{}] Review Required – {}", ctx.process_name, step_name),
         format!(
@@ -116,7 +113,6 @@ pub async fn notify_user_review(ctx: &NotificationContext, params: ReviewNotific
     };
 
     dispatch(
-        "USER-REVIEW",
         &ctx.user_email,
         subject,
         format!(
@@ -149,7 +145,6 @@ pub async fn notify_user_revoke(
     };
 
     dispatch(
-        "USER-REVOKE",
         &ctx.user_email,
         format!("[{}] Step Reopened – {}", ctx.process_name, step_name),
         format!(

@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id SERIAL PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
@@ -40,6 +41,8 @@ CREATE TABLE IF NOT EXISTS designations (
     code VARCHAR(64) NOT NULL UNIQUE,
     label VARCHAR(255) NOT NULL,
     is_system BOOLEAN DEFAULT FALSE NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
@@ -53,6 +56,8 @@ CREATE TABLE IF NOT EXISTS permissions (
 CREATE TABLE IF NOT EXISTS designation_permissions (
     designation_id INT NOT NULL REFERENCES designations(designation_id) ON DELETE CASCADE,
     permission_id INT NOT NULL REFERENCES permissions(permission_id) ON DELETE CASCADE,
+    granted_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     PRIMARY KEY (designation_id, permission_id)
 );
 
@@ -62,54 +67,12 @@ CREATE TABLE IF NOT EXISTS user_designations (
     designation_id INT NOT NULL REFERENCES designations(designation_id) ON DELETE CASCADE,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     assigned_by INT REFERENCES users(user_id) ON DELETE SET NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_designations_user ON user_designations(user_id);
 
-INSERT INTO designations (code, label, is_system) VALUES
-    ('super_admin', 'Super Admin', TRUE),
-    ('staff', 'Staff', FALSE),
-    ('committee', 'Committee', FALSE),
-    ('office_bearer', 'Office Bearer', FALSE),
-    ('treasurer', 'Treasurer', FALSE),
-    ('secretary', 'Secretary', FALSE),
-    ('auditor', 'Auditor', FALSE)
-ON CONFLICT (code) DO NOTHING;
-
-INSERT INTO permissions (code, label) VALUES
-    ('users.manage', 'Edit/view residents and staff of the society'),
-    ('users.view', 'View all residents'),
-    ('users.roles.manage', 'Manage the designations of users'),
-    ('users.roles.view', 'View the designations of users'),
-    ('documents.all.manage', 'View and manage all categories of documents'),
-    ('documents.public.manage', 'View and manage (upload, sign, delete) Public documents'),
-    ('documents.resident_specific.manage', 'View and manage (upload, sign, delete) Resident Specific documents'),
-    ('documents.committee.manage', 'View and manage (upload, sign, delete) Committee documents'),
-    ('documents.finance.manage', 'View and manage (upload, sign, delete) Finance documents'),
-    ('documents.governance.manage', 'View and manage (upload, sign, delete) Governance documents'),
-    ('documents.operational.manage', 'View and manage (upload, sign, delete) Operational documents'),
-    ('process.view', 'View all existing processes'),
-    ('process.reviewer', 'Review processes')
-ON CONFLICT (code) DO NOTHING;
-
-INSERT INTO designation_permissions (designation_id, permission_id)
-SELECT d.designation_id, p.permission_id
-FROM (VALUES
-    ('super_admin', 'users.manage'),
-    ('super_admin', 'users.view'),
-    ('super_admin', 'users.roles.manage'),
-    ('super_admin', 'users.roles.view'),
-    ('super_admin', 'documents.all.manage'),
-    ('super_admin', 'documents.public.manage'),
-    ('super_admin', 'documents.resident_specific.manage'),
-    ('super_admin', 'documents.committee.manage'),
-    ('super_admin', 'documents.finance.manage'),
-    ('super_admin', 'documents.governance.manage'),
-    ('super_admin', 'documents.operational.manage'),
-    ('super_admin', 'process.view'),
-    ('super_admin', 'process.reviewer')
-) AS seed(designation_code, permission_code)
-JOIN designations d ON d.code = seed.designation_code
-JOIN permissions p ON p.code = seed.permission_code
-ON CONFLICT DO NOTHING;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_designations_active_unique
+ON user_designations (user_id, designation_id)
+WHERE (is_active = TRUE);

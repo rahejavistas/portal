@@ -1,6 +1,7 @@
 use crate::state::AppState;
 use axum::extract::Multipart;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use base::flat::FlatIdentifier;
 
 #[derive(serde::Serialize)]
 pub struct FailedUser {
@@ -17,8 +18,7 @@ pub struct UploadUsersResult {
 
 struct ParsedUser {
     email: String,
-    wing: String,
-    flat_str: String,
+    flat: FlatIdentifier,
 }
 
 fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize), String> {
@@ -117,19 +117,25 @@ fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize
         }
 
         let flat_str = format!("{:04}", flat_num);
-        let flat_key = format!("{}-{}", wing, flat_str);
+        let flat = match FlatIdentifier::new(&wing, &flat_str) {
+            Ok(f) => f,
+            Err(e) => {
+                failed_users.push(FailedUser {
+                    email: email.clone(),
+                    reason: e,
+                });
+                continue;
+            }
+        };
+        let flat_key = flat.to_string();
 
         *flat_counts.entry(flat_key.clone()).or_insert(0) += 1;
 
-        parsed_users.push(ParsedUser {
-            email,
-            wing,
-            flat_str,
-        });
+        parsed_users.push(ParsedUser { email, flat });
     }
 
     for user in parsed_users {
-        let flat_key = format!("{}-{}", user.wing, user.flat_str);
+        let flat_key = user.flat.to_string();
         if flat_counts.get(&flat_key).copied().unwrap_or(0) > 1 {
             failed_users.push(FailedUser {
                 email: user.email,
@@ -145,6 +151,7 @@ fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize
 
 pub async fn upload_users(
     State(state): State<AppState>,
+    crate::extractors::SessionUser(caller): crate::extractors::SessionUser,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     let mut file_bytes = Vec::new();
@@ -181,7 +188,13 @@ pub async fn upload_users(
     for user in valid_users {
         match state
             .permissions_manager
-            .create_user_with_credentials(&user.email, None, &user.wing, &user.flat_str)
+            .create_user_with_credentials(
+                &user.email,
+                None,
+                user.flat.wing(),
+                user.flat.flat_number(),
+                Some(caller.user_id),
+            )
             .await
         {
             Ok(_) => successfully_onboarded += 1,

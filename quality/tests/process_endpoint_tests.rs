@@ -1,4 +1,7 @@
-use quality::{quick_create_user, quick_onboard_user, quick_setup_admin, setup_api_test_env};
+use quality::{
+    quick_assign_designation, quick_create_designation, quick_create_user, quick_onboard_user,
+    quick_setup_admin, quick_toggle_designation_permission, setup_api_test_env,
+};
 use uuid::Uuid;
 
 /// Upload a document using the presigned URL flow:
@@ -100,15 +103,17 @@ async fn test_state_creates_new_process_each_time() {
 }
 
 #[tokio::test]
-async fn test_state_admin_requires_process_id() {
+async fn test_state_admin_can_start_own_process_without_process_id() {
+    // A user holding process.reviewer (e.g. super_admin) can still start their own
+    // process by template_id — reviewing others' steps doesn't preclude having one's own.
     let env = setup_api_test_env(3112).await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
-    let err = ureq::post(&format!("{}/api/v1/process/state", url))
+    let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &format!("Bearer {}", admin_jwt))
         .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}));
-    assert!(err.is_err());
+    assert!(resp.is_ok());
 }
 
 #[tokio::test]
@@ -474,6 +479,69 @@ async fn test_download_url_wrong_process_returns_404() {
         .set("Authorization", &admin_auth)
         .send_json(serde_json::json!({"process_id": Uuid::new_v4(), "document_id": doc_id}));
     assert!(err.is_err());
+}
+
+/// A `process.reviewer` holder (not super_admin, not the document's owner, and not
+/// holding any document-category permission at all) must still be able to download a
+/// document the resident attached to a process they're authorized to review — being
+/// cleared to view the process authorizes its linked documents too. Regression test for
+/// a bug where `process_download_url` re-applied the document's own per-user visibility
+/// rules (category/flat-based) on top of the already-passed process-review check, so a
+/// reviewer got 403 on any document not separately visible to them (e.g. a
+/// RESIDENT_SPECIFIC upload scoped to a flat the reviewer doesn't own).
+#[tokio::test]
+async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
+    let env = setup_api_test_env(3177).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    // Resident owns the process and self-uploads a RESIDENT_SPECIFIC document to it,
+    // scoped to their own flat (A-101) — a flat the reviewer below does not own.
+    quick_create_user(&env, &admin_jwt, "reviewee2@test.com", "A", "101");
+    let res_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewee2@test.com", "password123")
+    );
+    let resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .unwrap();
+    let pid = resp.into_json::<serde_json::Value>().unwrap()["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let doc_id = upload_doc(&url, &res_auth, &pid, "reviewee_doc.pdf");
+
+    // A scoped designation holding exactly `process.reviewer` — nothing else, no
+    // document-category grants, no `documents.all.manage`, no shared flat.
+    quick_create_designation(&env, &admin_jwt, "doc_reviewer", "Doc Reviewer");
+    quick_toggle_designation_permission(&env, &admin_jwt, "doc_reviewer", "process.reviewer", true);
+    let reviewer_id = quick_create_user(&env, &admin_jwt, "reviewer2@test.com", "B", "201");
+    let reviewer_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewer2@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, reviewer_id, "doc_reviewer");
+
+    // Sanity: this reviewer genuinely has no other route to this document.
+    let direct_get = ureq::post(&format!("{}/api/v1/documents/{}", url, doc_id))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({}));
+    assert!(
+        direct_get.is_err(),
+        "reviewer should NOT have generic document-list access to this resident-scoped doc"
+    );
+
+    // But via the process-review path, it must succeed.
+    let via_process = ureq::post(&format!("{}/api/v1/process/download-url", url))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({"process_id": pid, "document_id": doc_id}));
+    assert!(
+        via_process.is_ok(),
+        "process.reviewer should be able to download a document attached to a process they can review"
+    );
+    let val: serde_json::Value = via_process.unwrap().into_json().unwrap();
+    assert!(val["download_url"].as_str().unwrap().contains(&doc_id));
 }
 
 // ============================================================

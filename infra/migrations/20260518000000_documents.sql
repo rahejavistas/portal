@@ -1,25 +1,21 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'document_category') THEN
-        CREATE TYPE document_category AS ENUM (
-            'PUBLIC',
-            'RESIDENT_SPECIFIC',
-            'COMMITTEE',
-            'FINANCE',
-            'GOVERNANCE',
-            'OPERATIONAL'
-        );
-    END IF;
-END
-$$;
+-- Categories are admin-defined except PUBLIC/RESIDENT_SPECIFIC (is_system, seeded separately).
+CREATE TABLE IF NOT EXISTS document_categories (
+    code VARCHAR(64) PRIMARY KEY,
+    label VARCHAR(255) NOT NULL,
+    is_public_read BOOLEAN NOT NULL DEFAULT FALSE, -- visible to every user, no designation needed
+    is_flat_scoped BOOLEAN NOT NULL DEFAULT FALSE, -- visible only via flat ownership (document_flats)
+    is_system BOOLEAN NOT NULL DEFAULT FALSE, -- protected seed row, can't be created/edited via API
+    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS documents (
     document_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title VARCHAR(255) NOT NULL,
     description TEXT,
-    category document_category NOT NULL,
+    category VARCHAR(64) NOT NULL REFERENCES document_categories(code),
     uploaded_date TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     is_deleted BOOLEAN DEFAULT FALSE NOT NULL,
     is_user_uploaded BOOLEAN DEFAULT FALSE NOT NULL,
@@ -47,21 +43,14 @@ CREATE TABLE IF NOT EXISTS document_flats (
 );
 
 CREATE TABLE IF NOT EXISTS document_category_designations (
-    category document_category NOT NULL,
+    category VARCHAR(64) NOT NULL REFERENCES document_categories(code) ON DELETE CASCADE,
     designation_id INT NOT NULL REFERENCES designations(designation_id) ON DELETE CASCADE,
+    can_read BOOLEAN NOT NULL DEFAULT FALSE,
+    can_manage BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     PRIMARY KEY (category, designation_id)
 );
-
-INSERT INTO document_category_designations (category, designation_id)
-SELECT seed.category::document_category, d.designation_id
-FROM (VALUES
-    ('COMMITTEE', 'committee'),
-    ('FINANCE', 'treasurer'),
-    ('GOVERNANCE', 'secretary'),
-    ('OPERATIONAL', 'staff')
-) AS seed(category, designation_code)
-JOIN designations d ON d.code = seed.designation_code
-ON CONFLICT DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
 

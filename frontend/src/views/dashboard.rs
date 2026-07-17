@@ -1,4 +1,4 @@
-pub const DASHBOARD_HTML: &str = r#"
+pub(crate) const DASHBOARD_HTML: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -575,15 +575,11 @@ pub const DASHBOARD_HTML: &str = r#"
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                    <a href="/admin" class="admin-btn" id="admin-link" style="display:none;">
+                        Admin Dashboard &rarr;
+                    </a>
                     <button class="logout-btn" id="logout-btn" style="margin-top: 8px;">Log Out</button>
                 </nav>
-            </div>
-
-            <div>
-                <!-- Admin Control Room Link -->
-                <a href="/admin" class="admin-btn" id="admin-link">
-                    Admin Suite &rarr;
-                </a>
             </div>
         </aside>
 
@@ -622,15 +618,10 @@ pub const DASHBOARD_HTML: &str = r#"
                     </div>
                     <button class="download-btn" onclick="openUploadModal()">Upload Document</button>
                 </div>
-                <!-- Category Filter Bar (Desktop & Mobile) -->
+                <!-- Category Filter Bar (Desktop & Mobile) — chips are built dynamically from
+                     the categories actually present in this resident's own document list. -->
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
-                    <button class="filter-chip" id="user-filter-resident-specific" onclick="filterDocs('RESIDENT_SPECIFIC')">My Flat Documents</button>
-                    <button class="filter-chip" id="user-filter-public" onclick="filterDocs('PUBLIC')">Public</button>
-                    <button class="filter-chip" id="user-filter-committee" onclick="filterDocs('COMMITTEE')">Committee</button>
-                    <button class="filter-chip" id="user-filter-finance" onclick="filterDocs('FINANCE')">Finance</button>
-                    <button class="filter-chip" id="user-filter-governance" onclick="filterDocs('GOVERNANCE')">Governance</button>
-                    <button class="filter-chip" id="user-filter-operational" onclick="filterDocs('OPERATIONAL')">Operational</button>
                 </div>
 
                 <!-- Desktop Table -->
@@ -639,7 +630,7 @@ pub const DASHBOARD_HTML: &str = r#"
                         <thead>
                             <tr>
                                 <th>File Details</th>
-                                <th>Category</th>
+                                <th>Document Category</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
@@ -678,7 +669,7 @@ pub const DASHBOARD_HTML: &str = r#"
                         <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: 4px; text-transform: uppercase;">File</label>
                         <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 8px;">
+                    <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 8px;">
                         <button type="button" onclick="closeUploadModal()" class="filter-chip">Cancel</button>
                         <button type="submit" id="upload-submit-btn" class="download-btn" style="padding: 10px 24px;">Upload</button>
                     </div>
@@ -721,8 +712,26 @@ pub const DASHBOARD_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        // API error bodies are either a bare JSON string or a {message: "..."} object —
+        // reading the raw response text directly would show the JSON quoting/escaping
+        // to the user. This unwraps either shape down to a plain message.
+        async function readErrorMessage(response) {
+            const raw = await response.text();
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') return parsed;
+                if (parsed && typeof parsed.message === 'string') return parsed.message;
+            } catch (e) {}
+            return raw;
+        }
+
         function isAdminUser(user) {
-            return !!(user && user.designations && (user.designations.includes('super_admin')));
+            return !!(user && (
+                user.can_view_users || user.can_manage_users ||
+                user.can_manage_documents || user.can_manage_roles ||
+                user.can_manage_designations || user.can_manage_categories ||
+                user.can_review_process || user.can_view_roles || user.can_view_all_processes
+            ));
         }
 
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
@@ -748,18 +757,23 @@ pub const DASHBOARD_HTML: &str = r#"
                 rolesContainer.innerHTML = '<span style="color: var(--muted-foreground); font-size: 13px; font-weight: 600;">Standard Resident</span>';
             }
 
-            if (isAdmin || user.wing === 'TBD' || user.flat_number === 'TBD') {
+            const hasFlat = user.wing !== 'TBD' && user.flat_number !== 'TBD';
+
+            // No flat means nothing on this page is actually useful to them (no profile
+            // mapping, no personal documents) — send admin-capable accounts straight to
+            // the Admin Dashboard instead of showing an empty resident view.
+            if (!hasFlat && isAdmin) {
+                window.location.replace('/admin');
+                return;
+            }
+
+            if (!hasFlat) {
                 document.getElementById('user-flat').innerHTML = '<span style="color: var(--foreground); font-style: italic;">Administrative Account</span>';
             } else {
                 document.getElementById('user-flat').textContent = `${user.wing}-${user.flat_number}`;
             }
 
-            if (isAdmin) {
-                window.location.replace('/admin');
-                return;
-            } else {
-                document.getElementById('admin-link').style.display = 'none';
-            }
+            document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
         }
 
         if (!token || !userStr) {
@@ -837,6 +851,7 @@ pub const DASHBOARD_HTML: &str = r#"
                 });
                 if (response.ok) {
                     allResidentDocs = await response.json();
+                    renderCategoryFilterChips();
                     applyFiltersAndRender();
                 } else {
                     document.getElementById('doc-rows-target').innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--foreground); font-weight: 600;">Failed to fetch documents.</td></tr>';
@@ -848,6 +863,24 @@ pub const DASHBOARD_HTML: &str = r#"
 
         // Apply initial tab
         switchTab(initialTab);
+
+        function renderCategoryFilterChips() {
+            const bar = document.getElementById('user-filter-bar');
+            const categories = [...new Set(allResidentDocs.map(d => d.document.category))];
+
+            // Keep "All" first, then one chip per category actually present in what this
+            // resident can see — no hardcoded list, so a resident only ever sees chips for
+            // Public/their own flat plus whatever else a designation grants them.
+            bar.innerHTML = '<button class="filter-chip active" id="user-filter-all" onclick="filterDocs(\'ALL\')">All</button>' +
+                categories.map(cat => {
+                    const chipId = 'user-filter-' + cat.toLowerCase().replace(/_/g, '-');
+                    return `<button class="filter-chip" id="${chipId}" onclick="filterDocs('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                }).join('');
+
+            if (currentCategoryFilter !== 'ALL' && !categories.includes(currentCategoryFilter)) {
+                currentCategoryFilter = 'ALL';
+            }
+        }
 
         function filterDocs(category) {
             currentCategoryFilter = category;
@@ -873,11 +906,7 @@ pub const DASHBOARD_HTML: &str = r#"
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'My Flat Documents';
                 case 'PUBLIC': return 'Public';
-                case 'COMMITTEE': return 'Committee';
-                case 'FINANCE': return 'Finance';
-                case 'GOVERNANCE': return 'Governance';
-                case 'OPERATIONAL': return 'Operational';
-                default: return cat;
+                default: return cat.toLowerCase().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             }
         }
 
@@ -885,11 +914,7 @@ pub const DASHBOARD_HTML: &str = r#"
             switch(cat) {
                 case 'RESIDENT_SPECIFIC': return 'cat-resident';
                 case 'PUBLIC': return 'cat-generic';
-                case 'COMMITTEE': return 'cat-minutes';
-                case 'FINANCE': return 'cat-minutes';
-                case 'GOVERNANCE': return 'cat-minutes';
-                case 'OPERATIONAL': return 'cat-operational';
-                default: return '';
+                default: return 'cat-operational';
             }
         }
 
@@ -969,7 +994,7 @@ pub const DASHBOARD_HTML: &str = r#"
                         alert('No download link returned by server.');
                     }
                 } else {
-                    const errText = await response.text();
+                    const errText = await readErrorMessage(response);
                     alert(`Failed to get download link: ${errText}`);
                 }
             } catch (err) {
@@ -1024,7 +1049,7 @@ pub const DASHBOARD_HTML: &str = r#"
                 });
 
                 if (!urlRes.ok) {
-                    const errText = await urlRes.text();
+                    const errText = await readErrorMessage(urlRes);
                     statusEl.style.color = '#EF4444';
                     statusEl.textContent = `Failed: ${errText}`;
                     return;
@@ -1058,7 +1083,7 @@ pub const DASHBOARD_HTML: &str = r#"
                 });
 
                 if (!confirmRes.ok) {
-                    const errText = await confirmRes.text();
+                    const errText = await readErrorMessage(confirmRes);
                     statusEl.style.color = '#EF4444';
                     statusEl.textContent = `Confirmation failed: ${errText}`;
                     return;
