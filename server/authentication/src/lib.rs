@@ -454,6 +454,72 @@ impl PermissionsManager {
         }))
     }
 
+    /// Staff account — no flat ownership, assigned the `staff` designation. Password is
+    /// set via the same forgot-password flow as resident accounts.
+    pub async fn create_staff_user(
+        &self,
+        email: &str,
+        created_by: Option<i32>,
+    ) -> Result<User, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        let existing_user_row: Option<(i32,)> =
+            sqlx::query_as("SELECT user_id FROM users WHERE email = $1")
+                .bind(email)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+
+        let user_id = if let Some((id,)) = existing_user_row {
+            sqlx::query("UPDATE users SET is_active = TRUE, updated_at = NOW() WHERE user_id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            id
+        } else {
+            let (new_user_id,): (i32,) = sqlx::query_as(
+                "INSERT INTO users (email, created_by) VALUES ($1, $2) RETURNING user_id",
+            )
+            .bind(email)
+            .bind(created_by)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, NULL)")
+                .bind(new_user_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            new_user_id
+        };
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        self.assign_designation(user_id, "staff", created_by)
+            .await?;
+
+        let permissions = fetch_user_permissions(&self.pool, user_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let can_manage_documents = fetch_can_manage_documents(&self.pool, user_id, &permissions)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(assemble_user(RawUser {
+            user_id,
+            email: email.to_string(),
+            is_active: true,
+            wing: "N/A".to_string(),
+            flat_number: "N/A".to_string(),
+            designations: vec!["staff".to_string()],
+            permissions,
+            can_manage_documents,
+        }))
+    }
+
     /// Passwordless seed account, assigned the given designation (e.g. "super_admin").
     pub async fn create_seeded_user(
         &self,

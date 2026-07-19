@@ -300,8 +300,8 @@ async fn test_category_matrix_toggle_reflects_in_visibility() {
     let res_jwt = quick_onboard_user(&env, "matrix_res@test.com", "password123");
     let res_auth = auth(&res_jwt);
 
-    quick_create_designation(&env, &admin_jwt, "staff", "Staff");
-    quick_assign_designation(&env, &admin_jwt, rid, "staff");
+    quick_create_designation(&env, &admin_jwt, "matrix_staff", "Matrix Staff");
+    quick_assign_designation(&env, &admin_jwt, rid, "matrix_staff");
 
     // No category is mapped to any designation until explicitly toggled — forbidden.
     let before = ureq::post(&format!("{}/api/v1/documents/{}", url, doc_id))
@@ -309,7 +309,7 @@ async fn test_category_matrix_toggle_reflects_in_visibility() {
         .send_json(serde_json::json!({}));
     assert_forbidden(before, "finance doc access before matrix toggle");
 
-    quick_set_category_designation(&env, &admin_jwt, "FINANCE", "staff", true, false);
+    quick_set_category_designation(&env, &admin_jwt, "FINANCE", "matrix_staff", true, false);
 
     let after = ureq::post(&format!("{}/api/v1/documents/{}", url, doc_id))
         .set("Authorization", &res_auth)
@@ -319,7 +319,7 @@ async fn test_category_matrix_toggle_reflects_in_visibility() {
         "expected access after enabling FINANCE for staff"
     );
 
-    quick_set_category_designation(&env, &admin_jwt, "FINANCE", "staff", false, false);
+    quick_set_category_designation(&env, &admin_jwt, "FINANCE", "matrix_staff", false, false);
 
     let after_off = ureq::post(&format!("{}/api/v1/documents/{}", url, doc_id))
         .set("Authorization", &res_auth)

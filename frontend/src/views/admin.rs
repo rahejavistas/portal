@@ -997,8 +997,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">User Designations</h3>
                         <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Assign or revoke designations for any resident.</p>
-                        <div style="margin-bottom: 24px;">
-                            <input type="text" id="roles-search-input" placeholder="Search User...">
+                        <div style="margin-bottom: 24px; display:flex; gap:12px; align-items:center;">
+                            <input type="text" id="roles-search-input" placeholder="Search User..." style="flex:1;">
+                            <button type="button" id="add-staff-btn" style="display:none; width:auto; flex-shrink:0; padding:10px 18px; margin:0;" class="submit-btn" onclick="openAddStaffModal()">Add Staff</button>
                         </div>
                         <div class="table-container">
                             <table>
@@ -1160,6 +1161,23 @@ pub(crate) const ADMIN_HTML: &str = r#"
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
                 <button onclick="closeConfirmModal(false)" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
                 <button id="confirm-modal-ok-btn" onclick="closeConfirmModal(true)" class="del-action-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Staff Modal -->
+    <div id="add-staff-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeAddStaffModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Add Staff</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:16px;">Creates an account with no flat, assigned the Staff designation.</p>
+            <div class="form-group">
+                <label for="add-staff-email">Email</label>
+                <input type="email" id="add-staff-email" placeholder="e.g. staff@vistas.com">
+            </div>
+            <div class="feedback-box" id="add-staff-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeAddStaffModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="add-staff-submit-btn" class="submit-btn" style="width:auto; margin:0;" onclick="submitAddStaff()">Create</button>
             </div>
         </div>
     </div>
@@ -1326,6 +1344,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
             if ((canManageRoles || canViewRoles) && userDesigBtn) userDesigBtn.style.display = 'inline-block';
             if (canManageDesignations && manageDesigBtn) manageDesigBtn.style.display = 'inline-block';
             defaultRolesSubtab = (canManageRoles || canViewRoles) ? 'user-designations' : 'manage-designations';
+        }
+        // Add Staff hits /users/create-staff, which the backend gates on users.manage —
+        // not users.roles.manage — so its visibility must track that permission
+        // independently of the surrounding Roles suite's own gate.
+        if (canManageUsers) {
+            const addStaffBtn = document.getElementById('add-staff-btn');
+            if (addStaffBtn) addStaffBtn.style.display = 'inline-block';
         }
         if (canManageCategories || canManageDesignations) {
             const categoriesBtn = document.getElementById('subtab-btn-categories');
@@ -2241,6 +2266,59 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const filtered = allUsers.filter(u => u.email.toLowerCase().includes(query));
             renderRolesUserTable(filtered);
         });
+
+        function openAddStaffModal() {
+            document.getElementById('add-staff-email').value = '';
+            const feedback = document.getElementById('add-staff-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('add-staff-modal').style.display = 'flex';
+        }
+
+        function closeAddStaffModal() {
+            document.getElementById('add-staff-modal').style.display = 'none';
+        }
+
+        async function submitAddStaff() {
+            const email = document.getElementById('add-staff-email').value.trim();
+            const feedback = document.getElementById('add-staff-feedback');
+            const btn = document.getElementById('add-staff-submit-btn');
+
+            if (!email) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Email is required.`;
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/users/create-staff`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    await loadUsers();
+                    renderRolesUserTable(allUsers);
+                    closeAddStaffModal();
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create staff account.')}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Create';
+            }
+        }
 
         function openManageDesignationsModal(userId, email) {
             const u = allUsers.find(x => x.user_id === userId);

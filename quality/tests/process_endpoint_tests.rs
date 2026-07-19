@@ -455,6 +455,14 @@ async fn test_download_url_returns_presigned_url() {
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
     let doc_id = upload_doc(&url, &res_auth, &pid, "test.pdf");
+    ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 3,
+            "fields": [{"template_field_id": 101, "text_value": null, "document_id": doc_id}]
+        }))
+        .expect("save-step should attach the document to the process field");
 
     let resp = ureq::post(&format!("{}/api/v1/process/download-url", url))
         .set("Authorization", &admin_auth)
@@ -512,6 +520,15 @@ async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
         .to_string();
     let doc_id = upload_doc(&url, &res_auth, &pid, "reviewee_doc.pdf");
 
+    ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 3,
+            "fields": [{"template_field_id": 101, "text_value": null, "document_id": doc_id}]
+        }))
+        .expect("save-step should attach the document to the process field");
+
     // A scoped designation holding exactly `process.reviewer` — nothing else, no
     // document-category grants, no `documents.all.manage`, no shared flat.
     quick_create_designation(&env, &admin_jwt, "doc_reviewer", "Doc Reviewer");
@@ -542,6 +559,56 @@ async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
     );
     let val: serde_json::Value = via_process.unwrap().into_json().unwrap();
     assert!(val["download_url"].as_str().unwrap().contains(&doc_id));
+}
+
+/// A reviewer must not be able to download a document that was never attached to the process.
+#[tokio::test]
+async fn test_reviewer_cannot_download_document_not_attached_to_process() {
+    let env = setup_api_test_env(3178).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "reviewee3@test.com", "A", "102");
+    let res_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewee3@test.com", "password123")
+    );
+    let resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .unwrap();
+    let pid = resp.into_json::<serde_json::Value>().unwrap()["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Uploaded to the resident's own library, but never attached to any field
+    // of this (or any) process via save-step.
+    let unattached_doc_id = upload_doc(&url, &res_auth, &pid, "unrelated_private_doc.pdf");
+
+    quick_create_designation(&env, &admin_jwt, "doc_reviewer3", "Doc Reviewer 3");
+    quick_toggle_designation_permission(
+        &env,
+        &admin_jwt,
+        "doc_reviewer3",
+        "process.reviewer",
+        true,
+    );
+    let reviewer_id = quick_create_user(&env, &admin_jwt, "reviewer3@test.com", "B", "202");
+    let reviewer_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewer3@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, reviewer_id, "doc_reviewer3");
+
+    let via_process = ureq::post(&format!("{}/api/v1/process/download-url", url))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({"process_id": pid, "document_id": unattached_doc_id}));
+    assert!(
+        via_process.is_err(),
+        "process.reviewer must not be able to download a document that was never attached to the process, \
+         even if they're authorized to review that process"
+    );
 }
 
 // ============================================================

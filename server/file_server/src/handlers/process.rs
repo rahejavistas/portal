@@ -993,14 +993,26 @@ pub async fn process_download_url(
         let mut conn = state.pg_pool.acquire().await.internal_err()?;
         let (info, _) =
             load_authorized_process(&mut conn, &user, payload.process_id, can_view_all).await?;
+
+        // Non-owners (reviewers) may only fetch documents actually attached to this process.
+        if info.user_id != user.user_id {
+            let history = get_field_history(&mut conn, payload.process_id)
+                .await
+                .internal_err()?;
+            let attached = history
+                .iter()
+                .any(|row| row.document_id == Some(payload.document_id));
+            if !attached {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json("Document is not attached to this process".to_string()),
+                ));
+            }
+        }
+
         info.user_id
     };
 
-    // Documents aren't necessarily attached to a process step yet when this is called
-    // (e.g. previewing an entry from the resident's own library before submitting it),
-    // so document access is evaluated as the process OWNER would see it, not the caller —
-    // being cleared to view/review this process authorizes whatever its owner can see,
-    // regardless of the caller's own unrelated category/flat grants.
     let owner = state
         .permissions_manager
         .get_user_by_id(owner_id)
