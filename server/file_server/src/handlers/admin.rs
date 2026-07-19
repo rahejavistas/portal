@@ -91,6 +91,36 @@ pub struct RevokeFlatPayload {
     pub flat_number: String,
 }
 
+#[derive(serde::Deserialize)]
+pub struct LookupFlatOwnersPayload {
+    pub wing: String,
+    pub flat_number: String,
+}
+
+/// Previews who currently owns a flat, so an admin mapping a document to it can see who'll
+/// get access before saving. Invalid/incomplete input (e.g. mid-typing) returns an empty
+/// list rather than an error — this is a soft preview, not a validated write.
+pub async fn lookup_flat_owners(
+    State(state): State<AppState>,
+    _session_user: SessionUser,
+    Json(payload): Json<LookupFlatOwnersPayload>,
+) -> impl IntoResponse {
+    let emails = match FlatIdentifier::new(&payload.wing, &payload.flat_number) {
+        Ok(flat) => state
+            .permissions_manager
+            .active_owner_emails_for_flat(flat.wing(), flat.flat_number())
+            .await
+            .unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "emails": emails })),
+    )
+        .into_response()
+}
+
 pub async fn admin_revoke_flat(
     State(state): State<AppState>,
     _session_user: SessionUser,

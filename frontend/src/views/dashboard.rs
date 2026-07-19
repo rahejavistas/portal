@@ -24,6 +24,21 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         html {
             overflow-x: hidden;
         }
+        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
+           in <script>) so the full text is still available on hover. */
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: block;
+            max-width: 100%;
+        }
+        .truncate-2-lines {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
         :root {
             --background: #FFFFFF;
             --foreground: #111827;
@@ -595,7 +610,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     <div class="profile-table">
                         <div class="profile-row">
                             <span class="profile-label">Email Address</span>
-                            <span class="profile-value" id="user-email">Loading...</span>
+                            <span class="profile-value truncate" id="user-email" style="max-width:260px;">Loading...</span>
                         </div>
                         <div class="profile-row">
                             <span class="profile-label">Flat Number</span>
@@ -623,6 +638,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
                 </div>
+                <div class="category-filter-bar" id="user-subcategory-filter-bar" style="display:none;"></div>
 
                 <!-- Desktop Table -->
                 <div class="table-container doc-table-desktop">
@@ -631,7 +647,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                             <tr>
                                 <th>File Details</th>
                                 <th>Document Category</th>
-                                <th>Action</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody id="doc-rows-target">
@@ -712,6 +728,17 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
+        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
+        // element so the full value is still readable on hover.
+        function truncText(text, maxLen) {
+            const str = (text === null || text === undefined) ? '' : text.toString();
+            return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
+        }
+        function truncTitle(text) {
+            return escapeHtml((text === null || text === undefined) ? '' : text.toString());
+        }
+
         // API error bodies are either a bare JSON string or a {message: "..."} object —
         // reading the raw response text directly would show the JSON quoting/escaping
         // to the user. This unwraps either shape down to a plain message.
@@ -740,6 +767,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
         function renderProfile(user) {
             document.getElementById('user-email').textContent = user.email;
+            document.getElementById('user-email').title = user.email;
 
             const rolesContainer = document.getElementById('user-roles');
             rolesContainer.innerHTML = '';
@@ -840,6 +868,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
         let allResidentDocs = [];
         let currentCategoryFilter = 'ALL';
+        let currentSubcategoryFilter = 'ALL';
 
         async function loadResidentDocuments() {
             try {
@@ -880,14 +909,62 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             if (currentCategoryFilter !== 'ALL' && !categories.includes(currentCategoryFilter)) {
                 currentCategoryFilter = 'ALL';
             }
+            renderSubcategoryFilterChips();
+        }
+
+        function renderSubcategoryFilterChips() {
+            const bar = document.getElementById('user-subcategory-filter-bar');
+            if (currentCategoryFilter === 'ALL') {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                return;
+            }
+
+            const docsInCategory = allResidentDocs.filter(d => d.document.category === currentCategoryFilter);
+            const subcats = [...new Map(
+                docsInCategory
+                    .filter(d => d.metadata && d.metadata.subcategory_code)
+                    .map(d => [d.metadata.subcategory_code, d.metadata.subcategory_label])
+            ).entries()];
+
+            if (subcats.length === 0) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                currentSubcategoryFilter = 'ALL';
+                return;
+            }
+
+            bar.style.display = 'flex';
+            bar.innerHTML = '<button class="sub-filter-chip active" id="user-subfilter-all" onclick="filterBySubcategory(\'ALL\')">All</button>' +
+                subcats.map(([code, label]) => {
+                    const chipId = 'user-subfilter-' + code.toLowerCase().replace(/_/g, '-');
+                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterBySubcategory('${code}')">${escapeHtml(label)}</button>`;
+                }).join('');
+
+            if (currentSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === currentSubcategoryFilter)) {
+                currentSubcategoryFilter = 'ALL';
+            }
         }
 
         function filterDocs(category) {
             currentCategoryFilter = category;
+            currentSubcategoryFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#user-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'user-filter-' + category.toLowerCase().replace(/_/g, '-');
+            const target = document.getElementById(chipId);
+            if (target) target.classList.add('active');
+
+            renderSubcategoryFilterChips();
+            applyFiltersAndRender();
+        }
+
+        function filterBySubcategory(code) {
+            currentSubcategoryFilter = code;
+
+            document.querySelectorAll('#user-subcategory-filter-bar .sub-filter-chip').forEach(el => el.classList.remove('active'));
+            const chipId = 'user-subfilter-' + code.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
 
@@ -898,6 +975,9 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             let filtered = allResidentDocs;
             if (currentCategoryFilter !== 'ALL') {
                 filtered = filtered.filter(item => item.document.category === currentCategoryFilter);
+            }
+            if (currentSubcategoryFilter !== 'ALL') {
+                filtered = filtered.filter(item => item.metadata && item.metadata.subcategory_code === currentSubcategoryFilter);
             }
             renderResidentDocsTable(filtered);
         }
@@ -940,20 +1020,20 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 if (meta) {
                     metaHtml = `
                         <div class="doc-meta">
-                            ${meta.subcategory ? `Subcategory: <strong>${escapeHtml(meta.subcategory)}</strong>` : ''}
+                            ${meta.subcategory_label ? `Subcategory: <strong>${escapeHtml(meta.subcategory_label)}</strong>` : ''}
                             ${meta.tags && meta.tags.length > 0 ? ` &nbsp;|&nbsp; Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ')}` : ''}
                              &nbsp;|&nbsp; Date: ${escapeHtml(meta.document_date)}
                         </div>
                     `;
                 }
                 tr.innerHTML = `
-                    <td>
-                        <div class="doc-title" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(doc.title)}</div>
-                        <div class="doc-desc">${escapeHtml(doc.description) || 'No description provided.'}</div>
+                    <td style="max-width:420px;">
+                        <div class="doc-title truncate" title="${truncTitle(doc.title)}" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(truncText(doc.title, 70))}</div>
+                        <div class="doc-desc truncate-2-lines" title="${truncTitle(doc.description)}">${escapeHtml(doc.description) || 'No description provided.'}</div>
                         ${metaHtml}
                     </td>
                     <td><span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span></td>
-                    <td><button class="download-btn" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">Download</button></td>
+                    <td></td>
                 `;
                 tbody.appendChild(tr);
 
@@ -963,15 +1043,12 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 card.innerHTML = `
                     <div class="doc-card-mobile-header">
                         <div style="flex:1; min-width:0;">
-                            <div class="doc-title" style="font-size:1rem;" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(doc.title)}</div>
-                            <div class="doc-desc" style="margin-top:4px;">${escapeHtml(doc.description) || 'No description.'}</div>
+                            <div class="doc-title truncate" style="font-size:1rem;" title="${truncTitle(doc.title)}" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">${escapeHtml(truncText(doc.title, 50))}</div>
+                            <div class="doc-desc truncate-2-lines" style="margin-top:4px;" title="${truncTitle(doc.description)}">${escapeHtml(doc.description) || 'No description.'}</div>
                         </div>
                         <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}" style="flex-shrink:0;">${formatCategory(doc.category)}</span>
                     </div>
                     ${meta ? `<div class="doc-meta" style="font-size:0.75rem;">${meta.document_date || ''}</div>` : ''}
-                    <div class="doc-card-mobile-actions">
-                        <button class="download-btn" onclick="downloadDocument('${escapeHtml(doc.document_id)}')">Download</button>
-                    </div>
                 `;
                 cardsContainer.appendChild(card);
             });

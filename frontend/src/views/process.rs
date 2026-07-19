@@ -19,6 +19,15 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         html {
             overflow-x: hidden;
         }
+        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
+           in <script>) so the full text is still available on hover. */
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: block;
+            max-width: 100%;
+        }
         :root {
             --background: #FFFFFF;
             --foreground: #111827;
@@ -601,6 +610,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             display: flex;
             flex-direction: column;
             gap: 4px;
+            min-width: 0;
         }
         .step-nav-num {
             font-size: 0.75rem;
@@ -1009,7 +1019,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     <button class="btn btn-secondary" onclick="showProcessListScreen()" style="margin-bottom: 12px; font-size: 0.875rem; padding: 8px 14px;">
                         &larr; Back
                     </button>
-                    <h2 id="details-process-title" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
+                    <h2 id="details-process-title" class="truncate" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
                     <!-- Meta chips row: flat, ID, status -->
                     <div id="details-process-meta" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                         <!-- Populated dynamically -->
@@ -1066,7 +1076,36 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         </div>
     </div>
 
+    <!-- Confirm Modal (replaces native confirm() — Chrome silently swallows those unless
+         DevTools is open, which reads as "the button just doesn't work") -->
+    <div class="modal-overlay" id="confirm-modal" onclick="if (event.target === this) closeConfirmModal(false)">
+        <div class="modal-content" style="max-width: 400px;">
+            <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5;"></p>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="closeConfirmModal(false)">Cancel</button>
+                <button type="button" id="confirm-modal-ok-btn" class="btn" onclick="closeConfirmModal(true)">Confirm</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        // Replaces native confirm() — resolves true/false once the user picks.
+        let _confirmResolve = null;
+        function showConfirm(message, okLabel) {
+            document.getElementById('confirm-modal-message').textContent = message;
+            document.getElementById('confirm-modal-ok-btn').textContent = okLabel || 'Confirm';
+            document.getElementById('confirm-modal').style.display = 'flex';
+            return new Promise(resolve => { _confirmResolve = resolve; });
+        }
+        function closeConfirmModal(result) {
+            document.getElementById('confirm-modal').style.display = 'none';
+            if (_confirmResolve) {
+                const resolve = _confirmResolve;
+                _confirmResolve = null;
+                resolve(result);
+            }
+        }
+
         // Baked in per-route at build time (see frontend/src/views/process.rs::process_html).
         // /process always renders false (your own process, full stop); /admin-process
         // always renders true (the reviewer/auditor queue). No client-side guessing.
@@ -1241,6 +1280,17 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 .replace(/'/g, "&#039;");
         }
 
+        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
+        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
+        // element so the full value is still readable on hover.
+        function truncText(text, maxLen) {
+            const str = (text === null || text === undefined) ? '' : text.toString();
+            return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
+        }
+        function truncTitle(text) {
+            return escapeHtml((text === null || text === undefined) ? '' : text.toString());
+        }
+
         // API error bodies are either a bare JSON string or a {message: "..."} object —
         // reading the raw response text directly would show the JSON quoting/escaping
         // to the user. This unwraps either shape down to a plain message.
@@ -1413,11 +1463,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 
                 tr.innerHTML = `
                     <td>
-                        <div class="process-title" onclick="viewProcessDetail('${p.process_id}')">
+                        <div class="process-title" title="${p.template_id === 'tenant_onboarding_v1' ? 'Tenant Onboarding Process' : truncTitle(p.template_id)}" onclick="viewProcessDetail('${p.process_id}')">
                             ${p.template_id === 'tenant_onboarding_v1' ? 'Tenant Onboarding Process' : escapeHtml(p.template_id)}
                         </div>
-                        <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px;">
-                            ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(p.user_email)})` : ''}
+                        <div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${isAdmin ? truncTitle(p.user_email) : ''}">
+                            ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(truncText(p.user_email, 30))})` : ''}
                         </div>
                     </td>
                     <td>
@@ -1597,7 +1647,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const metaContainer = document.getElementById('details-process-meta');
 
             // Title
-            document.getElementById('details-process-title').textContent = p.process_name || p.template_id;
+            const titleText = p.process_name || p.template_id;
+            document.getElementById('details-process-title').textContent = titleText;
+            document.getElementById('details-process-title').title = titleText;
 
             // Meta chips (flat, ID, status)
             const statusChipClass = p.is_completed ? 'background:#D1FAE5;color:#065F46;' : 'background:#DBEAFE;color:#1E40AF;';
@@ -1641,7 +1693,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 btn.innerHTML = `
                     <div class="step-nav-info">
                         <span class="step-nav-num">Stage ${index + 1}</span>
-                        <span class="step-nav-name">${escapeHtml(step.name)}</span>
+                        <span class="step-nav-name truncate" title="${truncTitle(step.name)}">${escapeHtml(step.name)}</span>
                     </div>
                     <span class="step-nav-status ${step.status.toLowerCase()}">${statusLabel}</span>
                 `;
@@ -1770,7 +1822,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         `;
                     } else {
                         inputHtml = `
-                            <input type="text" id="text-input-${fieldId}" class="text-value-input" style="width: 100%; max-width: 500px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;" value="${escapeHtml(val.text_value || '')}" placeholder="Enter details...">
+                            <div style="display: flex; align-items: center; gap: 12px; max-width: 700px;">
+                                <input type="text" id="text-input-${fieldId}" class="text-value-input" style="flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;" value="${escapeHtml(val.text_value || '')}" placeholder="Enter details...">
+                                <button type="button" class="btn step-save-btn" data-step-id="${stepId}" style="font-size: 0.8125rem; padding: 10px 18px; flex-shrink: 0;" onclick="saveStepFieldsSubmit(${stepId})">Save Remarks</button>
+                            </div>
                         `;
                     }
                 }
@@ -1794,21 +1849,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     </div>
                 `;
             });
-
-            // Save button for this step
-            const hasEditableTextFields = fields.some(f => {
-                const isFUser = f.filled_by === 'user';
-                return (isFUser && !IS_ADMIN_PROCESS_PAGE && f.type === 'text') || (!isFUser && isCurrentAdmin && f.type === 'text');
-            });
-            const canSave = (stepStatus === 'OPEN' || parentStatus === 'OPEN') && hasEditableTextFields;
-
-            if (canSave) {
-                html += `
-                    <div style="display: flex; justify-content: flex-end; margin-top: 16px;">
-                        <button class="btn" style="font-size: 0.875rem; padding: 12px 24px;" id="save-step-btn-${stepId}" onclick="saveStepFieldsSubmit(${stepId})">Save Remarks</button>
-                    </div>
-                `;
-            }
 
             return html;
         }
@@ -2343,9 +2383,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
             if (hasError) return;
 
-            const saveBtn = document.getElementById(`save-step-btn-${stepId}`);
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving...';
+            const saveBtns = document.querySelectorAll(`.step-save-btn[data-step-id="${stepId}"]`);
+            saveBtns.forEach(b => { b.disabled = true; b.textContent = 'Saving...'; });
 
             const payload = {
                 process_id: currentProcessDetails.process_id,
@@ -2374,8 +2413,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 console.error(e);
                 alert('Connection error while saving step.');
             } finally {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save Step Inputs';
+                saveBtns.forEach(b => { b.disabled = false; b.textContent = 'Save Remarks'; });
             }
         }
 
@@ -2426,7 +2464,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const notesEl = document.getElementById(`review-notes-${stepId}`);
             const notes = notesEl ? notesEl.value.trim() : '';
 
-            if (!confirm('Are you sure you want to reopen this step? It will allow the resident to modify documents.')) {
+            if (!(await showConfirm('Are you sure you want to reopen this step? It will allow the resident to modify documents.', 'Reopen'))) {
                 return;
             }
 
@@ -2527,12 +2565,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     const listHtml = docs.map(d => {
                         const doc = d.document || d;
                         return `
-                            <div style="padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; background: var(--background);">
-                                <div>
-                                    <strong style="display: block; font-size: 0.9375rem;">${escapeHtml(doc.title)}</strong>
+                            <div style="padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--background);">
+                                <div style="min-width: 0; flex: 1;">
+                                    <strong class="truncate" style="font-size: 0.9375rem;" title="${truncTitle(doc.title)}">${escapeHtml(doc.title)}</strong>
                                     <span style="font-size: 0.8125rem; color: var(--muted-foreground);">${formatDateMinimal(doc.uploaded_date)}</span>
                                 </div>
-                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;" onclick="selectExistingDocument('${doc.document_id}')">Select</button>
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink:0;" onclick="selectExistingDocument('${doc.document_id}')">Select</button>
                             </div>
                         `;
                     }).join('');

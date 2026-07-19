@@ -463,6 +463,25 @@ pub fn quick_create_document_category(env: &TestEnv, caller_jwt: &str, code: &st
     .expect("Failed to create document category");
 }
 
+/// Creates a subcategory under `category` via the roles-management API, using the caller's
+/// JWT (which must hold `documents.categories.manage`).
+pub fn quick_create_document_subcategory(
+    env: &TestEnv,
+    caller_jwt: &str,
+    category: &str,
+    code: &str,
+    label: &str,
+) {
+    let url = env.server_url();
+    let _ = ureq::post(&format!(
+        "{}/api/v1/admin/roles/document-subcategories/create",
+        url
+    ))
+    .set("Authorization", &format!("Bearer {}", caller_jwt))
+    .send_json(serde_json::json!({ "category": category, "code": code, "label": label }))
+    .expect("Failed to create document subcategory");
+}
+
 /// Grants or revokes a permission for a designation via the roles-management API, using
 /// the caller's JWT (which must hold `designations.manage`).
 pub fn quick_toggle_designation_permission(
@@ -564,7 +583,6 @@ pub fn quick_create_document(
         "description": "Programmatic helper seeded document",
         "category": category,
         "metadata": {
-            "subcategory": "Seeded",
             "tags": ["seeded", "helper"],
             "document_date": "2026-05-20"
         }

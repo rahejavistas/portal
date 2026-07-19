@@ -364,29 +364,26 @@ pub async fn list_all_processes(
 // Flat/ownership helpers
 // ==========================================
 
-pub async fn get_flat_label_for_ownership(
+/// A flat's ID and its display label (e.g. "A-101"), looked up by ownership.
+pub struct OwnershipFlatInfo {
+    pub flat_id: i32,
+    pub label: String,
+}
+
+pub async fn get_flat_info_for_ownership(
     conn: &mut sqlx::PgConnection,
     ownership_id: i32,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT f.wing || '-' || f.flat_number \
+) -> Result<Option<OwnershipFlatInfo>, sqlx::Error> {
+    let row: Option<(i32, String)> = sqlx::query_as(
+        "SELECT f.flat_id, f.wing || '-' || f.flat_number \
          FROM flat_ownerships fo \
          JOIN flats f ON fo.flat_id = f.flat_id \
          WHERE fo.ownership_id = $1",
     )
     .bind(ownership_id)
     .fetch_optional(conn)
-    .await
-}
-
-pub async fn get_flat_id_for_ownership(
-    conn: &mut sqlx::PgConnection,
-    ownership_id: i32,
-) -> Result<Option<i32>, sqlx::Error> {
-    sqlx::query_scalar("SELECT flat_id FROM flat_ownerships WHERE ownership_id = $1")
-        .bind(ownership_id)
-        .fetch_optional(conn)
-        .await
+    .await?;
+    Ok(row.map(|(flat_id, label)| OwnershipFlatInfo { flat_id, label }))
 }
 
 pub async fn get_active_ownerships_for_user(
@@ -428,11 +425,14 @@ pub async fn get_user_active_flats(
 // Private DB helpers
 // ==========================================
 
-/// Load the full process state from DB (steps, fields, reviews).
-pub async fn load_state(
+/// Load per-step completion state (is_completed, started_at) for a process.
+/// Split out from `load_state` so callers that already fetch full field/review
+/// history elsewhere (e.g. the process-state read endpoint) can derive the rest
+/// of `ProcessStateInput` from data they have instead of re-querying it.
+pub async fn load_steps(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
-) -> Result<ProcessStateInput, sqlx::Error> {
+) -> Result<HashMap<i32, StepStateDb>, sqlx::Error> {
     // (template_step_id, is_completed, started_at)
     let steps_rows: Vec<(i32, bool, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
         "SELECT template_step_id, is_completed, started_at FROM process_steps WHERE process_id = $1",
@@ -451,6 +451,15 @@ pub async fn load_state(
             },
         );
     }
+    Ok(steps)
+}
+
+/// Load the full process state from DB (steps, fields, reviews).
+pub async fn load_state(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<ProcessStateInput, sqlx::Error> {
+    let steps = load_steps(&mut *conn, process_id).await?;
 
     // (template_field_id, text_value, document_id) — latest per field via DISTINCT ON
     let fields_rows: Vec<(i32, Option<String>, Option<Uuid>)> = sqlx::query_as(
@@ -534,19 +543,29 @@ async fn sync_start_times(
     Ok(())
 }
 
+/// Resolve a step's instance ID from its (process_id, template_step_id) pair.
+/// Shared by every write path that needs to target a specific step row.
+async fn step_instance_id_for(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template_step_id: i32,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT step_instance_id FROM process_steps WHERE process_id = $1 AND template_step_id = $2",
+    )
+    .bind(process_id)
+    .bind(template_step_id)
+    .fetch_one(conn)
+    .await
+}
+
 async fn persist_fields(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template_step_id: i32,
     fields: &[(i32, Option<String>, Option<Uuid>)], // (template_field_id, text_value, document_id)
 ) -> Result<(), sqlx::Error> {
-    let step_instance_id: Uuid = sqlx::query_scalar(
-        "SELECT step_instance_id FROM process_steps WHERE process_id = $1 AND template_step_id = $2",
-    )
-    .bind(process_id)
-    .bind(template_step_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let step_instance_id = step_instance_id_for(&mut *conn, process_id, template_step_id).await?;
 
     for &(template_field_id, ref text_value, document_id) in fields {
         sqlx::query(
@@ -588,13 +607,7 @@ async fn insert_review(
     process_id: Uuid,
     params: &ReviewStepParams<'_>,
 ) -> Result<(), sqlx::Error> {
-    let step_instance_id: Uuid = sqlx::query_scalar(
-        "SELECT step_instance_id FROM process_steps WHERE process_id = $1 AND template_step_id = $2",
-    )
-    .bind(process_id)
-    .bind(params.step_id)
-    .fetch_one(&mut *conn)
-    .await?;
+    let step_instance_id = step_instance_id_for(&mut *conn, process_id, params.step_id).await?;
 
     sqlx::query(
         "INSERT INTO process_step_reviews \

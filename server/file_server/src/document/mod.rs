@@ -1,7 +1,8 @@
 mod category;
 pub mod manager;
+mod subcategory;
 
-pub use manager::{AdminUploadIntentInput, DocumentManager};
+pub use manager::{AdminUploadIntentInput, DocumentManager, UpdateDocumentInput};
 
 use base::flat::FlatIdentifier;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -32,6 +33,7 @@ pub struct Document {
     pub description: Option<String>,
     pub category: String,
     pub uploaded_date: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
     pub is_deleted: bool,
     pub is_user_uploaded: bool,
     pub is_upload_confirmed: bool,
@@ -41,11 +43,31 @@ pub struct Document {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub struct GenericDocumentMetadata {
     pub document_id: Uuid,
-    pub subcategory: Option<String>,
+    /// FK into `document_subcategories`. UI-only tag, not access control.
+    pub subcategory_id: Option<i32>,
+    pub subcategory_code: Option<String>,
+    pub subcategory_label: Option<String>,
     pub tags: Vec<String>,
     pub document_date: NaiveDate,
     pub valid_from: Option<NaiveDate>,
     pub valid_until: Option<NaiveDate>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct DocumentSubcategoryDef {
+    pub subcategory_id: i32,
+    pub category: String,
+    pub code: String,
+    pub label: String,
+}
+
+/// A category plus the subcategories nested under it, so the frontend gets both
+/// in a single fetch instead of separately polling a subcategories endpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CategoryWithSubcategories {
+    #[serde(flatten)]
+    pub category: DocumentCategoryDef,
+    pub subcategories: Vec<DocumentSubcategoryDef>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -120,7 +142,7 @@ pub fn derive_s3_key(document_id: Uuid) -> String {
 /// Structured input for document metadata fields, used by the manager's
 /// atomic create/update methods. Replaces raw tuples to satisfy clippy::type_complexity.
 pub struct MetadataInput<'a> {
-    pub subcategory: Option<&'a str>,
+    pub subcategory_id: Option<i32>,
     pub tags: &'a [String],
     pub document_date: NaiveDate,
     pub valid_from: Option<NaiveDate>,

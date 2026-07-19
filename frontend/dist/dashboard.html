@@ -622,6 +622,7 @@
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
                 </div>
+                <div class="category-filter-bar" id="user-subcategory-filter-bar" style="display:none;"></div>
 
                 <!-- Desktop Table -->
                 <div class="table-container doc-table-desktop">
@@ -839,6 +840,7 @@
 
         let allResidentDocs = [];
         let currentCategoryFilter = 'ALL';
+        let currentSubcategoryFilter = 'ALL';
 
         async function loadResidentDocuments() {
             try {
@@ -879,14 +881,62 @@
             if (currentCategoryFilter !== 'ALL' && !categories.includes(currentCategoryFilter)) {
                 currentCategoryFilter = 'ALL';
             }
+            renderSubcategoryFilterChips();
+        }
+
+        function renderSubcategoryFilterChips() {
+            const bar = document.getElementById('user-subcategory-filter-bar');
+            if (currentCategoryFilter === 'ALL') {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                return;
+            }
+
+            const docsInCategory = allResidentDocs.filter(d => d.document.category === currentCategoryFilter);
+            const subcats = [...new Map(
+                docsInCategory
+                    .filter(d => d.metadata && d.metadata.subcategory_code)
+                    .map(d => [d.metadata.subcategory_code, d.metadata.subcategory_label])
+            ).entries()];
+
+            if (subcats.length === 0) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                currentSubcategoryFilter = 'ALL';
+                return;
+            }
+
+            bar.style.display = 'flex';
+            bar.innerHTML = '<button class="sub-filter-chip active" id="user-subfilter-all" onclick="filterBySubcategory(\'ALL\')">All</button>' +
+                subcats.map(([code, label]) => {
+                    const chipId = 'user-subfilter-' + code.toLowerCase().replace(/_/g, '-');
+                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterBySubcategory('${code}')">${escapeHtml(label)}</button>`;
+                }).join('');
+
+            if (currentSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === currentSubcategoryFilter)) {
+                currentSubcategoryFilter = 'ALL';
+            }
         }
 
         function filterDocs(category) {
             currentCategoryFilter = category;
+            currentSubcategoryFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#user-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'user-filter-' + category.toLowerCase().replace(/_/g, '-');
+            const target = document.getElementById(chipId);
+            if (target) target.classList.add('active');
+
+            renderSubcategoryFilterChips();
+            applyFiltersAndRender();
+        }
+
+        function filterBySubcategory(code) {
+            currentSubcategoryFilter = code;
+
+            document.querySelectorAll('#user-subcategory-filter-bar .sub-filter-chip').forEach(el => el.classList.remove('active'));
+            const chipId = 'user-subfilter-' + code.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
 
@@ -897,6 +947,9 @@
             let filtered = allResidentDocs;
             if (currentCategoryFilter !== 'ALL') {
                 filtered = filtered.filter(item => item.document.category === currentCategoryFilter);
+            }
+            if (currentSubcategoryFilter !== 'ALL') {
+                filtered = filtered.filter(item => item.metadata && item.metadata.subcategory_code === currentSubcategoryFilter);
             }
             renderResidentDocsTable(filtered);
         }
@@ -939,7 +992,7 @@
                 if (meta) {
                     metaHtml = `
                         <div class="doc-meta">
-                            ${meta.subcategory ? `Subcategory: <strong>${escapeHtml(meta.subcategory)}</strong>` : ''}
+                            ${meta.subcategory_label ? `Subcategory: <strong>${escapeHtml(meta.subcategory_label)}</strong>` : ''}
                             ${meta.tags && meta.tags.length > 0 ? ` &nbsp;|&nbsp; Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ')}` : ''}
                              &nbsp;|&nbsp; Date: ${escapeHtml(meta.document_date)}
                         </div>

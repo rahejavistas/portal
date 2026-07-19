@@ -1,7 +1,7 @@
 //! Document category CRUD and the category↔designation access matrix
 //! (`document_categories` / `document_category_designations`).
 
-use super::{CategoryDesignation, DocumentCategoryDef};
+use super::{CategoryDesignation, CategoryWithSubcategories, DocumentCategoryDef};
 use crate::document::DocumentManager;
 
 impl DocumentManager {
@@ -25,15 +25,33 @@ impl DocumentManager {
         Ok(Some(categories.into_iter().collect()))
     }
 
-    /// Lists all document categories (including the two protected system ones).
-    pub async fn list_document_categories(&self) -> Result<Vec<DocumentCategoryDef>, String> {
-        sqlx::query_as(
+    /// Lists all document categories (including the two protected system ones),
+    /// each with its subcategories nested in, so callers get both in one round trip.
+    pub async fn list_document_categories(&self) -> Result<Vec<CategoryWithSubcategories>, String> {
+        let categories: Vec<DocumentCategoryDef> = sqlx::query_as(
             "SELECT code, label, is_public_read, is_flat_scoped, is_system \
              FROM document_categories ORDER BY is_system DESC, code",
         )
         .fetch_all(&self.pg_pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+        let all_subcategories = self.list_document_subcategories(None).await?;
+
+        Ok(categories
+            .into_iter()
+            .map(|category| {
+                let subcategories = all_subcategories
+                    .iter()
+                    .filter(|s| s.category == category.code)
+                    .cloned()
+                    .collect();
+                CategoryWithSubcategories {
+                    category,
+                    subcategories,
+                }
+            })
+            .collect())
     }
 
     /// Renames a category's display label. The code (and every document/permission

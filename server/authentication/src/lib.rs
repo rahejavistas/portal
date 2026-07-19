@@ -685,6 +685,26 @@ impl PermissionsManager {
 
         Ok(())
     }
+
+    /// Emails of active owners of a flat, for previewing who'll gain access before
+    /// mapping a document to it. Empty if the flat doesn't exist or has no active owner.
+    pub async fn active_owner_emails_for_flat(
+        &self,
+        wing: &str,
+        flat_number: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT u.email FROM flat_ownerships fo \
+             JOIN flats f ON fo.flat_id = f.flat_id \
+             JOIN users u ON fo.user_id = u.user_id \
+             WHERE f.wing = $1 AND f.flat_number = $2 AND fo.is_active = TRUE \
+             ORDER BY u.email",
+        )
+        .bind(wing)
+        .bind(flat_number)
+        .fetch_all(&self.pool)
+        .await
+    }
 }
 
 mod designations;

@@ -80,6 +80,7 @@ pub struct SaveResult {
 #[derive(Debug, Clone)]
 pub struct StepInfo {
     pub step_id: i32,
+    pub name: String,
     pub parent_id: Option<i32>,
     pub is_review_required: bool,
     pub is_optional: bool,
@@ -105,6 +106,7 @@ pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, St
         template.step_id,
         StepInfo {
             step_id: template.step_id,
+            name: template.name.clone(),
             parent_id: None,
             is_review_required: template.is_review_required,
             is_optional: template.is_optional,
@@ -137,6 +139,7 @@ fn insert_step_info_recursive(
         step.step_id,
         StepInfo {
             step_id: step.step_id,
+            name: step.name.clone(),
             parent_id,
             is_review_required: step.is_review_required,
             is_optional: step.is_optional,
