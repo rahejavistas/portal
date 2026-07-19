@@ -3,8 +3,8 @@ use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
     get_active_ownerships_for_user, get_admin_comments, get_field_history,
-    get_flat_id_for_ownership, get_flat_label_for_ownership, get_process_info, get_process_reviews,
-    get_user_active_flats, get_user_email, list_processes_for_user, AdminComment, ProcessInfo,
+    get_flat_info_for_ownership, get_process_info, get_process_reviews, get_user_active_flats,
+    get_user_email, list_processes_for_user, AdminComment, ProcessInfo,
     ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
 use process::notification::NotificationContext;
@@ -181,6 +181,19 @@ pub struct AdminAddNoteResponse {
 
 type ApiError = (StatusCode, Json<String>);
 
+/// Shorthand for the extremely common "DB/internal error -> 500" mapping,
+/// cutting the repeated `.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))`
+/// closure down to a single call.
+trait ResultExt<T> {
+    fn internal_err(self) -> Result<T, ApiError>;
+}
+
+impl<T, E: ToString> ResultExt<T> for Result<T, E> {
+    fn internal_err(self) -> Result<T, ApiError> {
+        self.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))
+    }
+}
+
 /// Load a process by ID, verify user authorization, and load its template.
 /// Shared across save-step, review, and upload handlers.
 async fn load_authorized_process(
@@ -191,7 +204,7 @@ async fn load_authorized_process(
 ) -> Result<(ProcessInfo, process::ProcessTemplate), ApiError> {
     let info = get_process_info(conn, process_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+        .internal_err()?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json("Process not found".to_string())))?;
 
     if !is_admin && info.user_id != user.user_id {
@@ -211,32 +224,13 @@ async fn load_authorized_process(
     Ok((info, template))
 }
 
+/// Look up a step's display name from the template. Falls back to a generic
+/// label if the ID isn't in the template (shouldn't happen in practice).
 fn find_step_name(template: &process::ProcessTemplate, step_id: i32) -> String {
-    if template.step_id == step_id {
-        return template.name.clone();
-    }
-    if let Some(ref subs) = template.substeps {
-        for sub in subs {
-            if let Some(name) = find_step_name_recursive(sub, step_id) {
-                return name;
-            }
-        }
-    }
-    format!("Step {}", step_id)
-}
-
-fn find_step_name_recursive(step: &process::ProcessStepTemplate, step_id: i32) -> Option<String> {
-    if step.step_id == step_id {
-        return Some(step.name.clone());
-    }
-    if let Some(ref subs) = step.substeps {
-        for sub in subs {
-            if let Some(name) = find_step_name_recursive(sub, step_id) {
-                return Some(name);
-            }
-        }
-    }
-    None
+    process::state_machine::build_step_info_map(template)
+        .get(&step_id)
+        .map(|info| info.name.clone())
+        .unwrap_or_else(|| format!("Step {}", step_id))
 }
 
 /// Build a `NotificationContext` for email dispatch.
@@ -269,7 +263,7 @@ async fn resolve_or_init_process(
 ) -> Result<(Uuid, String, Option<i32>), ApiError> {
     let active_ownerships = get_active_ownerships_for_user(conn, user.user_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        .internal_err()?;
 
     let selected_ownership = match flat_id {
         Some(fid) => {
@@ -385,26 +379,6 @@ fn map_step_template(
     }
 }
 
-/// Build a flat map of step_id -> step_name from the template tree.
-fn build_step_name_map(template: &process::ProcessTemplate) -> HashMap<i32, String> {
-    let mut names = HashMap::new();
-    names.insert(template.step_id, template.name.clone());
-
-    fn traverse(
-        substeps: &Option<Vec<process::ProcessStepTemplate>>,
-        names: &mut HashMap<i32, String>,
-    ) {
-        if let Some(ref subs) = substeps {
-            for sub in subs {
-                names.insert(sub.step_id, sub.name.clone());
-                traverse(&sub.substeps, names);
-            }
-        }
-    }
-    traverse(&template.substeps, &mut names);
-    names
-}
-
 // ==========================================
 // Route handlers
 // ==========================================
@@ -421,11 +395,7 @@ pub async fn list_user_processes(
     State(state): State<AppState>,
     Json(payload): Json<ProcessListRequest>,
 ) -> Result<Json<ProcessListResponse>, ApiError> {
-    let mut conn = state
-        .pg_pool
-        .acquire()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     // Read-only oversight (process.view) sees every resident's process list, same as a
     // reviewer, but never gains the write bypass reviewers get further down the flow.
@@ -438,7 +408,7 @@ pub async fn list_user_processes(
     } else {
         list_processes_for_user(&mut conn, user.user_id).await
     }
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    .internal_err()?;
     for item in items.iter_mut() {
         let mut resolved = false;
         if let Ok(template) = process::ProcessTemplate::load_by_version(&item.template_id) {
@@ -469,7 +439,7 @@ pub async fn list_user_processes(
     // Load active flats for the user (empty for Admin if they don't have flats, but normal for user)
     let flats_db = get_user_active_flats(&mut conn, user.user_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        .internal_err()?;
     let flats = flats_db.into_iter().map(UserFlatResponse::from).collect();
 
     Ok(Json(ProcessListResponse {
@@ -484,11 +454,7 @@ pub async fn get_process_state(
     State(state): State<AppState>,
     Json(payload): Json<ProcessStateRequest>,
 ) -> Result<Json<ProcessStateResponse>, ApiError> {
-    let mut tx = state
-        .pg_pool
-        .begin()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut tx = state.pg_pool.begin().await.internal_err()?;
 
     // Read-only oversight (process.view) sees any resident's process state, same as a
     // reviewer — this handler never writes to another user's process, only the caller's own.
@@ -522,12 +488,11 @@ pub async fn get_process_state(
         )
     })?;
 
-    let proc_state = process::db::load_state(&mut tx, process_id)
+    let steps = process::db::load_steps(&mut tx, process_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
-    let statuses = process::state_machine::compute_statuses(&template, &proc_state);
+        .internal_err()?;
 
-    // --- Fetch documents (titles only), reviews, field history ---
+    // --- Fetch documents (titles only), full review history, full field history ---
     let docs = crate::document::DocumentManager::get_documents_for_process(&mut *tx, process_id)
         .await
         .unwrap_or_default();
@@ -563,23 +528,45 @@ pub async fn get_process_state(
             });
     }
 
-    // Latest field states (first entry per field since ordered DESC)
-    let mut latest_field_states = HashMap::new();
-    for (fid, hist) in &field_history_map {
-        if let Some(latest_entry) = hist.first() {
-            latest_field_states.insert(
-                *fid,
-                process::state_machine::FieldState {
-                    text_value: latest_entry.text_value.clone(),
-                    document_id: latest_entry.document_id,
-                },
-            );
-        }
+    // Latest field state per field (history is ordered DESC, so first = latest).
+    let latest_field_states: HashMap<i32, process::state_machine::FieldState> = field_history_map
+        .iter()
+        .filter_map(|(&fid, hist)| {
+            hist.first().map(|latest| {
+                (
+                    fid,
+                    process::state_machine::FieldState {
+                        text_value: latest.text_value.clone(),
+                        document_id: latest.document_id,
+                    },
+                )
+            })
+        })
+        .collect();
+
+    // Review state per step for the state machine, derived from the same full
+    // history fetched above for display — avoids a second query against
+    // process_step_reviews just to get (is_approved, created_at) pairs.
+    let mut reviews_by_step: HashMap<i32, Vec<process::state_machine::ReviewState>> =
+        HashMap::new();
+    for r in &reviews {
+        reviews_by_step.entry(r.template_step_id).or_default().push(
+            process::state_machine::ReviewState {
+                is_approved: r.is_approved,
+                created_at: r.created_at,
+            },
+        );
     }
+
+    let proc_state = process::state_machine::ProcessStateInput {
+        steps,
+        fields: latest_field_states,
+        reviews: reviews_by_step,
+    };
+    let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
     // --- Compute next actions ---
     let step_info_map = process::state_machine::build_step_info_map(&template);
-    let step_names = build_step_name_map(&template);
     let mut next_actions = Vec::new();
 
     for (&step_id, &status) in &statuses {
@@ -591,7 +578,7 @@ pub async fn get_process_state(
                 process::state_machine::StepStatus::PendingReview => {
                     next_actions.push(NextActionInfo {
                         template_step_id: step_id,
-                        name: step_names.get(&step_id).cloned().unwrap_or_default(),
+                        name: info.name.clone(),
                         assigned_to: "admin".to_string(),
                     });
                 }
@@ -601,14 +588,14 @@ pub async fn get_process_state(
                     if has_user {
                         next_actions.push(NextActionInfo {
                             template_step_id: step_id,
-                            name: step_names.get(&step_id).cloned().unwrap_or_default(),
+                            name: info.name.clone(),
                             assigned_to: "user".to_string(),
                         });
                     }
                     if has_admin {
                         next_actions.push(NextActionInfo {
                             template_step_id: step_id,
-                            name: step_names.get(&step_id).cloned().unwrap_or_default(),
+                            name: info.name.clone(),
                             assigned_to: "admin".to_string(),
                         });
                     }
@@ -626,16 +613,17 @@ pub async fn get_process_state(
                 top_step,
                 &statuses,
                 &field_history_map,
-                &latest_field_states,
+                &proc_state.fields,
                 &doc_title_map,
             ));
         }
     }
 
     let flat_label: Option<String> = if let Some(oid) = ownership_id {
-        get_flat_label_for_ownership(&mut tx, oid)
+        get_flat_info_for_ownership(&mut tx, oid)
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+            .internal_err()?
+            .map(|f| f.label)
     } else {
         None
     };
@@ -653,9 +641,7 @@ pub async fn get_process_state(
     };
 
     // Commit transaction — needed for the auto-init path which may create a new process
-    tx.commit()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    tx.commit().await.internal_err()?;
 
     Ok(Json(ProcessStateResponse {
         process_id,
@@ -677,11 +663,7 @@ pub async fn save_process_step(
     State(state): State<AppState>,
     Json(payload): Json<SaveStepRequest>,
 ) -> Result<Json<SaveStepResponse>, ApiError> {
-    let mut tx = state
-        .pg_pool
-        .begin()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut tx = state.pg_pool.begin().await.internal_err()?;
 
     // Write path: deliberately NOT widened to process.view — that permission is read-only
     // oversight and must never gain the ability to save a step on someone else's process.
@@ -697,7 +679,7 @@ pub async fn save_process_step(
                 .document_manager
                 .get_document(doc_id, &user)
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+                .internal_err()?;
 
             match doc_opt {
                 None => {
@@ -761,9 +743,7 @@ pub async fn save_process_step(
     let is_completed = step_status == process::state_machine::StepStatus::Completed;
 
     // Commit transaction — all field inserts + step updates are atomic
-    tx.commit()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    tx.commit().await.internal_err()?;
 
     // Only email on meaningful cross-role transitions (user→admin review needed)
     if step_status == process::state_machine::StepStatus::PendingReview {
@@ -801,11 +781,7 @@ pub async fn admin_review_step(
     State(state): State<AppState>,
     Json(payload): Json<AdminReviewRequest>,
 ) -> Result<Json<AdminReviewResponse>, ApiError> {
-    let mut tx = state
-        .pg_pool
-        .begin()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut tx = state.pg_pool.begin().await.internal_err()?;
 
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
@@ -832,9 +808,7 @@ pub async fn admin_review_step(
         "Review recorded successfully. Step is marked as incomplete.".to_string()
     };
 
-    tx.commit()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    tx.commit().await.internal_err()?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
     if let Some(ctx) = build_notification_ctx(
@@ -880,11 +854,7 @@ pub async fn admin_revoke_step(
     State(state): State<AppState>,
     Json(payload): Json<AdminRevokeRequest>,
 ) -> Result<Json<AdminRevokeResponse>, ApiError> {
-    let mut tx = state
-        .pg_pool
-        .begin()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut tx = state.pg_pool.begin().await.internal_err()?;
 
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
@@ -899,9 +869,7 @@ pub async fn admin_revoke_step(
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
-    tx.commit()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    tx.commit().await.internal_err()?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
     if let Some(ctx) = build_notification_ctx(
@@ -949,19 +917,16 @@ pub async fn process_admin_upload_url(
     State(state): State<AppState>,
     Json(payload): Json<ProcessAdminUploadUrlRequest>,
 ) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
-    let mut conn = state
-        .pg_pool
-        .acquire()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
 
     let mut flat_id: Option<i32> = None;
     if let Some(oid) = info.ownership_id {
-        flat_id = get_flat_id_for_ownership(&mut conn, oid)
+        flat_id = get_flat_info_for_ownership(&mut conn, oid)
             .await
-            .unwrap_or(None);
+            .unwrap_or(None)
+            .map(|f| f.flat_id);
     }
 
     // Validate file extension
@@ -1025,11 +990,7 @@ pub async fn process_download_url(
 
     // Auth check: is the caller allowed to view this process at all?
     let owner_id = {
-        let mut conn = state
-            .pg_pool
-            .acquire()
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+        let mut conn = state.pg_pool.acquire().await.internal_err()?;
         let (info, _) =
             load_authorized_process(&mut conn, &user, payload.process_id, can_view_all).await?;
         info.user_id
@@ -1044,7 +1005,7 @@ pub async fn process_download_url(
         .permissions_manager
         .get_user_by_id(owner_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+        .internal_err()?
         .ok_or_else(|| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1114,11 +1075,7 @@ pub async fn admin_add_note(
         ));
     }
 
-    let mut conn = state
-        .pg_pool
-        .acquire()
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     // Verify the process exists and admin has access
     load_authorized_process(&mut conn, &user.0, payload.process_id, true).await?;
@@ -1131,7 +1088,7 @@ pub async fn admin_add_note(
         comment,
     )
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?;
+    .internal_err()?;
 
     Ok(Json(AdminAddNoteResponse {
         status: "success".to_string(),

@@ -492,3 +492,63 @@ pub async fn delete_document_category(
         Err(e) => error_response(StatusCode::BAD_REQUEST, e),
     }
 }
+
+#[derive(serde::Deserialize)]
+pub struct CreateDocumentSubcategoryPayload {
+    pub category: String,
+    pub code: String,
+    pub label: String,
+}
+
+/// POST /api/v1/admin/roles/document-subcategories/create
+pub async fn create_document_subcategory(
+    State(state): State<AppState>,
+    SessionUser(caller): SessionUser,
+    Json(payload): Json<CreateDocumentSubcategoryPayload>,
+) -> impl IntoResponse {
+    let code = payload.code.trim().to_uppercase().replace(' ', "_");
+    let label = payload.label.trim().to_string();
+
+    if code.is_empty() || label.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "Code and label are required.");
+    }
+
+    match state
+        .document_manager
+        .create_document_subcategory(&payload.category, &code, &label, Some(caller.user_id))
+        .await
+    {
+        Ok(subcategory) => (StatusCode::CREATED, Json(subcategory)).into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct RenameDocumentSubcategoryPayload {
+    pub subcategory_id: i32,
+    pub label: String,
+}
+
+/// POST /api/v1/admin/roles/document-subcategories/rename
+pub async fn rename_document_subcategory(
+    State(state): State<AppState>,
+    _session_user: SessionUser,
+    Json(payload): Json<RenameDocumentSubcategoryPayload>,
+) -> impl IntoResponse {
+    let label = payload.label.trim().to_string();
+    if label.is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "Label is required.");
+    }
+    match state
+        .document_manager
+        .rename_document_subcategory(payload.subcategory_id, &label)
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "success", "message": "Subcategory renamed." })),
+        )
+            .into_response(),
+        Err(e) => error_response(StatusCode::BAD_REQUEST, e),
+    }
+}

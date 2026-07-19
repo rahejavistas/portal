@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct ProcessFieldTemplate {
     pub field_id: i32,
     pub name: String,
-    pub r#type: String, // "document", "option", "text"
+    pub r#type: String, // "document" or "text"
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,

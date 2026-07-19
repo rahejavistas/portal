@@ -817,6 +817,7 @@
                     <div class="category-filter-bar" id="admin-filter-bar">
                         <button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar('ALL')">All</button>
                     </div>
+                    <div class="category-filter-bar" id="admin-subcategory-filter-bar" style="display:none;"></div>
 
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Explorer</h3>
@@ -897,7 +898,9 @@
                             <div class="form-row-2">
                                 <div class="form-group">
                                     <label for="doc-subcategory">Subcategory</label>
-                                    <input type="text" id="doc-subcategory" placeholder="e.g. Audit, Wing A, Finance">
+                                    <select id="doc-subcategory">
+                                        <option value="">None</option>
+                                    </select>
                                 </div>
                                 <div class="form-group">
                                     <label for="doc-tags">Tags (comma-separated)</label>
@@ -929,6 +932,24 @@
 
                 <!-- Subtab 3: Document Categories (create + designation access matrix — requires documents.categories.manage) -->
                 <div class="subtab-panel" id="subtab-panel-categories">
+                    <div class="card" id="category-access-card" style="display:none; margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Per designation, whether it can read and/or manage (upload, sign, delete) each category. Super Admin always has full access. Public and Resident Specific are not shown; they're governed by visibility rules, not this matrix.</p>
+                        <div class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Designation</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="category-access-designations-rows-target">
+                                    <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="card" style="margin-bottom: 24px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Categories</h3>
                         <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Public and Resident Specific are protected system categories and cannot be deleted.</p>
@@ -954,22 +975,35 @@
                         <div class="feedback-box" id="create-category-feedback" style="margin-top:15px;"></div>
                     </div>
 
-                    <div class="card" id="category-access-card" style="display:none;">
-                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Per designation, whether it can read and/or manage (upload, sign, delete) each category. Super Admin always has full access. Public and Resident Specific are not shown; they're governed by visibility rules, not this matrix.</p>
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Subcategories</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Optional tags scoped to a category, used to filter documents. They never affect access.</p>
+                        <div class="form-group" style="max-width:320px;">
+                            <label for="subcategory-parent-select">Category</label>
+                            <select id="subcategory-parent-select" onchange="renderSubcategoriesList()">
+                                <option value="">Loading categories...</option>
+                            </select>
+                        </div>
                         <div class="table-container">
                             <table>
                                 <thead>
                                     <tr>
-                                        <th>Designation</th>
+                                        <th>Label</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody id="category-access-designations-rows-target">
+                                <tbody id="subcategories-list-rows-target">
                                     <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                                 </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td><input type="text" id="new-subcategory-label" placeholder="e.g. Audit" style="margin:0;"></td>
+                                        <td><button type="button" id="create-subcategory-submit-btn" class="submit-btn" style="width:auto; padding:8px 16px; margin:0;" onclick="submitCreateSubcategory()">Add New</button></td>
+                                    </tr>
+                                </tfoot>
                             </table>
                         </div>
+                        <div class="feedback-box" id="create-subcategory-feedback" style="margin-top:15px;"></div>
                     </div>
                 </div>
             </section>
@@ -1327,6 +1361,8 @@
             });
         }
 
+        let uploadFormCategories = [];
+
         function handleCategoryChange() {
             const select = document.getElementById('doc-category');
             const cat = select.value;
@@ -1334,6 +1370,12 @@
             // Show/hide flat mapping section for RESIDENT_SPECIFIC category
             const flatSection = document.getElementById('flat-mapping-section');
             flatSection.style.display = (cat === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
+
+            const subcatSelect = document.getElementById('doc-subcategory');
+            const selectedCat = uploadFormCategories.find(c => c.code === cat);
+            const matching = selectedCat ? selectedCat.subcategories : [];
+            subcatSelect.innerHTML = '<option value="">None</option>' +
+                matching.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`).join('');
 
             // Toggling that section shifts page layout right below the still-focused
             // select — browsers then auto-scroll to keep it in view, which reads as an
@@ -1349,14 +1391,15 @@
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (resp.ok) {
-                    const categories = await resp.json();
-                    select.innerHTML = categories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
+                    uploadFormCategories = await resp.json();
+                    select.innerHTML = uploadFormCategories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
                 } else {
                     select.innerHTML = '<option value="">No categories available</option>';
                 }
             } catch (err) {
                 select.innerHTML = '<option value="">No categories available</option>';
             }
+
             handleCategoryChange();
         }
 
@@ -1743,6 +1786,8 @@
             await loadNonSystemCategories();
             renderCategoriesList();
             await loadCategoryMatrix();
+            populateSubcategoryParentSelect();
+            renderSubcategoriesList();
         }
 
         let allCategories = [];
@@ -1829,6 +1874,71 @@
             }
         }
 
+        function populateSubcategoryParentSelect() {
+            const select = document.getElementById('subcategory-parent-select');
+            const prev = select.value;
+            select.innerHTML = allCategories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.label)}</option>`).join('');
+            select.value = allCategories.some(c => c.code === prev) ? prev : (allCategories[0] ? allCategories[0].code : '');
+        }
+
+        function renderSubcategoriesList() {
+            const tbody = document.getElementById('subcategories-list-rows-target');
+            const category = document.getElementById('subcategory-parent-select').value;
+            const selectedCat = allCategories.find(c => c.code === category);
+            const rows = selectedCat ? selectedCat.subcategories : [];
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No subcategories yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(s => `
+                <tr>
+                    <td style="font-weight:700;">${escapeHtml(s.label)}</td>
+                    <td>
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentSubcategory(${s.subcategory_id}, '${escapeHtml(s.label)}')">Rename</button>` : ''}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renameDocumentSubcategory(subcategoryId, currentLabel) {
+            openRenameModal('subcategory', String(subcategoryId), currentLabel);
+        }
+
+        async function submitCreateSubcategory() {
+            const feedback = document.getElementById('create-subcategory-feedback');
+            const labelInput = document.getElementById('new-subcategory-label');
+            const label = labelInput.value.trim();
+            const code = label.toUpperCase().replace(/\s+/g, '_');
+            const category = document.getElementById('subcategory-parent-select').value;
+
+            feedback.style.display = 'none';
+            if (!label || !category) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-subcategories/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ category, code, label })
+                });
+                const data = await resp.json();
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">✓</span> Subcategory "${escapeHtml(label)}" created.`;
+                    labelInput.value = '';
+                    await loadNonSystemCategories();
+                    renderSubcategoriesList();
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create subcategory.')}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            }
+        }
+
         let allDesignations = [];
 
         async function loadNonSystemDesignations() {
@@ -1869,10 +1979,12 @@
             openRenameModal('designation', code, currentLabel);
         }
 
+        const RENAME_MODAL_TITLES = { category: 'Rename Category', subcategory: 'Rename Subcategory', designation: 'Rename Designation' };
+
         function openRenameModal(kind, code, currentLabel) {
             document.getElementById('rename-modal-kind').value = kind;
             document.getElementById('rename-modal-code').value = code;
-            document.getElementById('rename-modal-title').textContent = kind === 'category' ? 'Rename Category' : 'Rename Designation';
+            document.getElementById('rename-modal-title').textContent = RENAME_MODAL_TITLES[kind] || 'Rename';
             const input = document.getElementById('rename-modal-input');
             input.value = currentLabel;
             document.getElementById('rename-modal-feedback').innerHTML = '';
@@ -1900,17 +2012,22 @@
                 return;
             }
 
-            const url = kind === 'category'
-                ? `${API_BASE}/api/v1/admin/roles/document-categories/rename`
-                : `${API_BASE}/api/v1/admin/roles/designations/rename`;
+            const RENAME_URLS = {
+                category: `${API_BASE}/api/v1/admin/roles/document-categories/rename`,
+                subcategory: `${API_BASE}/api/v1/admin/roles/document-subcategories/rename`,
+                designation: `${API_BASE}/api/v1/admin/roles/designations/rename`,
+            };
+            const body = kind === 'subcategory'
+                ? { subcategory_id: parseInt(code, 10), label: newLabel }
+                : { code, label: newLabel };
 
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
             try {
-                const resp = await fetch(url, {
+                const resp = await fetch(RENAME_URLS[kind], {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ code, label: newLabel })
+                    body: JSON.stringify(body)
                 });
                 const data = await resp.json();
                 if (resp.ok) {
@@ -1919,6 +2036,9 @@
                         await loadNonSystemCategories();
                         renderCategoriesList();
                         await loadCategoryMatrix();
+                    } else if (kind === 'subcategory') {
+                        await loadNonSystemCategories();
+                        renderSubcategoriesList();
                     } else {
                         await loadNonSystemDesignations();
                         renderDesignationsList();
@@ -2383,6 +2503,7 @@
 
         let allAdminDocs = [];
         let subbarCategoryFilter = 'ALL';
+        let subbarSubcategoryFilter = 'ALL';
 
         async function loadAdminDocuments() {
             try {
@@ -2416,14 +2537,62 @@
             if (subbarCategoryFilter !== 'ALL' && !categories.includes(subbarCategoryFilter)) {
                 subbarCategoryFilter = 'ALL';
             }
+            renderAdminSubcategoryFilterChips();
+        }
+
+        function renderAdminSubcategoryFilterChips() {
+            const bar = document.getElementById('admin-subcategory-filter-bar');
+            if (subbarCategoryFilter === 'ALL') {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                return;
+            }
+
+            const docsInCategory = allAdminDocs.filter(d => d.document.category === subbarCategoryFilter);
+            const subcats = [...new Map(
+                docsInCategory
+                    .filter(d => d.metadata && d.metadata.subcategory_code)
+                    .map(d => [d.metadata.subcategory_code, d.metadata.subcategory_label])
+            ).entries()];
+
+            if (subcats.length === 0) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                subbarSubcategoryFilter = 'ALL';
+                return;
+            }
+
+            bar.style.display = 'flex';
+            bar.innerHTML = '<button class="sub-filter-chip active" id="admin-subfilter-all" onclick="filterAdminDocsBySubcategory(\'ALL\')">All</button>' +
+                subcats.map(([code, label]) => {
+                    const chipId = 'admin-subfilter-' + code.toLowerCase().replace(/_/g, '-');
+                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterAdminDocsBySubcategory('${code}')">${escapeHtml(label)}</button>`;
+                }).join('');
+
+            if (subbarSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === subbarSubcategoryFilter)) {
+                subbarSubcategoryFilter = 'ALL';
+            }
         }
 
         function filterAdminDocsBySubbar(category) {
             subbarCategoryFilter = category;
+            subbarSubcategoryFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#admin-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'admin-filter-' + category.toLowerCase().replace(/_/g, '-');
+            const target = document.getElementById(chipId);
+            if (target) target.classList.add('active');
+
+            renderAdminSubcategoryFilterChips();
+            filterAdminDocs();
+        }
+
+        function filterAdminDocsBySubcategory(code) {
+            subbarSubcategoryFilter = code;
+
+            document.querySelectorAll('#admin-subcategory-filter-bar .sub-filter-chip').forEach(el => el.classList.remove('active'));
+            const chipId = 'admin-subfilter-' + code.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
 
@@ -2436,10 +2605,12 @@
             const filtered = allAdminDocs.filter(d => {
                 const doc = d.document;
                 const matchesCat = (subbarCategoryFilter === 'ALL' || doc.category === subbarCategoryFilter);
+                const matchesSubcat = (subbarSubcategoryFilter === 'ALL' ||
+                    (d.metadata && d.metadata.subcategory_code === subbarSubcategoryFilter));
                 const matchesStatus = (statusFilter === 'ALL' ||
                     (statusFilter === 'ACTIVE' && !doc.is_deleted) ||
                     (statusFilter === 'DELETED' && doc.is_deleted));
-                return matchesCat && matchesStatus;
+                return matchesCat && matchesSubcat && matchesStatus;
             });
 
             renderAdminDocsTable(filtered);
@@ -2484,7 +2655,7 @@
                 if (meta) {
                     metaString = `
                         <div style="font-size:11px; color:var(--muted-foreground); margin-top:8px; line-height: 1.45;">
-                            ${meta.subcategory ? `Subcategory: <strong>${escapeHtml(meta.subcategory)}</strong><br>` : ''}
+                            ${meta.subcategory_label ? `Subcategory: <strong>${escapeHtml(meta.subcategory_label)}</strong><br>` : ''}
                             Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ') || 'None'}<br>
                             Date: ${escapeHtml(meta.document_date)}
                         </div>
@@ -2596,7 +2767,7 @@
             }
 
             // Optional Metadata fields
-            const subcategory = document.getElementById('doc-subcategory').value.trim() || null;
+            const subcategory_code = document.getElementById('doc-subcategory').value || null;
             const tagsInput = document.getElementById('doc-tags').value.trim();
             const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
             const document_date = document.getElementById('doc-date').value || null;
@@ -2610,7 +2781,7 @@
                 category,
                 flat,
                 metadata: document_date ? {
-                    subcategory,
+                    subcategory_code,
                     tags,
                     document_date,
                     valid_from,

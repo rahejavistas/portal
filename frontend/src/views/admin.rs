@@ -24,6 +24,21 @@ pub(crate) const ADMIN_HTML: &str = r#"
         html {
             overflow-x: hidden;
         }
+        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
+           in <script>) so the full text is still available on hover. */
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: block;
+            max-width: 100%;
+        }
+        .truncate-2-lines {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
         :root {
             --background: #FFFFFF;
             --foreground: #111827;
@@ -783,12 +798,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         </div>
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>User</th>
-                                        <th style="text-align:center;">Actions</th>
-                                    </tr>
-                                </thead>
                                 <tbody id="user-rows-target">
                                     <tr>
                                         <td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading registry...</td>
@@ -817,32 +826,15 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     <!-- Category Filter Bar (Desktop & Mobile) -->
                     <div class="category-filter-bar" id="admin-filter-bar">
                         <button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar('ALL')">All</button>
+                        <button class="filter-chip" id="admin-filter-deleted" onclick="filterAdminDocsBySubbar('DELETED')">Deleted Files</button>
                     </div>
+                    <div class="category-filter-bar" id="admin-subcategory-filter-bar" style="display:none;"></div>
 
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Explorer</h3>
-                        
-                        <!-- Filters for DB Explorer (Secondary Row) -->
-                        <div style="display: flex; gap: 15px; margin-bottom: 24px; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 150px;">
-                                <label style="font-size: 11px; margin-bottom: 5px;">Status</label>
-                                <select id="filter-status" onchange="filterAdminDocs()" style="padding: 8px 12px; font-size: 13px;">
-                                    <option value="ALL">All Statuses</option>
-                                    <option value="ACTIVE">Active</option>
-                                    <option value="DELETED">Deleted</option>
-                                </select>
-                            </div>
-                        </div>
 
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>Document</th>
-                                        <th>Document Category</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
                                 <tbody id="admin-doc-rows-target">
                                     <tr>
                                         <td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</td>
@@ -883,13 +875,14 @@ pub(crate) const ADMIN_HTML: &str = r#"
                                 <div class="form-row-2">
                                     <div class="form-group">
                                         <label for="doc-flat-wing">Wing</label>
-                                        <input type="text" id="doc-flat-wing" placeholder="e.g. A" maxlength="2">
+                                        <input type="text" id="doc-flat-wing" placeholder="e.g. A" maxlength="2" oninput="scheduleFlatOwnerLookup()">
                                     </div>
                                     <div class="form-group">
                                         <label for="doc-flat-number">Flat Number</label>
-                                        <input type="text" id="doc-flat-number" placeholder="e.g. 301">
+                                        <input type="text" id="doc-flat-number" placeholder="e.g. 301" oninput="scheduleFlatOwnerLookup()">
                                     </div>
                                 </div>
+                                <div id="flat-owner-preview" style="font-size:12.5px; color:var(--muted-foreground); margin-top:-8px; margin-bottom:15px; min-height:16px;"></div>
                             </div>
 
                             <!-- Optional Details fields -->
@@ -898,7 +891,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <div class="form-row-2">
                                 <div class="form-group">
                                     <label for="doc-subcategory">Subcategory</label>
-                                    <input type="text" id="doc-subcategory" placeholder="e.g. Audit, Wing A, Finance">
+                                    <select id="doc-subcategory">
+                                        <option value="">None</option>
+                                    </select>
                                 </div>
                                 <div class="form-group">
                                     <label for="doc-tags">Tags (comma-separated)</label>
@@ -930,17 +925,22 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                 <!-- Subtab 3: Document Categories (create + designation access matrix — requires documents.categories.manage) -->
                 <div class="subtab-panel" id="subtab-panel-categories">
-                    <div class="card" style="margin-bottom: 24px;">
-                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Categories</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Public and Resident Specific are protected system categories and cannot be deleted.</p>
+                    <div class="card" id="category-access-card" style="display:none; margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Choose which designations can view or manage each document category.</p>
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>Label</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
+                                <tbody id="category-access-designations-rows-target">
+                                    <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Categories</h3>
+                        <div class="table-container">
+                            <table>
                                 <tbody id="categories-list-rows-target">
                                     <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                                 </tbody>
@@ -955,22 +955,29 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         <div class="feedback-box" id="create-category-feedback" style="margin-top:15px;"></div>
                     </div>
 
-                    <div class="card" id="category-access-card" style="display:none;">
-                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Per designation, whether it can read and/or manage (upload, sign, delete) each category. Super Admin always has full access. Public and Resident Specific are not shown; they're governed by visibility rules, not this matrix.</p>
+                    <div class="card" style="margin-bottom: 24px;">
+                        <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Subcategories</h3>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Add labels under a category to help residents filter documents faster.</p>
+                        <div class="form-group" style="max-width:320px;">
+                            <label for="subcategory-parent-select">Category</label>
+                            <select id="subcategory-parent-select" onchange="renderSubcategoriesList()">
+                                <option value="">Loading categories...</option>
+                            </select>
+                        </div>
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>Designation</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="category-access-designations-rows-target">
+                                <tbody id="subcategories-list-rows-target">
                                     <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                                 </tbody>
+                                <tfoot>
+                                    <tr>
+                                        <td><input type="text" id="new-subcategory-label" placeholder="e.g. Audit" style="margin:0;"></td>
+                                        <td><button type="button" id="create-subcategory-submit-btn" class="submit-btn" style="width:auto; padding:8px 16px; margin:0;" onclick="submitCreateSubcategory()">Add New</button></td>
+                                    </tr>
+                                </tfoot>
                             </table>
                         </div>
+                        <div class="feedback-box" id="create-subcategory-feedback" style="margin-top:15px;"></div>
                     </div>
                 </div>
             </section>
@@ -989,19 +996,12 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 <div class="subtab-panel active" id="subtab-panel-user-designations">
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">User Designations</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Assign or revoke designations for any resident. Super Admin accounts and your own account are managed separately and cannot be edited here.</p>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Assign or revoke designations for any resident.</p>
                         <div style="margin-bottom: 24px;">
                             <input type="text" id="roles-search-input" placeholder="Search User...">
                         </div>
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>Resident</th>
-                                        <th>Designations</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
                                 <tbody id="roles-user-rows-target">
                                     <tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                                 </tbody>
@@ -1014,15 +1014,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 <div class="subtab-panel" id="subtab-panel-manage-designations">
                     <div class="card" style="margin-bottom: 24px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Designations</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Super Admin is a protected system designation and cannot be deleted. A designation still assigned to a user cannot be deleted either; revoke it from everyone first.</p>
                         <div class="table-container">
                             <table>
-                                <thead>
-                                    <tr>
-                                        <th>Label</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
                                 <tbody id="designations-list-rows-target">
                                     <tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                                 </tbody>
@@ -1039,7 +1032,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                     <div class="card" style="margin-bottom: 24px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Designation Permissions</h3>
-                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Controls what each designation can do. Super Admin always holds every permission and isn't shown here.</p>
+                        <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Controls what each designation can do.</p>
                         <div class="table-container">
                             <table id="designation-permissions-table">
                                 <thead>
@@ -1138,20 +1131,95 @@ pub(crate) const ADMIN_HTML: &str = r#"
         </div>
     </div>
 
-    <!-- Rename Modal (shared by designations + document categories) -->
+    <!-- Edit Modal (shared by designations + document categories/subcategories: rename + delete) -->
     <div id="rename-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closeRenameModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-            <h3 id="rename-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Rename</h3>
+            <h3 id="rename-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Edit</h3>
             <input type="hidden" id="rename-modal-kind">
             <input type="hidden" id="rename-modal-code">
             <div class="form-group">
-                <label for="rename-modal-input">New label</label>
+                <label for="rename-modal-input">Label</label>
                 <input type="text" id="rename-modal-input" onkeydown="if (event.key === 'Enter') submitRenameModal()">
             </div>
             <div class="feedback-box" id="rename-modal-feedback" style="margin-top: 15px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; margin-top:20px;">
+                <button id="rename-modal-delete-btn" onclick="deleteFromRenameModal()" class="del-action-btn" style="display:none;">Delete</button>
+                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-left:auto;">
+                    <button onclick="closeRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                    <button id="rename-modal-save-btn" onclick="submitRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal (replaces native confirm() — Chrome silently swallows those unless
+         DevTools is open, which reads as "the button just doesn't work") -->
+    <div id="confirm-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeConfirmModal(false)">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5;"></p>
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
-                <button onclick="closeRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
-                <button id="rename-modal-save-btn" onclick="submitRenameModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save</button>
+                <button onclick="closeConfirmModal(false)" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button id="confirm-modal-ok-btn" onclick="closeConfirmModal(true)" class="del-action-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Document Modal -->
+    <div id="edit-document-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; overflow-y:auto;" onclick="if (event.target === this) closeEditDocumentModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin:32px 0; max-height:calc(100vh - 64px); overflow-y:auto;">
+            <h3 style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Edit Document</h3>
+            <input type="hidden" id="edit-doc-id">
+            <input type="hidden" id="edit-doc-original-category">
+
+            <div class="form-group">
+                <label for="edit-doc-title">Title</label>
+                <input type="text" id="edit-doc-title">
+            </div>
+            <div class="form-group">
+                <label for="edit-doc-desc">Description</label>
+                <textarea id="edit-doc-desc"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="edit-doc-category">Category</label>
+                <select id="edit-doc-category" onchange="handleEditCategoryChange()"></select>
+            </div>
+            <div id="edit-doc-category-warning" style="display:none; margin:0 0 15px 0; padding:10px 12px; background:rgba(234,179,8,0.12); border:1px solid rgba(234,179,8,0.4); border-radius:6px; font-size:12.5px; color:var(--foreground); line-height:1.5;">
+                Changing the category may change who can view and access this document.
+            </div>
+            <div class="form-group">
+                <label for="edit-doc-subcategory">Subcategory</label>
+                <select id="edit-doc-subcategory">
+                    <option value="">None</option>
+                </select>
+            </div>
+            <div class="form-row-2">
+                <div class="form-group">
+                    <label for="edit-doc-tags">Tags (comma-separated)</label>
+                    <input type="text" id="edit-doc-tags">
+                </div>
+                <div class="form-group">
+                    <label for="edit-doc-date">Date</label>
+                    <input type="date" id="edit-doc-date">
+                </div>
+            </div>
+            <div class="form-row-2">
+                <div class="form-group">
+                    <label for="edit-doc-valid-from">Valid From</label>
+                    <input type="date" id="edit-doc-valid-from">
+                </div>
+                <div class="form-group">
+                    <label for="edit-doc-valid-until">Valid Until</label>
+                    <input type="date" id="edit-doc-valid-until">
+                </div>
+            </div>
+
+            <div class="feedback-box" id="edit-doc-feedback" style="margin-top: 15px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; margin-top:20px;">
+                <button class="del-action-btn" onclick="deleteDocumentFromEditModal()">Delete Document</button>
+                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                    <button onclick="closeEditDocumentModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                    <button id="edit-doc-save-btn" onclick="submitEditDocument()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Save</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1195,6 +1263,34 @@ pub(crate) const ADMIN_HTML: &str = r#"
                  .replace(/>/g, "&gt;")
                  .replace(/"/g, "&quot;")
                  .replace(/'/g, "&#039;");
+        }
+
+        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
+        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
+        // element so the full value is still readable on hover.
+        function truncText(text, maxLen) {
+            const str = (text === null || text === undefined) ? '' : text.toString();
+            return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
+        }
+        function truncTitle(text) {
+            return escapeHtml((text === null || text === undefined) ? '' : text.toString());
+        }
+
+        // Replaces native confirm() — resolves true/false once the user picks.
+        let _confirmResolve = null;
+        function showConfirm(message, okLabel) {
+            document.getElementById('confirm-modal-message').textContent = message;
+            document.getElementById('confirm-modal-ok-btn').textContent = okLabel || 'Confirm';
+            document.getElementById('confirm-modal').style.display = 'flex';
+            return new Promise(resolve => { _confirmResolve = resolve; });
+        }
+        function closeConfirmModal(result) {
+            document.getElementById('confirm-modal').style.display = 'none';
+            if (_confirmResolve) {
+                const resolve = _confirmResolve;
+                _confirmResolve = null;
+                resolve(result);
+            }
         }
 
         // API error bodies are either a bare JSON string or a {message: "..."} object —
@@ -1328,6 +1424,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             });
         }
 
+        let uploadFormCategories = [];
+
         function handleCategoryChange() {
             const select = document.getElementById('doc-category');
             const cat = select.value;
@@ -1336,10 +1434,56 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const flatSection = document.getElementById('flat-mapping-section');
             flatSection.style.display = (cat === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
 
+            const subcatSelect = document.getElementById('doc-subcategory');
+            const selectedCat = uploadFormCategories.find(c => c.code === cat);
+            const matching = selectedCat ? selectedCat.subcategories : [];
+            subcatSelect.innerHTML = '<option value="">None</option>' +
+                matching.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`).join('');
+
             // Toggling that section shifts page layout right below the still-focused
             // select — browsers then auto-scroll to keep it in view, which reads as an
             // unwanted jump right as the dropdown closes. Blurring avoids that.
             select.blur();
+        }
+
+        let flatOwnerLookupTimer = null;
+
+        function scheduleFlatOwnerLookup() {
+            clearTimeout(flatOwnerLookupTimer);
+            flatOwnerLookupTimer = setTimeout(runFlatOwnerLookup, 400);
+        }
+
+        async function runFlatOwnerLookup() {
+            const preview = document.getElementById('flat-owner-preview');
+            const wing = document.getElementById('doc-flat-wing').value.trim();
+            const flat_number = document.getElementById('doc-flat-number').value.trim();
+
+            if (!wing || !flat_number) {
+                preview.textContent = '';
+                return;
+            }
+
+            preview.textContent = 'Checking...';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/flat-owners`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ wing, flat_number })
+                });
+                if (!resp.ok) {
+                    preview.textContent = '';
+                    return;
+                }
+                const data = await resp.json();
+                const emails = data.emails || [];
+                if (emails.length === 0) {
+                    preview.innerHTML = '<span style="color:var(--muted-foreground);">No active owner found for this flat.</span>';
+                } else {
+                    preview.innerHTML = `Will be visible to: <strong>${emails.map(escapeHtml).join(', ')}</strong>`;
+                }
+            } catch (err) {
+                preview.textContent = '';
+            }
         }
 
         async function loadUploadCategories() {
@@ -1350,14 +1494,15 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (resp.ok) {
-                    const categories = await resp.json();
-                    select.innerHTML = categories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
+                    uploadFormCategories = await resp.json();
+                    select.innerHTML = uploadFormCategories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
                 } else {
                     select.innerHTML = '<option value="">No categories available</option>';
                 }
             } catch (err) {
                 select.innerHTML = '<option value="">No categories available</option>';
             }
+
             handleCategoryChange();
         }
 
@@ -1651,7 +1796,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                 tr.innerHTML = `
                     <td>
-                        <div style="font-weight: 700; color: var(--foreground);">${escapeHtml(u.email)}</div>
+                        <div class="truncate" style="font-weight: 700; color: var(--foreground); max-width:260px;" title="${truncTitle(u.email)}">${escapeHtml(truncText(u.email, 40))}</div>
                         <div style="font-size: 12px; color: var(--muted-foreground); margin-top: 3px;">${mappingText}</div>
                     </td>
                     <td>
@@ -1744,6 +1889,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             await loadNonSystemCategories();
             renderCategoriesList();
             await loadCategoryMatrix();
+            populateSubcategoryParentSelect();
+            renderSubcategoriesList();
         }
 
         let allCategories = [];
@@ -1780,19 +1927,16 @@ pub(crate) const ADMIN_HTML: &str = r#"
             }
             tbody.innerHTML = allCategories.map(c => `
                 <tr>
-                    <td style="font-weight:700;">${escapeHtml(c.label)}</td>
-                    <td>
-                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentCategory('${escapeHtml(c.code)}', '${escapeHtml(c.label)}')">Rename</button>` : ''}
-                        ${c.is_system
-                            ? '<span style="color:var(--muted-foreground); font-style:italic; font-size:12px;">System</span>'
-                            : (canManageCategories ? `<button class="del-action-btn" onclick="deleteDocumentCategory('${escapeHtml(c.code)}')">Delete</button>` : '')}
+                    <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(c.label)}">${escapeHtml(truncText(c.label, 50))}</span></td>
+                    <td style="text-align:center;">
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="editDocumentCategory('${escapeHtml(c.code)}', '${escapeHtml(c.label)}', ${c.is_system})">Edit</button>` : ''}
                     </td>
                 </tr>
             `).join('');
         }
 
-        function renameDocumentCategory(code, currentLabel) {
-            openRenameModal('category', code, currentLabel);
+        function editDocumentCategory(code, currentLabel, isSystem) {
+            openRenameModal('category', code, currentLabel, isSystem);
         }
 
         async function submitCreateCategory() {
@@ -1830,6 +1974,71 @@ pub(crate) const ADMIN_HTML: &str = r#"
             }
         }
 
+        function populateSubcategoryParentSelect() {
+            const select = document.getElementById('subcategory-parent-select');
+            const prev = select.value;
+            select.innerHTML = allCategories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.label)}</option>`).join('');
+            select.value = allCategories.some(c => c.code === prev) ? prev : (allCategories[0] ? allCategories[0].code : '');
+        }
+
+        function renderSubcategoriesList() {
+            const tbody = document.getElementById('subcategories-list-rows-target');
+            const category = document.getElementById('subcategory-parent-select').value;
+            const selectedCat = allCategories.find(c => c.code === category);
+            const rows = selectedCat ? selectedCat.subcategories : [];
+            if (rows.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">No subcategories yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = rows.map(s => `
+                <tr>
+                    <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(s.label)}">${escapeHtml(truncText(s.label, 50))}</span></td>
+                    <td>
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentSubcategory(${s.subcategory_id}, '${escapeHtml(s.label)}')">Rename</button>` : ''}
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renameDocumentSubcategory(subcategoryId, currentLabel) {
+            openRenameModal('subcategory', String(subcategoryId), currentLabel);
+        }
+
+        async function submitCreateSubcategory() {
+            const feedback = document.getElementById('create-subcategory-feedback');
+            const labelInput = document.getElementById('new-subcategory-label');
+            const label = labelInput.value.trim();
+            const code = label.toUpperCase().replace(/\s+/g, '_');
+            const category = document.getElementById('subcategory-parent-select').value;
+
+            feedback.style.display = 'none';
+            if (!label || !category) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-subcategories/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ category, code, label })
+                });
+                const data = await resp.json();
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">✓</span> Subcategory "${escapeHtml(label)}" created.`;
+                    labelInput.value = '';
+                    await loadNonSystemCategories();
+                    renderSubcategoriesList();
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create subcategory.')}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            }
+        }
+
         let allDesignations = [];
 
         async function loadNonSystemDesignations() {
@@ -1855,29 +2064,36 @@ pub(crate) const ADMIN_HTML: &str = r#"
             }
             tbody.innerHTML = allDesignations.map(d => `
                 <tr>
-                    <td style="font-weight:700;">${escapeHtml(d.label)}</td>
-                    <td>
-                        <button class="action-select" style="cursor:pointer;" onclick="renameDesignation('${escapeHtml(d.code)}', '${escapeHtml(d.label)}')">Rename</button>
-                        ${d.is_system
-                            ? '<span style="color:var(--muted-foreground); font-style:italic; font-size:12px;">System</span>'
-                            : `<button class="del-action-btn" onclick="deleteDesignation('${escapeHtml(d.code)}')">Delete</button>`}
+                    <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 50))}</span></td>
+                    <td style="text-align:center;">
+                        <button class="action-select" style="cursor:pointer;" onclick="editDesignation('${escapeHtml(d.code)}', '${escapeHtml(d.label)}', ${d.is_system})">Edit</button>
                     </td>
                 </tr>
             `).join('');
         }
 
-        function renameDesignation(code, currentLabel) {
-            openRenameModal('designation', code, currentLabel);
+        function editDesignation(code, currentLabel, isSystem) {
+            openRenameModal('designation', code, currentLabel, isSystem);
         }
 
-        function openRenameModal(kind, code, currentLabel) {
+        const RENAME_MODAL_TITLES = { category: 'Edit Category', subcategory: 'Edit Subcategory', designation: 'Edit Designation' };
+
+        // Subcategories have no delete action at all (see deleteFromRenameModal); category/
+        // designation just can't be deleted while system-protected or (for designations)
+        // still assigned to someone — that check happens server-side, this only hides the
+        // button for the one case we know client-side (is_system).
+        function openRenameModal(kind, code, currentLabel, isSystem) {
             document.getElementById('rename-modal-kind').value = kind;
             document.getElementById('rename-modal-code').value = code;
-            document.getElementById('rename-modal-title').textContent = kind === 'category' ? 'Rename Category' : 'Rename Designation';
+            document.getElementById('rename-modal-title').textContent = RENAME_MODAL_TITLES[kind] || 'Edit';
             const input = document.getElementById('rename-modal-input');
             input.value = currentLabel;
             document.getElementById('rename-modal-feedback').innerHTML = '';
             document.getElementById('rename-modal-feedback').style.display = 'none';
+
+            const deleteBtn = document.getElementById('rename-modal-delete-btn');
+            deleteBtn.style.display = (kind !== 'subcategory' && !isSystem) ? 'inline-block' : 'none';
+
             document.getElementById('rename-modal').style.display = 'flex';
             input.focus();
             input.select();
@@ -1901,17 +2117,22 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 return;
             }
 
-            const url = kind === 'category'
-                ? `${API_BASE}/api/v1/admin/roles/document-categories/rename`
-                : `${API_BASE}/api/v1/admin/roles/designations/rename`;
+            const RENAME_URLS = {
+                category: `${API_BASE}/api/v1/admin/roles/document-categories/rename`,
+                subcategory: `${API_BASE}/api/v1/admin/roles/document-subcategories/rename`,
+                designation: `${API_BASE}/api/v1/admin/roles/designations/rename`,
+            };
+            const body = kind === 'subcategory'
+                ? { subcategory_id: parseInt(code, 10), label: newLabel }
+                : { code, label: newLabel };
 
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
             try {
-                const resp = await fetch(url, {
+                const resp = await fetch(RENAME_URLS[kind], {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ code, label: newLabel })
+                    body: JSON.stringify(body)
                 });
                 const data = await resp.json();
                 if (resp.ok) {
@@ -1920,6 +2141,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         await loadNonSystemCategories();
                         renderCategoriesList();
                         await loadCategoryMatrix();
+                    } else if (kind === 'subcategory') {
+                        await loadNonSystemCategories();
+                        renderSubcategoriesList();
                     } else {
                         await loadNonSystemDesignations();
                         renderDesignationsList();
@@ -1941,7 +2165,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
 
         async function deleteDesignation(code) {
-            if (!confirm(`Delete designation "${code}"? This only works if no users currently hold it.`)) return;
+            if (!(await showConfirm(`Delete designation "${code}"? This only works if no users currently hold it.`, 'Delete'))) return false;
             try {
                 const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/delete`, {
                     method: 'POST',
@@ -1953,12 +2177,24 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     await loadNonSystemDesignations();
                     renderDesignationsList();
                     renderDesignationPermissionsMatrix();
+                    return true;
                 } else {
                     alert(data.message || 'Failed to delete designation.');
+                    return false;
                 }
             } catch (err) {
                 alert('Network error communicating with server.');
+                return false;
             }
+        }
+
+        async function deleteFromRenameModal() {
+            const kind = document.getElementById('rename-modal-kind').value;
+            const code = document.getElementById('rename-modal-code').value;
+            const deleted = kind === 'category'
+                ? await deleteDocumentCategory(code)
+                : await deleteDesignation(code);
+            if (deleted) closeRenameModal();
         }
 
         function renderRolesUserTable(usersList) {
@@ -1982,7 +2218,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             manageable.forEach(u => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><div style="font-weight: 700; color: var(--foreground);">${escapeHtml(u.email)}</div></td>
+                    <td><div class="truncate" style="font-weight: 700; color: var(--foreground); max-width:260px;" title="${truncTitle(u.email)}">${escapeHtml(truncText(u.email, 40))}</div></td>
                     <td>
                         ${u.designations.length > 0
                             ? u.designations.map(d => `<span class="badge ${d.toLowerCase()}">${escapeHtml(d)}</span>`).join('')
@@ -2059,7 +2295,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const removals = changes.filter(c => c.action === 'revoke');
             if (removals.length > 0) {
                 const names = removals.map(c => c.designationCode).join(', ');
-                if (!confirm(`Remove designation(s) ${names} from this user? They will lose whatever access those grant.`)) {
+                if (!(await showConfirm(`Remove designation(s) ${names} from this user? They will lose whatever access those grant.`, 'Remove'))) {
                     return;
                 }
             }
@@ -2125,7 +2361,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
             tbody.innerHTML = allNonSystemDesignations.map(d => `
                 <tr>
-                    <td style="font-weight:700;">${escapeHtml(d.label)}</td>
+                    <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 50))}</span></td>
                     <td>${canManageDesignations
                         ? `<button class="action-select" style="cursor:pointer;" onclick="openManageCategoryAccessModal('${escapeHtml(d.code)}', '${escapeHtml(d.label)}')">Manage Access</button>`
                         : ''}</td>
@@ -2221,7 +2457,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
 
         async function deleteDocumentCategory(code) {
-            if (!confirm(`Delete category "${code}"? This only works if no documents use it.`)) return;
+            if (!(await showConfirm(`Delete category "${code}"? This only works if no documents use it.`, 'Delete'))) return false;
             try {
                 const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-categories/delete`, {
                     method: 'POST',
@@ -2231,12 +2467,18 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 const data = await resp.json();
                 if (resp.ok) {
                     await loadNonSystemCategories();
+                    renderCategoriesList();
+                    populateSubcategoryParentSelect();
+                    renderSubcategoriesList();
                     await loadCategoryMatrix();
+                    return true;
                 } else {
                     alert(data.message || 'Failed to delete category.');
+                    return false;
                 }
             } catch (err) {
                 alert('Connection error while deleting category.');
+                return false;
             }
         }
 
@@ -2279,8 +2521,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 const isOwn = !!(user && (user.designations || []).includes(d.code));
                 return `
                 <tr>
-                    <td style="font-weight:700; position:sticky; left:0; z-index:1; background-color:var(--background); box-shadow: 2px 0 4px rgba(0,0,0,0.06);">
-                        ${escapeHtml(d.label)}
+                    <td style="font-weight:700; position:sticky; left:0; z-index:1; background-color:var(--background); box-shadow: 2px 0 4px rgba(0,0,0,0.06); max-width:180px;">
+                        <span class="truncate" style="max-width:150px; display:inline-block; vertical-align:middle;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 24))}</span>
                         ${isOwn ? '<span title="You hold this designation — only another admin can change its permissions." style="color:var(--muted-foreground); font-size:11px; font-weight:600; margin-left:6px;">(yours)</span>' : ''}
                     </td>
                     ${allPermissions.map(p => `
@@ -2384,6 +2626,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
         let allAdminDocs = [];
         let subbarCategoryFilter = 'ALL';
+        let subbarSubcategoryFilter = 'ALL';
 
         async function loadAdminDocuments() {
             try {
@@ -2408,19 +2651,63 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const bar = document.getElementById('admin-filter-bar');
             const categories = [...new Set(allAdminDocs.map(d => d.document.category))];
 
-            bar.innerHTML = '<button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar(\'ALL\')">All</button>' +
+            bar.innerHTML = '<button class="filter-chip" id="admin-filter-all" onclick="filterAdminDocsBySubbar(\'ALL\')">All</button>' +
                 categories.map(cat => {
                     const chipId = 'admin-filter-' + cat.toLowerCase().replace(/_/g, '-');
                     return `<button class="filter-chip" id="${chipId}" onclick="filterAdminDocsBySubbar('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                }).join('') +
+                '<button class="filter-chip" id="admin-filter-deleted" onclick="filterAdminDocsBySubbar(\'DELETED\')">Deleted Files</button>';
+
+            if (subbarCategoryFilter !== 'ALL' && subbarCategoryFilter !== 'DELETED' && !categories.includes(subbarCategoryFilter)) {
+                subbarCategoryFilter = 'ALL';
+            }
+
+            const activeChipId = subbarCategoryFilter === 'DELETED'
+                ? 'admin-filter-deleted'
+                : 'admin-filter-' + subbarCategoryFilter.toLowerCase().replace(/_/g, '-');
+            const activeChip = document.getElementById(activeChipId);
+            if (activeChip) activeChip.classList.add('active');
+
+            renderAdminSubcategoryFilterChips();
+        }
+
+        function renderAdminSubcategoryFilterChips() {
+            const bar = document.getElementById('admin-subcategory-filter-bar');
+            if (subbarCategoryFilter === 'ALL' || subbarCategoryFilter === 'DELETED') {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                return;
+            }
+
+            const docsInCategory = allAdminDocs.filter(d => d.document.category === subbarCategoryFilter);
+            const subcats = [...new Map(
+                docsInCategory
+                    .filter(d => d.metadata && d.metadata.subcategory_code)
+                    .map(d => [d.metadata.subcategory_code, d.metadata.subcategory_label])
+            ).entries()];
+
+            if (subcats.length === 0) {
+                bar.style.display = 'none';
+                bar.innerHTML = '';
+                subbarSubcategoryFilter = 'ALL';
+                return;
+            }
+
+            bar.style.display = 'flex';
+            bar.innerHTML = '<button class="sub-filter-chip active" id="admin-subfilter-all" onclick="filterAdminDocsBySubcategory(\'ALL\')">All</button>' +
+                subcats.map(([code, label]) => {
+                    const chipId = 'admin-subfilter-' + code.toLowerCase().replace(/_/g, '-');
+                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterAdminDocsBySubcategory('${code}')">${escapeHtml(label)}</button>`;
                 }).join('');
 
-            if (subbarCategoryFilter !== 'ALL' && !categories.includes(subbarCategoryFilter)) {
-                subbarCategoryFilter = 'ALL';
+            if (subbarSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === subbarSubcategoryFilter)) {
+                subbarSubcategoryFilter = 'ALL';
             }
         }
 
         function filterAdminDocsBySubbar(category) {
             subbarCategoryFilter = category;
+            subbarSubcategoryFilter = 'ALL';
 
             // Update active state of filter chips
             document.querySelectorAll('#admin-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
@@ -2428,19 +2715,32 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const target = document.getElementById(chipId);
             if (target) target.classList.add('active');
 
+            renderAdminSubcategoryFilterChips();
+            filterAdminDocs();
+        }
+
+        function filterAdminDocsBySubcategory(code) {
+            subbarSubcategoryFilter = code;
+
+            document.querySelectorAll('#admin-subcategory-filter-bar .sub-filter-chip').forEach(el => el.classList.remove('active'));
+            const chipId = 'admin-subfilter-' + code.toLowerCase().replace(/_/g, '-');
+            const target = document.getElementById(chipId);
+            if (target) target.classList.add('active');
+
             filterAdminDocs();
         }
 
         function filterAdminDocs() {
-            const statusFilter = document.getElementById('filter-status').value;
+            const showingDeleted = subbarCategoryFilter === 'DELETED';
 
             const filtered = allAdminDocs.filter(d => {
                 const doc = d.document;
+                if (showingDeleted) return doc.is_deleted;
+
                 const matchesCat = (subbarCategoryFilter === 'ALL' || doc.category === subbarCategoryFilter);
-                const matchesStatus = (statusFilter === 'ALL' ||
-                    (statusFilter === 'ACTIVE' && !doc.is_deleted) ||
-                    (statusFilter === 'DELETED' && doc.is_deleted));
-                return matchesCat && matchesStatus;
+                const matchesSubcat = (subbarSubcategoryFilter === 'ALL' ||
+                    (d.metadata && d.metadata.subcategory_code === subbarSubcategoryFilter));
+                return matchesCat && matchesSubcat && !doc.is_deleted;
             });
 
             renderAdminDocsTable(filtered);
@@ -2481,16 +2781,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     ? '<span class="badge deleted">Deleted</span>'
                     : '';
 
-                let metaString = '';
-                if (meta) {
-                    metaString = `
-                        <div style="font-size:11px; color:var(--muted-foreground); margin-top:8px; line-height: 1.45;">
-                            ${meta.subcategory ? `Subcategory: <strong>${escapeHtml(meta.subcategory)}</strong><br>` : ''}
-                            Tags: ${meta.tags.map(t => `#${escapeHtml(t)}`).join(', ') || 'None'}<br>
-                            Date: ${escapeHtml(meta.document_date)}
-                        </div>
-                    `;
-                }
+                const subcategoryChip = (meta && meta.subcategory_label)
+                    ? `<span style="display:inline-block; margin-top:6px; padding:3px 9px; font-size:11px; font-weight:600; border-radius:999px; background:var(--background); border:1px solid var(--border); color:var(--foreground);">${escapeHtml(meta.subcategory_label)}</span>`
+                    : '';
 
                 const flatHtml = flat
                     ? `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Flat: <strong>${escapeHtml(flat.wing)}-${escapeHtml(flat.flat_number)}</strong></div>`
@@ -2498,24 +2791,23 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                 tr.innerHTML = `
                     <td>
-                        <div style="display:flex; align-items:center; gap:8px;">
-                            <div style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(doc.title)}</div>
+                        <div style="display:flex; align-items:center; gap:8px; max-width:480px;">
+                            <div class="truncate" style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" title="${truncTitle(doc.title)}" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(truncText(doc.title, 70))}</div>
                             ${badgeHtml}
                         </div>
-                        <div style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;">
+                        <div class="truncate-2-lines" style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;" title="${truncTitle(doc.description)}">
                             ${escapeHtml(doc.description) || 'No description...'}
                         </div>
-                        ${metaString}
                     </td>
                     <td>
                         <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span>
+                        ${subcategoryChip}
                         ${flatHtml}
                     </td>
                     <td>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <button class="download-btn" style="padding: 6px 12px; font-size: 11px;" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">Download</button>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                             ${!doc.is_deleted
-                                ? `<button class="del-action-btn" onclick="deleteDocument('${escapeHtml(doc.document_id)}')">Delete</button>`
+                                ? `<button class="action-select" style="cursor:pointer;" onclick="openEditDocumentModal('${escapeHtml(doc.document_id)}')">Edit</button>`
                                 : '<span style="color:var(--muted-foreground); font-style:italic; font-size: 12px;">Deleted</span>'}
                         </div>
                     </td>
@@ -2553,7 +2845,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
 
         async function deleteDocument(docId) {
-            if (!confirm('Are you sure you want to delete this document? Regular residents will lose access immediately.')) return;
+            if (!(await showConfirm('Are you sure you want to delete this document? Regular residents will lose access immediately.', 'Delete'))) return false;
             try {
                 const response = await fetch(`${API_BASE}/api/v1/admin/documents/${docId}/delete`, {
                     method: 'POST',
@@ -2562,11 +2854,142 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                 if (response.ok) {
                     loadAdminDocuments();
+                    return true;
                 } else {
                     alert('Failed to delete document.');
+                    return false;
                 }
             } catch (e) {
                 alert('Connection failure deleting document.');
+                return false;
+            }
+        }
+
+        async function deleteDocumentFromEditModal() {
+            const docId = document.getElementById('edit-doc-id').value;
+            const deleted = await deleteDocument(docId);
+            if (deleted) closeEditDocumentModal();
+        }
+
+        function openEditDocumentModal(docId) {
+            const docWithMeta = allAdminDocs.find(d => d.document.document_id === docId);
+            if (!docWithMeta) return;
+            const doc = docWithMeta.document;
+            const meta = docWithMeta.metadata;
+
+            document.getElementById('edit-doc-id').value = docId;
+            document.getElementById('edit-doc-original-category').value = doc.category;
+            document.getElementById('edit-doc-title').value = doc.title;
+            document.getElementById('edit-doc-desc').value = doc.description || '';
+
+            const categorySelect = document.getElementById('edit-doc-category');
+            if (doc.category === 'RESIDENT_SPECIFIC') {
+                // Flat-mapped documents can't have their category changed here — that would
+                // require re-mapping flats, which this modal doesn't handle.
+                categorySelect.innerHTML = `<option value="RESIDENT_SPECIFIC">${escapeHtml(formatCategory('RESIDENT_SPECIFIC'))}</option>`;
+                categorySelect.disabled = true;
+            } else {
+                categorySelect.disabled = false;
+                categorySelect.innerHTML = uploadFormCategories
+                    .filter(c => c.code !== 'RESIDENT_SPECIFIC')
+                    .map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`)
+                    .join('');
+                categorySelect.value = doc.category;
+            }
+
+            document.getElementById('edit-doc-tags').value = meta ? meta.tags.join(', ') : '';
+            document.getElementById('edit-doc-date').value = meta ? meta.document_date : '';
+            document.getElementById('edit-doc-valid-from').value = (meta && meta.valid_from) || '';
+            document.getElementById('edit-doc-valid-until').value = (meta && meta.valid_until) || '';
+
+            handleEditCategoryChange();
+            if (meta && meta.subcategory_code) {
+                document.getElementById('edit-doc-subcategory').value = meta.subcategory_code;
+            }
+
+            document.getElementById('edit-doc-feedback').style.display = 'none';
+            document.getElementById('edit-document-modal').style.display = 'flex';
+        }
+
+        function closeEditDocumentModal() {
+            document.getElementById('edit-document-modal').style.display = 'none';
+        }
+
+        function handleEditCategoryChange() {
+            const category = document.getElementById('edit-doc-category').value;
+            const originalCategory = document.getElementById('edit-doc-original-category').value;
+
+            document.getElementById('edit-doc-category-warning').style.display =
+                (category !== originalCategory) ? 'block' : 'none';
+
+            const subcatSelect = document.getElementById('edit-doc-subcategory');
+            const selectedCat = uploadFormCategories.find(c => c.code === category);
+            const matching = selectedCat ? selectedCat.subcategories : [];
+            subcatSelect.innerHTML = '<option value="">None</option>' +
+                matching.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`).join('');
+        }
+
+        async function submitEditDocument() {
+            const feedback = document.getElementById('edit-doc-feedback');
+            const saveBtn = document.getElementById('edit-doc-save-btn');
+            feedback.style.display = 'none';
+
+            const docId = document.getElementById('edit-doc-id').value;
+            const title = document.getElementById('edit-doc-title').value.trim();
+            const description = document.getElementById('edit-doc-desc').value.trim() || null;
+            const category = document.getElementById('edit-doc-category').value;
+            const subcategory_code = document.getElementById('edit-doc-subcategory').value || null;
+            const tagsInput = document.getElementById('edit-doc-tags').value.trim();
+            const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
+            const document_date = document.getElementById('edit-doc-date').value || null;
+            const valid_from = document.getElementById('edit-doc-valid-from').value || null;
+            const valid_until = document.getElementById('edit-doc-valid-until').value || null;
+            const hasMetadata = subcategory_code || tags.length > 0 || document_date || valid_from || valid_until;
+            const today = new Date().toISOString().slice(0, 10);
+
+            if (!title) {
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = '<span class="icon">!</span> Title is required.';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            const payload = {
+                title,
+                description,
+                category,
+                metadata: hasMetadata ? {
+                    subcategory_code,
+                    tags,
+                    document_date: document_date || today,
+                    valid_from,
+                    valid_until
+                } : null
+            };
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/${docId}/update`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify(payload)
+                });
+                if (resp.ok) {
+                    closeEditDocumentModal();
+                    await loadAdminDocuments();
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(await readErrorMessage(resp))}`;
+                    feedback.style.display = 'block';
+                }
+            } catch (err) {
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = '<span class="icon">!</span> Network error communicating with server.';
+                feedback.style.display = 'block';
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
             }
         }
 
@@ -2596,13 +3019,18 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 flat = { wing, flat_number };
             }
 
-            // Optional Metadata fields
-            const subcategory = document.getElementById('doc-subcategory').value.trim() || null;
+            // Optional Metadata fields. document_date is required by the backend whenever
+            // metadata is sent at all — default it to today so picking a subcategory (or
+            // tags, or a validity range) without also touching the Date field doesn't
+            // silently drop everything (metadata used to be gated on document_date alone).
+            const subcategory_code = document.getElementById('doc-subcategory').value || null;
             const tagsInput = document.getElementById('doc-tags').value.trim();
             const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
             const document_date = document.getElementById('doc-date').value || null;
             const valid_from = document.getElementById('doc-valid-from').value || null;
             const valid_until = document.getElementById('doc-valid-until').value || null;
+            const hasMetadata = subcategory_code || tags.length > 0 || document_date || valid_from || valid_until;
+            const today = new Date().toISOString().slice(0, 10);
 
             // Formulate payload
             const payload = {
@@ -2610,10 +3038,10 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 description,
                 category,
                 flat,
-                metadata: document_date ? {
-                    subcategory,
+                metadata: hasMetadata ? {
+                    subcategory_code,
                     tags,
-                    document_date,
+                    document_date: document_date || today,
                     valid_from,
                     valid_until
                 } : null

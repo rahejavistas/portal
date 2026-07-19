@@ -50,8 +50,6 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 3. Category mapped to one of the user's active designations, via `document_category_designations` (e.g. a `committee` designation unlocks all `COMMITTEE` documents).
 4. `RESIDENT_SPECIFIC` documents explicitly linked (via `document_flats`) to a flat the user owns/occupies (`flat_ownerships`).
 
-Categories: `PUBLIC`, `RESIDENT_SPECIFIC`, `COMMITTEE`, `FINANCE`, `GOVERNANCE`, `OPERATIONAL`.
-
 ## Tables
 
 ### Users, flats, RBAC

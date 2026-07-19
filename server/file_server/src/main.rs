@@ -115,6 +115,10 @@ async fn main() {
                     post(handlers::documents::admin_list_manageable_categories),
                 )
                 .route(
+                    "/documents/flat-owners",
+                    post(handlers::admin::lookup_flat_owners),
+                )
+                .route(
                     "/documents/upload-url",
                     post(handlers::documents::admin_upload_url),
                 )
@@ -125,6 +129,10 @@ async fn main() {
                 .route(
                     "/documents/:id/get",
                     post(handlers::documents::admin_get_document),
+                )
+                .route(
+                    "/documents/:id/update",
+                    post(handlers::documents::admin_update_document),
                 )
                 .route(
                     "/documents/:id/delete",
@@ -207,6 +215,14 @@ async fn main() {
                 .route(
                     "/roles/document-categories/rename",
                     post(handlers::roles::rename_document_category),
+                )
+                .route(
+                    "/roles/document-subcategories/create",
+                    post(handlers::roles::create_document_subcategory),
+                )
+                .route(
+                    "/roles/document-subcategories/rename",
+                    post(handlers::roles::rename_document_subcategory),
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),

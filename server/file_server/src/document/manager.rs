@@ -20,6 +20,14 @@ pub struct AdminUploadIntentInput<'a> {
     pub uploaded_by: Option<i32>,
 }
 
+/// Input for `update_document`.
+pub struct UpdateDocumentInput<'a> {
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub category: &'a str,
+    pub metadata: Option<MetadataInput<'a>>,
+}
+
 impl DocumentManager {
     pub fn new(pg_pool: PgPool, s3_accessor: base::s3::S3Accessor) -> Self {
         Self {
@@ -119,10 +127,12 @@ impl DocumentManager {
 
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
-                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
+                g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              WHERE d.document_id = $1 AND NOT d.is_deleted",
         )
         .bind(document_id)
@@ -149,10 +159,12 @@ impl DocumentManager {
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
-                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
+                g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              WHERE NOT d.is_deleted AND d.document_id = ANY($1) \
              ORDER BY d.uploaded_date DESC",
         )
@@ -199,7 +211,7 @@ impl DocumentManager {
                 Self::insert_metadata(
                     &mut *tx,
                     doc.document_id,
-                    m.subcategory,
+                    m.subcategory_id,
                     m.tags,
                     m.document_date,
                     m.valid_from,
@@ -263,7 +275,7 @@ impl DocumentManager {
                 Self::insert_metadata(
                     &mut *tx,
                     doc.document_id,
-                    m.subcategory,
+                    m.subcategory_id,
                     m.tags,
                     m.document_date,
                     m.valid_from,
@@ -358,7 +370,7 @@ impl DocumentManager {
         let doc: Document = sqlx::query_as(
             "INSERT INTO documents (title, description, category, is_user_uploaded, is_upload_confirmed, uploaded_by) \
              VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING document_id, title, description, category, uploaded_date, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
+             RETURNING document_id, title, description, category, uploaded_date, updated_at, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
         )
         .bind(title)
         .bind(description)
@@ -376,19 +388,26 @@ impl DocumentManager {
     async fn insert_metadata<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         document_id: Uuid,
-        subcategory: Option<&str>,
+        subcategory_id: Option<i32>,
         tags: &[String],
         document_date: NaiveDate,
         valid_from: Option<NaiveDate>,
         valid_until: Option<NaiveDate>,
     ) -> Result<GenericDocumentMetadata, String> {
-        let meta: GenericDocumentMetadata = sqlx::query_as(
-            "INSERT INTO generic_document_metadata (document_id, subcategory, tags, document_date, valid_from, valid_until) \
+        let row: (
+            Uuid,
+            Option<i32>,
+            Vec<String>,
+            NaiveDate,
+            Option<NaiveDate>,
+            Option<NaiveDate>,
+        ) = sqlx::query_as(
+            "INSERT INTO generic_document_metadata (document_id, subcategory_id, tags, document_date, valid_from, valid_until) \
              VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING document_id, subcategory, tags, document_date, valid_from, valid_until",
+             RETURNING document_id, subcategory_id, tags, document_date, valid_from, valid_until",
         )
         .bind(document_id)
-        .bind(subcategory)
+        .bind(subcategory_id)
         .bind(tags)
         .bind(document_date)
         .bind(valid_from)
@@ -397,7 +416,16 @@ impl DocumentManager {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(meta)
+        Ok(GenericDocumentMetadata {
+            document_id: row.0,
+            subcategory_id: row.1,
+            subcategory_code: None,
+            subcategory_label: None,
+            tags: row.2,
+            document_date: row.3,
+            valid_from: row.4,
+            valid_until: row.5,
+        })
     }
 
     async fn assign_flat<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
@@ -453,10 +481,12 @@ impl DocumentManager {
     ) -> Result<Option<DocumentWithMetadata>, String> {
         let mut doc_with_meta: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
-                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
+                g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              WHERE d.document_id = $1",
         )
         .bind(document_id)
@@ -476,11 +506,13 @@ impl DocumentManager {
     pub async fn admin_list_all_documents(&self) -> Result<Vec<DocumentWithMetadata>, String> {
         let all_docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
-                g.subcategory, g.tags, g.document_date, g.valid_from, g.valid_until, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
+                g.tags, g.document_date, g.valid_from, g.valid_until, \
                 f.wing, f.flat_number \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
+             LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              LEFT JOIN LATERAL ( \
                 SELECT fl.wing, fl.flat_number FROM document_flats df \
                 JOIN flats fl ON fl.flat_id = df.flat_id \
@@ -494,6 +526,69 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
 
         Ok(all_docs)
+    }
+
+    /// Updates a document's title/description/category and replaces its metadata
+    /// (upserted if `Some`, cleared if `None`). Bumps `updated_at`.
+    pub async fn update_document(
+        &self,
+        document_id: Uuid,
+        input: UpdateDocumentInput<'_>,
+    ) -> Result<DocumentWithMetadata, String> {
+        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let result = sqlx::query(
+            "UPDATE documents SET title = $1, description = $2, category = $3, updated_at = NOW() \
+             WHERE document_id = $4",
+        )
+        .bind(input.title)
+        .bind(input.description)
+        .bind(input.category)
+        .bind(document_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if result.rows_affected() == 0 {
+            return Err("Document not found".to_string());
+        }
+
+        match input.metadata {
+            Some(m) => {
+                sqlx::query(
+                    "INSERT INTO generic_document_metadata (document_id, subcategory_id, tags, document_date, valid_from, valid_until) \
+                     VALUES ($1, $2, $3, $4, $5, $6) \
+                     ON CONFLICT (document_id) DO UPDATE SET \
+                        subcategory_id = EXCLUDED.subcategory_id, tags = EXCLUDED.tags, \
+                        document_date = EXCLUDED.document_date, valid_from = EXCLUDED.valid_from, \
+                        valid_until = EXCLUDED.valid_until",
+                )
+                .bind(document_id)
+                .bind(m.subcategory_id)
+                .bind(m.tags)
+                .bind(m.document_date)
+                .bind(m.valid_from)
+                .bind(m.valid_until)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            }
+            None => {
+                sqlx::query("DELETE FROM generic_document_metadata WHERE document_id = $1")
+                    .bind(document_id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        self.admin_get_any_document(document_id)
+            .await?
+            .ok_or_else(|| "Document not found".to_string())
     }
 
     /// Soft deletes a document by toggling is_deleted = TRUE.
@@ -513,7 +608,7 @@ impl DocumentManager {
     ) -> Result<Vec<Document>, String> {
         sqlx::query_as(
             "SELECT DISTINCT d.document_id, d.title, d.description, d.category, \
-             d.uploaded_date, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by \
+             d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by \
              FROM documents d \
              JOIN process_fields pf ON d.document_id = pf.document_id \
              JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \

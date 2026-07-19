@@ -62,9 +62,41 @@ fn validate_upload_extension(filename: &str) -> Result<String, ApiError> {
     Ok(derive_content_type_from_ext(&ext))
 }
 
+/// Resolves a `CreateMetadataPayload`'s `subcategory_code` (if any) against `category` and
+/// builds the `MetadataInput` the manager layer expects. Shared by create and update.
+async fn resolve_metadata<'a>(
+    state: &AppState,
+    category: &str,
+    metadata: &'a Option<CreateMetadataPayload>,
+) -> Result<Option<MetadataInput<'a>>, ApiError> {
+    match metadata.as_ref() {
+        Some(m) => {
+            let subcategory_id = match &m.subcategory_code {
+                Some(code) => Some(
+                    state
+                        .document_manager
+                        .resolve_subcategory_id(category, code)
+                        .await
+                        .map_err(bad_request)?,
+                ),
+                None => None,
+            };
+            Ok(Some(MetadataInput {
+                subcategory_id,
+                tags: m.tags.as_slice(),
+                document_date: m.document_date,
+                valid_from: m.valid_from,
+                valid_until: m.valid_until,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
 type FlatAndMetadata<'a> = (Option<FlatIdentifier>, Option<MetadataInput<'a>>);
 
-fn validate_flat_and_metadata<'a>(
+async fn validate_flat_and_metadata<'a>(
+    state: &AppState,
     category: &str,
     flat: Option<FlatPayload>,
     metadata: &'a Option<CreateMetadataPayload>,
@@ -80,13 +112,7 @@ fn validate_flat_and_metadata<'a>(
         .transpose()
         .map_err(bad_request)?;
 
-    let metadata = metadata.as_ref().map(|m| MetadataInput {
-        subcategory: m.subcategory.as_deref(),
-        tags: m.tags.as_slice(),
-        document_date: m.document_date,
-        valid_from: m.valid_from,
-        valid_until: m.valid_until,
-    });
+    let metadata = resolve_metadata(state, category, metadata).await?;
 
     Ok((flat_id, metadata))
 }
@@ -258,7 +284,7 @@ pub async fn user_confirm_upload(
 
 #[derive(serde::Deserialize)]
 pub struct CreateMetadataPayload {
-    pub subcategory: Option<String>,
+    pub subcategory_code: Option<String>,
     pub tags: Vec<String>,
     pub document_date: chrono::NaiveDate,
     pub valid_from: Option<chrono::NaiveDate>,
@@ -308,7 +334,7 @@ pub async fn admin_list_documents(
 pub async fn admin_list_manageable_categories(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<crate::document::DocumentCategoryDef>>, ApiError> {
+) -> Result<Json<Vec<crate::document::CategoryWithSubcategories>>, ApiError> {
     let manageable = state
         .document_manager
         .manageable_categories(&user)
@@ -325,7 +351,7 @@ pub async fn admin_list_manageable_categories(
         None => all_categories,
         Some(categories) => all_categories
             .into_iter()
-            .filter(|c| categories.contains(&c.code))
+            .filter(|c| categories.contains(&c.category.code))
             .collect(),
     };
     Ok(Json(visible))
@@ -377,7 +403,8 @@ pub async fn admin_upload_url(
 
     require_manageable_category(&state, &user, &payload.category).await?;
     let (flat_id, metadata) =
-        validate_flat_and_metadata(&payload.category, payload.flat, &payload.metadata)?;
+        validate_flat_and_metadata(&state, &payload.category, payload.flat, &payload.metadata)
+            .await?;
 
     let (result, upload_url, _key) = state
         .document_manager
@@ -420,6 +447,67 @@ pub async fn admin_confirm_upload(
     Ok(Json(AdminConfirmUploadResponse {
         status: "confirmed".to_string(),
     }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateDocumentPayload {
+    pub title: String,
+    pub description: Option<String>,
+    pub category: String,
+    pub metadata: Option<CreateMetadataPayload>,
+}
+
+/// Updates title/description/category/metadata for an existing document. Changing category
+/// can change who's able to see the document (categories are what access is keyed on), so
+/// callers should surface that clearly — this handler just enforces it isn't done blindly:
+/// the caller must be able to manage both the document's current category and the target
+/// one, and category changes into/out of RESIDENT_SPECIFIC are rejected outright since that
+/// category's visibility also depends on flat mapping, which this endpoint doesn't touch.
+pub async fn admin_update_document(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Path(document_id): Path<Uuid>,
+    Json(payload): Json<UpdateDocumentPayload>,
+) -> Result<Json<DocumentWithMetadata>, ApiError> {
+    let existing = require_manageable_document(&state, &user, document_id).await?;
+    let current_category = existing.document.category;
+
+    let title = payload.title.trim().to_string();
+    if title.is_empty() || title.len() > 200 {
+        return Err(bad_request("Title must be between 1 and 200 characters"));
+    }
+
+    if payload.category != current_category
+        && (payload.category == RESIDENT_SPECIFIC_CATEGORY
+            || current_category == RESIDENT_SPECIFIC_CATEGORY)
+    {
+        return Err(bad_request(
+            "Changing a document into or out of RESIDENT_SPECIFIC isn't supported here — \
+             that category's visibility also depends on its flat mapping.",
+        ));
+    }
+
+    if payload.category != current_category {
+        require_manageable_category(&state, &user, &payload.category).await?;
+    }
+
+    let metadata = resolve_metadata(&state, &payload.category, &payload.metadata).await?;
+
+    let updated = state
+        .document_manager
+        .update_document(
+            document_id,
+            crate::document::UpdateDocumentInput {
+                title: &title,
+                description: payload.description.as_deref(),
+                category: &payload.category,
+                metadata,
+            },
+        )
+        .await
+        .map_err(bad_request)?;
+
+    Ok(Json(updated))
 }
 
 pub async fn admin_delete_document(
