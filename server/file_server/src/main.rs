@@ -91,6 +91,7 @@ async fn main() {
 
             let users_manage_routes = Router::new()
                 .route("/users/create", post(handlers::admin::create_user))
+                .route("/users/create-staff", post(handlers::admin::create_staff))
                 .route(
                     "/users/revoke-flat",
                     post(handlers::admin::admin_revoke_flat),

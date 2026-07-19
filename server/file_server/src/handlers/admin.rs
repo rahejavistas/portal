@@ -85,6 +85,47 @@ pub async fn create_user(
 }
 
 #[derive(serde::Deserialize)]
+pub struct CreateStaffPayload {
+    pub email: String,
+}
+
+/// Create a staff account — no flat ownership, auto-assigned the `staff` designation.
+pub async fn create_staff(
+    State(state): State<AppState>,
+    SessionUser(caller): SessionUser,
+    Json(payload): Json<CreateStaffPayload>,
+) -> impl IntoResponse {
+    let email = payload.email.trim().to_lowercase();
+
+    if email.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Email is required."
+            })),
+        )
+            .into_response();
+    }
+
+    match state
+        .permissions_manager
+        .create_staff_user(&email, Some(caller.user_id))
+        .await
+    {
+        Ok(user) => (StatusCode::CREATED, Json(user)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": format!("Failed to create staff account: {}", e)
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
 pub struct RevokeFlatPayload {
     pub user_id: i32,
     pub wing: String,

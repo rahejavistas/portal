@@ -356,30 +356,34 @@ async fn test_designations_and_permissions() {
     let env = setup_db_test_env().await;
     let pm = PermissionsManager::new(env.db_pool.clone());
 
-    // Only super_admin is seeded; every other designation is created through the UI.
-    let designations = pm.list_designations().await.unwrap();
-    let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
-    assert_eq!(codes, vec!["super_admin"]);
-
-    pm.create_designation("staff", "Staff", None).await.unwrap();
+    // super_admin and staff are seeded; every other designation is created through the UI.
     let designations = pm.list_designations().await.unwrap();
     let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
     assert!(codes.contains(&"super_admin"));
     assert!(codes.contains(&"staff"));
+    assert_eq!(codes.len(), 2);
+
+    pm.create_designation("custodian", "Custodian", None)
+        .await
+        .unwrap();
+    let designations = pm.list_designations().await.unwrap();
+    let codes: Vec<&str> = designations.iter().map(|d| d.code.as_str()).collect();
+    assert!(codes.contains(&"super_admin"));
+    assert!(codes.contains(&"custodian"));
     assert!(!codes.contains(&"admin"));
     assert!(!codes.contains(&"resident"));
     assert!(!codes.contains(&"tenant"));
 
-    // Only super_admin is seeded with permissions; other designations (e.g. staff)
-    // get none by default.
+    // Only super_admin and staff are seeded with permissions; other designations (e.g.
+    // custodian, created above) get none by default.
     let super_admin_perms = pm.get_designation_permissions("super_admin").await.unwrap();
     assert!(super_admin_perms.contains(&"users.manage".to_string()));
     assert!(super_admin_perms.contains(&"documents.all.manage".to_string()));
     assert!(super_admin_perms.contains(&"process.reviewer".to_string()));
     assert_eq!(super_admin_perms.len(), 9);
 
-    let staff_perms = pm.get_designation_permissions("staff").await.unwrap();
-    assert!(staff_perms.is_empty());
+    let custodian_perms = pm.get_designation_permissions("custodian").await.unwrap();
+    assert!(custodian_perms.is_empty());
 
     let user = pm
         .create_user_with_credentials("staffer@vistas.com", Some("password123"), "A", "101", None)
@@ -391,21 +395,21 @@ async fn test_designations_and_permissions() {
         .await
         .unwrap());
 
-    pm.assign_designation(user.user_id, "staff", None)
+    pm.assign_designation(user.user_id, "custodian", None)
         .await
         .unwrap();
 
-    // Staff has no permissions seeded, so this remains false even though assigned.
+    // Custodian has no permissions seeded, so this remains false even though assigned.
     assert!(!pm
         .user_has_permission(user.user_id, "users.manage")
         .await
         .unwrap());
     assert_eq!(
         pm.get_user_designations(user.user_id).await.unwrap(),
-        vec!["staff".to_string()]
+        vec!["custodian".to_string()]
     );
 
-    pm.revoke_designation(user.user_id, "staff", None)
+    pm.revoke_designation(user.user_id, "custodian", None)
         .await
         .unwrap();
 
