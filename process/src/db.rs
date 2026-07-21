@@ -70,7 +70,17 @@ pub async fn init_process(
     Ok(process_id)
 }
 
-/// Save fields for a step. Validates, persists fields, updates completion. Returns the new step status.
+/// Outcome of a successful `save_step` call.
+pub struct SaveStepOutcome {
+    pub status: StepStatus,
+    /// document_ids that just got a brand-new (not previously existing) signature
+    /// requirement auto-provisioned — the caller should notify signers about these.
+    pub newly_queued_document_ids: Vec<Uuid>,
+}
+
+/// Save fields for a step. Validates, persists fields, updates completion, and
+/// auto-provisions a signature requirement for any `requires_signature` document field
+/// just filled. Returns the new step status.
 pub async fn save_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -78,7 +88,7 @@ pub async fn save_step(
     step_id: i32,
     fields: &[state_machine::SaveFieldInput],
     is_admin: bool,
-) -> Result<StepStatus, String> {
+) -> Result<SaveStepOutcome, String> {
     let state = load_state(conn, process_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -88,7 +98,69 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    persist_step_completions(&mut *conn, process_id, &result.steps_to_update)
+    let mut newly_queued_document_ids = Vec::new();
+    for (template_field_id, document_id) in &result.signature_required_document_ids {
+        let requirement_id: Option<i32> = sqlx::query_scalar(
+            "INSERT INTO document_signature_requirements \
+                (document_id, process_id, template_step_id, template_field_id) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (document_id) WHERE status <> 'CANCELLED' DO NOTHING \
+             RETURNING requirement_id",
+        )
+        .bind(document_id)
+        .bind(process_id)
+        .bind(step_id)
+        .bind(template_field_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some(requirement_id) = requirement_id {
+            sqlx::query(
+                "INSERT INTO document_signature_events (requirement_id, source, event_type) \
+                 VALUES ($1, 'internal', 'requirement_auto_created')",
+            )
+            .bind(requirement_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+            newly_queued_document_ids.push(*document_id);
+        }
+    }
+
+    // A requirement possibly just created above didn't exist yet when `state` was
+    // loaded, so `result.steps_to_update` (computed from that stale blocking set)
+    // could wrongly mark this step complete. Reload and recompute now that any new
+    // requirement rows actually exist.
+    let steps_to_update = if newly_queued_document_ids.is_empty() {
+        result.steps_to_update
+    } else {
+        let fresh_state = load_state(&mut *conn, process_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        state_machine::compute_completion_updates(template, &fresh_state, step_id)
+    };
+    let status = steps_to_update
+        .iter()
+        .find(|(sid, _)| *sid == step_id)
+        .map(|(_, completed)| {
+            if *completed {
+                if state_machine::build_step_info_map(template)
+                    .get(&step_id)
+                    .map(|i| i.is_review_required)
+                    .unwrap_or(false)
+                {
+                    StepStatus::PendingReview
+                } else {
+                    StepStatus::Completed
+                }
+            } else {
+                StepStatus::Open
+            }
+        })
+        .unwrap_or(result.new_status);
+
+    persist_step_completions(&mut *conn, process_id, &steps_to_update)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -96,7 +168,10 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(result.new_status)
+    Ok(SaveStepOutcome {
+        status,
+        newly_queued_document_ids,
+    })
 }
 
 /// Parameters for recording an admin review.
@@ -503,10 +578,26 @@ pub async fn load_state(
         });
     }
 
+    let field_doc_ids: Vec<Uuid> = fields.values().filter_map(|f| f.document_id).collect();
+    let blocking_document_ids: std::collections::HashSet<Uuid> = if field_doc_ids.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        sqlx::query_scalar(
+            "SELECT document_id FROM document_signature_requirements \
+             WHERE status = 'PENDING' AND document_id = ANY($1)",
+        )
+        .bind(&field_doc_ids)
+        .fetch_all(&mut *conn)
+        .await?
+        .into_iter()
+        .collect()
+    };
+
     Ok(ProcessStateInput {
         steps,
         fields,
         reviews,
+        blocking_document_ids,
     })
 }
 
@@ -540,6 +631,74 @@ async fn sync_start_times(
             }
         }
     }
+    Ok(())
+}
+
+/// Whether `document_id` is still the current value of a field (latest `process_fields`
+/// row for that `template_field_id`). A signed requirement can be completed after its
+/// document has already been superseded by a later save — in that case the field must
+/// NOT be repointed.
+pub async fn is_current_field_value(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template_field_id: i32,
+    document_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+             SELECT 1 FROM ( \
+                 SELECT DISTINCT ON (pf.template_field_id) pf.document_id \
+                 FROM process_fields pf \
+                 JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
+                 WHERE ps.process_id = $1 AND pf.template_field_id = $2 \
+                 ORDER BY pf.template_field_id, pf.updated_at DESC, pf.field_instance_id DESC \
+             ) cur WHERE cur.document_id = $3 \
+         )",
+    )
+    .bind(process_id)
+    .bind(template_field_id)
+    .bind(document_id)
+    .fetch_one(&mut *conn)
+    .await
+}
+
+/// Repoint a field at a signed replacement document. Deliberately bypasses
+/// `save_step`/`validate_save` (and therefore auto-provisioning) — this is a
+/// system-driven update following a completed signature, not a user submission, and
+/// re-entering the normal save path would try to flag the new document as requiring
+/// signature all over again.
+pub async fn attach_signed_replacement(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template_step_id: i32,
+    template_field_id: i32,
+    new_document_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    persist_fields(
+        &mut *conn,
+        process_id,
+        template_step_id,
+        &[(template_field_id, None, Some(new_document_id))],
+    )
+    .await
+}
+
+/// Re-run step completion for the step a document currently belongs to, and persist
+/// it. Call this whenever a signature requirement's status changes outside of
+/// `save_step`/`review_step` (a completed replace, or a cancel) — the affected step's
+/// completion must be recomputed at that exact moment, not just on the next unrelated
+/// save.
+pub async fn recompute_gating_for_step(
+    conn: &mut sqlx::PgConnection,
+    template: &crate::ProcessTemplate,
+    process_id: Uuid,
+    template_step_id: i32,
+) -> Result<(), sqlx::Error> {
+    let state = load_state(&mut *conn, process_id).await?;
+    let steps_to_update =
+        state_machine::compute_completion_updates(template, &state, template_step_id);
+    persist_step_completions(&mut *conn, process_id, &steps_to_update).await?;
+    sync_start_times(&mut *conn, process_id, template).await?;
     Ok(())
 }
 

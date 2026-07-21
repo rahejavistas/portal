@@ -1138,6 +1138,41 @@
         let userFlats = [];
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
+        // document_id -> signature requirement (or undefined if the caller has no
+        // signature-read access, or the document was never flagged). Best-effort —
+        // failures just mean no badge, never block rendering the process itself.
+        let fieldSignatureStatus = {};
+
+        async function loadFieldSignatureStatuses(details) {
+            fieldSignatureStatus = {};
+            const docIds = new Set();
+            const collect = (steps) => {
+                for (const step of steps || []) {
+                    for (const f of step.fields || []) {
+                        if (f.requires_signature && f.value && f.value.document_id) {
+                            docIds.add(f.value.document_id);
+                        }
+                    }
+                    collect(step.substeps);
+                }
+            };
+            collect(details.steps);
+            if (docIds.size === 0) return;
+
+            await Promise.all([...docIds].map(async (docId) => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/for-document`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_id: docId })
+                    });
+                    if (response.ok) {
+                        const requirement = await response.json();
+                        if (requirement) fieldSignatureStatus[docId] = requirement;
+                    }
+                } catch (err) {}
+            }));
+        }
 
         // ---- Sidebar toggle (mobile) ----
         function toggleSidebar() {
@@ -1618,6 +1653,7 @@
 
                 if (response.ok) {
                     currentProcessDetails = await response.json();
+                    await loadFieldSignatureStatuses(currentProcessDetails);
                     renderProcessDetails();
                 } else {
                     const errText = await readErrorMessage(response);
@@ -1834,11 +1870,22 @@
                     filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin</div>`;
                 }
 
+                let signatureBadgeHtml = '';
+                if (f.requires_signature && val.document_id) {
+                    const requirement = fieldSignatureStatus[val.document_id];
+                    if (requirement && requirement.status === 'COMPLETED') {
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#DCFCE7; color:#166534;">&check; Signed</span>`;
+                    } else if (requirement && requirement.status === 'PENDING') {
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEF3C7; color:#92400E;">Awaiting Signature</span>`;
+                    }
+                }
+
                 html += `
                     <div class="field-row" style="padding: 16px; background-color: #F8FAFC; border-radius: var(--radius-lg); border: 1px solid var(--border); margin-bottom: 12px;">
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
+                        ${signatureBadgeHtml ? `<div>${signatureBadgeHtml}</div>` : ''}
                         ${filledByHtml}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
                         ${historyHtml}
@@ -2201,8 +2248,8 @@
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            if (file.size > 1024 * 1024 * 1024) {
+                alert('File size must be under 1GB.');
                 fileInput.value = '';
                 return;
             }
@@ -2652,8 +2699,8 @@
             }
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            if (file.size > 1024 * 1024 * 1024) {
+                alert('File size must be under 1GB.');
                 return;
             }
 

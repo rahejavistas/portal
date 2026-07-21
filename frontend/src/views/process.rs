@@ -1142,6 +1142,45 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         let userFlats = [];
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
+        // document_id -> signature requirement (or undefined if the caller has no
+        // signature-read access, or the document was never flagged). Best-effort —
+        // failures just mean no badge, never block rendering the process itself.
+        let fieldSignatureStatus = {};
+
+        async function loadFieldSignatureStatuses(details) {
+            fieldSignatureStatus = {};
+            const docIds = new Set();
+            const collect = (steps) => {
+                for (const step of steps || []) {
+                    for (const f of step.fields || []) {
+                        // Only PENDING lookups matter here — COMPLETED status comes
+                        // straight off `value.is_signed_replacement` in the process-detail
+                        // response. While PENDING, the current value IS the original
+                        // (unsigned) document, which is what the requirement is keyed by.
+                        if (f.requires_signature && f.value && f.value.document_id && !f.value.is_signed_replacement) {
+                            docIds.add(f.value.document_id);
+                        }
+                    }
+                    collect(step.substeps);
+                }
+            };
+            collect(details.steps);
+            if (docIds.size === 0) return;
+
+            await Promise.all([...docIds].map(async (docId) => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/for-document`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_id: docId })
+                    });
+                    if (response.ok) {
+                        const requirement = await response.json();
+                        if (requirement) fieldSignatureStatus[docId] = requirement;
+                    }
+                } catch (err) {}
+            }));
+        }
 
         // ---- Sidebar toggle (mobile) ----
         function toggleSidebar() {
@@ -1221,6 +1260,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const rolesLink = canManageRoles
                     ? `<a href="/admin?tab=roles" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Roles</a>`
                     : '';
+                const signaturesLink = (user && (user.can_sign_documents || user.can_manage_document_signatures))
+                    ? `<a href="/admin?tab=signatures" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
+                    : '';
                 const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
@@ -1242,6 +1284,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         ${residentsLink}
                         ${documentsLink}
                         ${rolesLink}
+                        ${signaturesLink}
                         ${processesLink}
                         ${otherProcessLink}
                         ${myFlatDashboardLink}
@@ -1622,6 +1665,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 if (response.ok) {
                     currentProcessDetails = await response.json();
+                    await loadFieldSignatureStatuses(currentProcessDetails);
                     renderProcessDetails();
                 } else {
                     const errText = await readErrorMessage(response);
@@ -1777,13 +1821,23 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 }
 
                 if (type === 'document') {
+                    // is_signed_replacement comes straight from the process-detail response
+                    // (server-computed), not from the permission-gated /signatures/for-document
+                    // endpoint — residents own their process but hold none of the signature/
+                    // review permissions that endpoint requires, so it always 403s for them.
+                    const hideForSigning = f.requires_signature && !isCurrentAdmin && !val.is_signed_replacement;
+
                     const history = f.history || [];
                     let allDocs = [];
                     if (val.document_id) allDocs.push({ document_id: val.document_id, document_title: val.document_title, updated_at: val.updated_at });
-                    for (const h of history) {
-                        if (h.document_id) allDocs.push(h);
+                    // Residents only ever see the current (final) document for a
+                    // signature-tracked field, never the pre-signed drafts in its history.
+                    if (isCurrentAdmin || !f.requires_signature) {
+                        for (const h of history) {
+                            if (h.document_id) allDocs.push(h);
+                        }
                     }
-                    
+
                     const uniqueDocs = [];
                     const seenIds = new Set();
                     for (const doc of allDocs) {
@@ -1793,7 +1847,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         }
                     }
 
-                    if (uniqueDocs.length > 0) {
+                    if (hideForSigning) {
+                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">No document uploaded yet</span>`;
+                    } else if (uniqueDocs.length > 0) {
                         inputHtml = uniqueDocs.map(doc => `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
                                 <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(doc.document_title || 'File')}</span>
@@ -1838,11 +1894,22 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin</div>`;
                 }
 
+                let signatureBadgeHtml = '';
+                if (f.requires_signature && val.document_id && isCurrentAdmin) {
+                    const requirement = fieldSignatureStatus[val.document_id];
+                    if (val.is_signed_replacement) {
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#DCFCE7; color:#166534;">&check; Signed</span>`;
+                    } else if (requirement && requirement.status === 'PENDING') {
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEF3C7; color:#92400E;">Awaiting Signature</span>`;
+                    }
+                }
+
                 html += `
                     <div class="field-row" style="padding: 16px; background-color: #F8FAFC; border-radius: var(--radius-lg); border: 1px solid var(--border); margin-bottom: 12px;">
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
+                        ${signatureBadgeHtml ? `<div>${signatureBadgeHtml}</div>` : ''}
                         ${filledByHtml}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
                         ${historyHtml}
@@ -2205,8 +2272,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            if (file.size > 1024 * 1024 * 1024) {
+                alert('File size must be under 1GB.');
                 fileInput.value = '';
                 return;
             }
@@ -2656,8 +2723,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
             const file = fileInput.files[0];
 
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File size must be under 10MB.');
+            if (file.size > 1024 * 1024 * 1024) {
+                alert('File size must be under 1GB.');
                 return;
             }
 

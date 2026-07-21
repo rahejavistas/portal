@@ -257,6 +257,51 @@ async fn main() {
                     ]),
                 ));
 
+            let document_signatures_sign_routes = Router::new()
+                .route(
+                    "/documents/signatures/queue",
+                    post(handlers::signatures::queue),
+                )
+                .route(
+                    "/documents/signatures/replace-upload-url",
+                    post(handlers::signatures::replace_upload_url),
+                )
+                .route(
+                    "/documents/signatures/replace-confirm-upload",
+                    post(handlers::signatures::replace_confirm_upload),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::DocumentsSignaturesSign]),
+                ));
+
+            let document_signatures_manage_routes = Router::new()
+                .route(
+                    "/documents/signatures/cancel",
+                    post(handlers::signatures::cancel),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::DocumentsSignaturesManage]),
+                ));
+
+            let document_signatures_read_routes = Router::new()
+                .route(
+                    "/documents/signatures/for-document",
+                    post(handlers::signatures::for_document),
+                )
+                .route("/documents/signatures/all", post(handlers::signatures::all))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[
+                        Permission::DocumentsSignaturesSign,
+                        Permission::DocumentsSignaturesManage,
+                        Permission::ProcessReviewer,
+                        Permission::ProcessView,
+                        Permission::DocumentsAllManage,
+                    ]),
+                ));
+
             let admin_routes = users_view_routes
                 .merge(users_manage_routes)
                 .merge(documents_manage_routes)
@@ -264,7 +309,10 @@ async fn main() {
                 .merge(roles_user_designation_routes)
                 .merge(roles_designation_definition_routes)
                 .merge(document_categories_manage_routes)
-                .merge(roles_shared_read_routes);
+                .merge(roles_shared_read_routes)
+                .merge(document_signatures_sign_routes)
+                .merge(document_signatures_manage_routes)
+                .merge(document_signatures_read_routes);
 
             Router::new()
                 .route("/health", get(handlers::health::health_check))

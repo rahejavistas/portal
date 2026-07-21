@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 // ==========================================
@@ -45,11 +45,15 @@ pub struct ReviewState {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProcessStateInput {
     pub steps: HashMap<i32, StepStateDb>,
     pub fields: HashMap<i32, FieldState>,
     pub reviews: HashMap<i32, Vec<ReviewState>>,
+    /// document_ids with a PENDING signature requirement — a document field whose
+    /// current document_id is in this set is treated as not-filled by
+    /// `check_step_completed`, on top of the existing `is_field_filled` check.
+    pub blocking_document_ids: HashSet<Uuid>,
 }
 
 // ==========================================
@@ -71,6 +75,9 @@ pub struct SaveResult {
     /// (template_field_id, text_value, document_id)
     pub fields_to_save: Vec<(i32, Option<String>, Option<Uuid>)>,
     pub new_status: StepStatus,
+    /// document_ids submitted this call into a `requires_signature` field — the caller
+    /// should auto-provision a signature requirement for each.
+    pub signature_required_document_ids: Vec<(i32, Uuid)>,
 }
 
 // ==========================================
@@ -164,6 +171,7 @@ pub fn check_step_completed(
     step_id: i32,
     info_map: &HashMap<i32, StepInfo>,
     fields: &HashMap<i32, FieldState>,
+    blocking_document_ids: &HashSet<Uuid>,
 ) -> bool {
     let info = match info_map.get(&step_id) {
         Some(i) => i,
@@ -172,11 +180,16 @@ pub fn check_step_completed(
     for field in &info.fields {
         if !field.is_optional {
             let is_filled = if let Some(fs) = fields.get(&field.field_id) {
-                crate::fields::is_field_filled(
+                let base_filled = crate::fields::is_field_filled(
                     &field.r#type,
                     fs.text_value.as_deref(),
                     fs.document_id,
-                )
+                );
+                let blocked = fs
+                    .document_id
+                    .map(|id| blocking_document_ids.contains(&id))
+                    .unwrap_or(false);
+                base_filled && !blocked
             } else {
                 false
             };
@@ -414,10 +427,76 @@ pub fn validate_save(
         ));
     }
 
-    let target_completed = check_step_completed(step_id, &info_map, &updated_fields);
+    let signature_required_document_ids: Vec<(i32, Uuid)> = fields_submitted
+        .iter()
+        .filter_map(|submitted| {
+            let field_meta = info
+                .fields
+                .iter()
+                .find(|f| f.field_id == submitted.template_field_id)?;
+            if field_meta.r#type == "document" && field_meta.requires_signature {
+                submitted
+                    .document_id
+                    .map(|doc_id| (submitted.template_field_id, doc_id))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let updated_state = ProcessStateInput {
+        fields: updated_fields,
+        ..state.clone()
+    };
+    let steps_to_update = compute_completion_updates(template, &updated_state, step_id);
+    let target_completed = steps_to_update
+        .iter()
+        .find(|(sid, _)| *sid == step_id)
+        .map(|(_, completed)| *completed)
+        .unwrap_or(false);
+
+    let new_status = if target_completed {
+        if info.is_review_required {
+            StepStatus::PendingReview
+        } else {
+            StepStatus::Completed
+        }
+    } else {
+        StepStatus::Open
+    };
+
+    Ok(SaveResult {
+        steps_to_update,
+        fields_to_save,
+        new_status,
+        signature_required_document_ids,
+    })
+}
+
+/// Given a step's freshly-computed completion and the rest of process state, returns
+/// the (template_step_id, is_completed) pairs to persist for that step and (if
+/// applicable) its parent. Shared by `validate_save` and by the signature-triggered
+/// reactive recompute in `db.rs` (a requirement completing/cancelling outside any
+/// save-step call still needs to re-run this same completion + propagation logic).
+pub fn compute_completion_updates(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+) -> Vec<(i32, bool)> {
+    let info_map = build_step_info_map(template);
+    let info = match info_map.get(&step_id) {
+        Some(i) => i,
+        None => return vec![],
+    };
+
+    let target_completed = check_step_completed(
+        step_id,
+        &info_map,
+        &state.fields,
+        &state.blocking_document_ids,
+    );
     let mut steps_to_update = vec![(step_id, target_completed)];
 
-    // Propagate completion to parent (skip root)
     if let Some(parent_id) = info.parent_id {
         if parent_id != template.step_id {
             if let Some(parent_info) = info_map.get(&parent_id) {
@@ -437,21 +516,7 @@ pub fn validate_save(
         }
     }
 
-    let new_status = if target_completed {
-        if info.is_review_required {
-            StepStatus::PendingReview
-        } else {
-            StepStatus::Completed
-        }
-    } else {
-        StepStatus::Open
-    };
-
-    Ok(SaveResult {
-        steps_to_update,
-        fields_to_save,
-        new_status,
-    })
+    steps_to_update
 }
 
 /// Compute step updates for an admin review (approve or reject).
@@ -580,11 +645,7 @@ mod tests {
     #[test]
     fn test_compute_statuses_initial() {
         let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
-        let state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let state = ProcessStateInput::default();
 
         let statuses = compute_statuses(&template, &state);
 
@@ -597,11 +658,7 @@ mod tests {
     #[test]
     fn test_validate_save_and_completion() {
         let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
-        let state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let state = ProcessStateInput::default();
 
         let doc_id = Uuid::new_v4();
         let fields = vec![
@@ -645,11 +702,7 @@ mod tests {
         let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
 
         // 1. Initial: user fields unfilled → User
-        let mut state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let mut state = ProcessStateInput::default();
         assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
 
         // 2. Some substeps done, others have unfilled user fields → User
@@ -765,11 +818,7 @@ mod tests {
         let doc_id = Uuid::new_v4();
 
         // Build state: all Step 1 substeps completed, Step 1 (id=2) pending review
-        let mut state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let mut state = ProcessStateInput::default();
         for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
             state.fields.insert(
                 fid,

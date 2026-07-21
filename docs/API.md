@@ -23,6 +23,8 @@ There is no blanket admin guard. Every `/api/v1/admin/*` route group is gated by
 | `documents.categories.manage` | Create/rename/delete document categories and subcategories |
 | `process.view` | Read-only: view every resident's processes and attached files, no write/review access |
 | `process.reviewer` | Approve/reject process steps, upload documents as a reviewer, add internal notes |
+| `documents.signatures.sign` | View the signing queue and sign (complete) any item in it |
+| `documents.signatures.manage` | Cancel a signature requirement; read requirement status outside the queue |
 
 ---
 
@@ -299,6 +301,66 @@ Adds a standalone internal-only comment on a process step — never shown to the
 * **Request:** `{ "process_id": "uuid", "template_step_id": 2, "comment": "Called resident, awaiting callback" }`
 * **Response (200):** `{ "status": "success", "message": "Internal note added" }`
 * **400** if `comment` is empty.
+
+---
+
+## Document Signatures (e-signature tracking)
+
+Which documents need a signature is declared **in the process template itself** — a document-type field can be flagged `"requires_signature": true`. The moment such a field is saved (via `/api/v1/process/save-step`, resident or admin), a `PENDING` signature requirement is auto-provisioned for that document — there's no separate "flag this document" admin action, and everyone holding `documents.signatures.sign` is emailed that it's ready to sign. The step containing that field cannot complete (or pass review) until the requirement is `COMPLETED`.
+
+Signing is a **shared queue**: anyone holding `documents.signatures.sign` sees every pending item and can sign any of them — first to sign completes it, no per-document assigned recipient list. Signing means uploading the signed file; it always becomes a **brand-new document** (never an in-place overwrite) — the original is untouched and stays visible, and `signed_document_id` on the requirement is the link from original to signed copy. The process field is repointed at the new document automatically.
+
+Uploading the signed file uses the same **presigned upload-url / confirm** pattern as every other document upload in this app — the file goes straight from the client to S3, never through this server. This server runs on Lambda (see `main.rs`'s `is_lambda` branch), which caps request/response payload well below what a signed file can be, so a proxied single-call upload isn't an option here.
+
+### POST `/api/v1/admin/documents/signatures/queue`
+Requires `documents.signatures.sign`.
+* **Response (200):** `Vec<SignatureRequirement>` — every `PENDING` requirement, oldest first.
+
+### POST `/api/v1/admin/documents/signatures/for-document`
+Requires `documents.signatures.sign`, `documents.signatures.manage`, `process.reviewer`, `process.view`, or `documents.all.manage` (any one) — this is the read used by the admin process/document views to show "is this signed yet."
+* **Request:** `{ "document_id": "uuid" }`
+* **Response (200):** `SignatureRequirement | null` — the active (non-cancelled) requirement for that document, or `null` if it was never flagged.
+
+### POST `/api/v1/admin/documents/signatures/all`
+Same permission set as `for-document`. Every requirement regardless of status, so the admin document list can build a document_id ↔ signed_document_id lineage map in one call instead of a lookup per row.
+* **Response (200):** `Vec<SignatureRequirement>`.
+
+### POST `/api/v1/admin/documents/signatures/replace-upload-url`
+Requires `documents.signatures.sign`. Step (a) of signing — creates a new document to hold the signed file and returns a presigned S3 PUT URL for it.
+* **Request:** `{ "document_id": "uuid", "content_type": "application/pdf" }` — `document_id` is the original/unsigned document.
+* **Response (200):** `{ "new_document_id": "uuid", "upload_url": "https://..." }`
+* **400** if there's no `PENDING` requirement for `document_id`.
+* Client then `PUT`s the file bytes directly to `upload_url` (max 1GB, enforced via S3 HEAD-check on confirm).
+
+### POST `/api/v1/admin/documents/signatures/replace-confirm-upload`
+Requires `documents.signatures.sign`. Step (b) — confirms the signed file landed on S3 and completes the requirement. Status-guarded so a concurrent second confirm for the same requirement cleanly fails ("first to sign wins").
+* **Request:** `{ "document_id": "uuid", "new_document_id": "uuid" }`
+* **Response (200):** `SignatureRequirement`, now `COMPLETED` with `signed_document_id`/`signed_by`/`signed_at` set.
+* **400** if the requirement is no longer `PENDING`, or the file was never actually uploaded to S3.
+
+### POST `/api/v1/admin/documents/signatures/cancel`
+Requires `documents.signatures.manage`. Cancels a `PENDING` requirement without ever signing it — the field keeps pointing at the original document, and the step unblocks immediately (an admin override for a wrongly-flagged upload).
+* **Request:** `{ "document_id": "uuid", "notes": "optional" }`
+* **Response (200):** `{ "status": "ok" }`
+* **400** if there's no `PENDING` requirement for `document_id`.
+
+### `SignatureRequirement` shape
+```json
+{
+  "requirement_id": 1,
+  "document_id": "uuid",
+  "signed_document_id": "uuid | null",
+  "provider": "manual",
+  "status": "PENDING | COMPLETED | CANCELLED",
+  "signed_by": "user_id | null",
+  "signed_at": "timestamp | null",
+  "created_at": "timestamp",
+  "updated_at": "timestamp",
+  "document_title": "Issued NOC Document",
+  "document_category": "RESIDENT_SPECIFIC"
+}
+```
+`requirement_id` is a plain serial int (like every other internal id in this schema — `document_id`/`signed_document_id` stay UUID since they reference `documents`). `provider` is always `"manual"` today (no external e-signature vendor is wired up yet — this field exists so one can be added later without a schema change).
 
 ---
 

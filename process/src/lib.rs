@@ -13,6 +13,11 @@ pub struct ProcessFieldTemplate {
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
+    /// When true, uploading a document into this field auto-enters it into the
+    /// shared e-signature queue (see `document_signature_requirements`) and blocks
+    /// the step from completing until it's signed.
+    #[serde(default)]
+    pub requires_signature: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

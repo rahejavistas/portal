@@ -54,6 +54,12 @@ pub struct FieldValue {
     pub text_value: Option<String>,
     pub document_id: Option<Uuid>,
     pub document_title: Option<String>,
+    /// True when `document_id` is the signed replacement produced by a completed
+    /// signature requirement. Baked in here (rather than requiring a separate
+    /// permission-gated `/signatures/for-document` lookup) so that everyone who can
+    /// already see this process — including the resident who owns it, who holds none
+    /// of the signature/review permissions — can tell a document is finalized.
+    pub is_signed_replacement: bool,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +80,7 @@ pub struct FieldResponse {
     pub r#type: String,
     pub filled_by: String,
     pub is_optional: bool,
+    pub requires_signature: bool,
     pub value: Option<FieldValue>,
     pub history: Vec<FieldHistoryEntry>,
 }
@@ -254,6 +261,48 @@ async fn build_notification_ctx(
     })
 }
 
+/// Notify everyone holding `documents.signatures.sign` that document(s) just entered
+/// the signing queue. Best-effort — mirrors `notification.rs`'s own failure handling
+/// (logged, never blocks the save that triggered this).
+async fn notify_signature_queue_signers(
+    state: &AppState,
+    process_id: Uuid,
+    template: &process::ProcessTemplate,
+    template_step_id: i32,
+    document_ids: &[Uuid],
+) {
+    let recipient_emails = state
+        .permissions_manager
+        .emails_with_permission("documents.signatures.sign")
+        .await
+        .unwrap_or_default();
+    if recipient_emails.is_empty() {
+        return;
+    }
+
+    let step_name = find_step_name(template, template_step_id);
+
+    for document_id in document_ids {
+        let title = state
+            .document_manager
+            .admin_get_any_document(*document_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|d| d.document.title)
+            .unwrap_or_else(|| "Untitled document".to_string());
+
+        process::notification::notify_signature_queue(
+            &recipient_emails,
+            &template.name,
+            &step_name,
+            &title,
+            process_id,
+        )
+        .await;
+    }
+}
+
 /// For a resident user, resolve which ownership to use and find-or-create a process instance.
 async fn resolve_or_init_process(
     conn: &mut sqlx::PgConnection,
@@ -318,6 +367,7 @@ fn map_step_template(
     field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
     latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
     doc_title_map: &HashMap<Uuid, String>,
+    signed_document_ids: &std::collections::HashSet<Uuid>,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
     let status = statuses
@@ -337,10 +387,15 @@ fn map_step_template(
 
             let value = latest.map(|l| {
                 let title = l.document_id.and_then(|id| doc_title_map.get(&id)).cloned();
+                let is_signed_replacement = l
+                    .document_id
+                    .map(|id| signed_document_ids.contains(&id))
+                    .unwrap_or(false);
                 FieldValue {
                     text_value: l.text_value.clone(),
                     document_id: l.document_id,
                     document_title: title,
+                    is_signed_replacement,
                 }
             });
 
@@ -350,6 +405,7 @@ fn map_step_template(
                 r#type: f.r#type.clone(),
                 filled_by: f.filled_by.clone(),
                 is_optional: f.is_optional,
+                requires_signature: f.requires_signature,
                 value,
                 history,
             });
@@ -365,6 +421,7 @@ fn map_step_template(
                 field_history_map,
                 latest_field_states,
                 doc_title_map,
+                signed_document_ids,
             ));
         }
     }
@@ -506,6 +563,18 @@ pub async fn get_process_state(
         .await
         .unwrap_or_default();
 
+    let signed_document_ids: std::collections::HashSet<Uuid> = sqlx::query_scalar(
+        "SELECT signed_document_id FROM document_signature_requirements \
+         WHERE process_id = $1 AND status = 'COMPLETED'",
+    )
+    .bind(process_id)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|id: Option<Uuid>| id)
+    .collect();
+
     let pf_rows = get_field_history(&mut tx, process_id)
         .await
         .unwrap_or_default();
@@ -562,6 +631,9 @@ pub async fn get_process_state(
         steps,
         fields: latest_field_states,
         reviews: reviews_by_step,
+        // Not needed here — this path only reads already-persisted `is_completed`
+        // flags via `compute_statuses`, which doesn't consult `blocking_document_ids`.
+        blocking_document_ids: Default::default(),
     };
     let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
@@ -615,6 +687,7 @@ pub async fn get_process_state(
                 &field_history_map,
                 &proc_state.fields,
                 &doc_title_map,
+                &signed_document_ids,
             ));
         }
     }
@@ -729,7 +802,7 @@ pub async fn save_process_step(
         })
         .collect();
 
-    let step_status = process::db::save_step(
+    let save_outcome = process::db::save_step(
         &mut tx,
         payload.process_id,
         &template,
@@ -739,11 +812,23 @@ pub async fn save_process_step(
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+    let step_status = save_outcome.status;
 
     let is_completed = step_status == process::state_machine::StepStatus::Completed;
 
     // Commit transaction — all field inserts + step updates are atomic
     tx.commit().await.internal_err()?;
+
+    if !save_outcome.newly_queued_document_ids.is_empty() {
+        notify_signature_queue_signers(
+            &state,
+            payload.process_id,
+            &template,
+            payload.template_step_id,
+            &save_outcome.newly_queued_document_ids,
+        )
+        .await;
+    }
 
     // Only email on meaningful cross-role transitions (user→admin review needed)
     if step_status == process::state_machine::StepStatus::PendingReview {

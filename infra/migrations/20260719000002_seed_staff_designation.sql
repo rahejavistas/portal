@@ -5,7 +5,7 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO designation_permissions (designation_id, permission_id)
 SELECT d.designation_id, p.permission_id
 FROM (VALUES
-    ('staff', 'users.view'),
+    ('staff', 'users.manage'),
     ('staff', 'process.view'),
     ('staff', 'process.reviewer')
 ) AS seed(designation_code, permission_code)

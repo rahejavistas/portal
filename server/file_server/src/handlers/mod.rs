@@ -5,3 +5,4 @@ pub mod documents;
 pub mod health;
 pub mod process;
 pub mod roles;
+pub mod signatures;

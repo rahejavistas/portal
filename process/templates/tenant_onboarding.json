@@ -195,7 +195,8 @@
           "filled_by": "admin",
           "requirements": {
             "document_type": "RESIDENT_GENERAL"
-          }
+          },
+          "requires_signature": true
         }
       ]
     },
@@ -243,7 +244,8 @@
           "filled_by": "admin",
           "requirements": {
             "document_type": "RESIDENT_GENERAL"
-          }
+          },
+          "requires_signature": true
         }
       ]
     }

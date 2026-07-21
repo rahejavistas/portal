@@ -319,3 +319,106 @@ async fn test_documents_routes_have_no_router_level_gate() {
     let cats: Vec<serde_json::Value> = categories_resp.unwrap().into_json().unwrap();
     assert!(cats.is_empty());
 }
+
+/// A designation holding only `documents.signatures.sign` can list the signing queue
+/// and read a requirement's status, but cannot cancel one (`documents.signatures.manage`).
+#[tokio::test]
+async fn test_documents_signatures_sign_only() {
+    let env = setup_api_test_env(3176).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(
+        &env,
+        &admin_jwt,
+        "sigsign",
+        "807",
+        &["documents.signatures.sign"],
+    );
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/queue", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "documents/signatures/queue with documents.signatures.sign",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/documents/signatures/for-document",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/for-document with documents.signatures.sign",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/cancel", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/cancel with only documents.signatures.sign",
+    );
+}
+
+/// A designation holding only `documents.signatures.manage` can read requirement status
+/// but cannot see/act on the signing queue itself (`documents.signatures.sign`).
+#[tokio::test]
+async fn test_documents_signatures_manage_only() {
+    let env = setup_api_test_env(3177).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(
+        &env,
+        &admin_jwt,
+        "sigmanage",
+        "808",
+        &["documents.signatures.manage"],
+    );
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/documents/signatures/for-document",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/for-document with documents.signatures.manage",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/queue", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "documents/signatures/queue with only documents.signatures.manage",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/documents/signatures/replace-upload-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4(), "content_type": "application/pdf"})),
+        "documents/signatures/replace-upload-url with only documents.signatures.manage",
+    );
+}
+
+/// `/documents/signatures/for-document` is also reachable by the general process
+/// read/review permissions, since the admin process view needs to show signature
+/// status without requiring a separate signature-specific grant.
+#[tokio::test]
+async fn test_documents_signatures_for_document_reachable_by_process_permissions() {
+    let env = setup_api_test_env(3178).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "sigviewer", "809", &["process.view"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/documents/signatures/for-document",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/for-document with process.view",
+    );
+}

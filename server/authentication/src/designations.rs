@@ -243,6 +243,25 @@ impl PermissionsManager {
         Ok(count > 0)
     }
 
+    /// Emails of every user holding the given permission via an active designation.
+    /// Used to notify a dynamic recipient list (e.g. everyone who can sign documents)
+    /// rather than a single fixed address.
+    pub async fn emails_with_permission(
+        &self,
+        permission_code: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT u.email FROM users u \
+             JOIN user_designations ud ON ud.user_id = u.user_id AND ud.is_active = TRUE \
+             JOIN designation_permissions dp ON dp.designation_id = ud.designation_id \
+             JOIN permissions p ON p.permission_id = dp.permission_id \
+             WHERE p.code = $1",
+        )
+        .bind(permission_code)
+        .fetch_all(&self.pool)
+        .await
+    }
+
     pub async fn assign_designation(
         &self,
         user_id: i32,

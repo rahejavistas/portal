@@ -1210,6 +1210,23 @@ async fn test_turn_logic_full_lifecycle() {
     .await
     .unwrap();
 
+    // This test reuses `doc_id` for fields 112/115 too (Step 3/Step 5, both now
+    // `requires_signature`), but is only exercising turn-transition logic, not
+    // signature behavior — pre-mark it as already-signed so auto-provisioning's
+    // idempotent insert no-ops and those steps complete exactly as before.
+    sqlx::query(
+        "INSERT INTO document_signature_requirements \
+            (document_id, process_id, template_step_id, template_field_id, \
+             status, signed_document_id, signed_by, signed_at) \
+         VALUES ($1, $2, 8, 112, 'COMPLETED', $1, $3, NOW())",
+    )
+    .bind(doc_id)
+    .bind(exec.process_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // Fill substep 3 (Owner Docs)
     let owner_docs: Vec<SaveFieldInput> = vec![101, 102, 103, 105, 106]
         .into_iter()

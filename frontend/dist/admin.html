@@ -716,6 +716,9 @@
                     <button class="nav-item" id="suite-btn-roles" style="display:none;" onclick="switchSuite('roles'); closeSidebar()">
                         Roles
                     </button>
+                    <button class="nav-item" id="suite-btn-signatures" style="display:none;" onclick="switchSuite('signatures'); closeSidebar()">
+                        Signatures
+                    </button>
                     <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
                     </a>
@@ -1052,7 +1055,41 @@
                     </div>
                 </div>
             </section>
+
+            <!-- SIGNATURES SUITE PANEL (visible only to documents.signatures.sign/manage holders) -->
+            <section class="suite-panel" id="suite-signatures">
+                <h2>Signatures</h2>
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Signing Queue</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Documents waiting for a signature. Anyone with signing access can sign any item here — first to sign completes it.</p>
+                    <div class="table-container">
+                        <table>
+                            <tbody id="signature-queue-rows-target">
+                                <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
         </main>
+    </div>
+
+    <!-- Sign Document Modal -->
+    <div id="sign-document-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeSignDocumentModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(420px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Sign Document</h3>
+            <p id="sign-document-title" style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:16px;"></p>
+            <input type="hidden" id="sign-document-id">
+            <div class="form-group">
+                <label for="sign-document-file">Signed File</label>
+                <input type="file" id="sign-document-file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="padding: 8px; width: 100%; background-color: var(--muted);">
+            </div>
+            <div class="feedback-box" id="sign-document-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSignDocumentModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="sign-document-submit-btn" class="submit-btn" style="width:auto; margin:0;" onclick="submitSignDocument()">Upload &amp; Sign</button>
+            </div>
+        </div>
     </div>
 
     <!-- Revoke Flat Modal -->
@@ -1334,6 +1371,12 @@
         const canManageUsers = !!(user && user.can_manage_users);
         const canManageDocuments = !!(user && user.can_manage_documents);
         const canViewRoles = !!(user && user.can_view_roles);
+        const canSignDocuments = !!(user && user.can_sign_documents);
+        const canManageDocumentSignatures = !!(user && user.can_manage_document_signatures);
+        if (canSignDocuments || canManageDocumentSignatures) {
+            const signaturesBtn = document.getElementById('suite-btn-signatures');
+            if (signaturesBtn) signaturesBtn.style.display = 'block';
+        }
         let defaultRolesSubtab = 'user-designations';
         if (canManageRoles || canManageDesignations || canViewRoles) {
             const rolesBtn = document.getElementById('suite-btn-roles');
@@ -1397,7 +1440,7 @@
             workflowsBtn.href = '/admin-process';
             workflowsBtn.textContent = 'Process Review';
         }
-        const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : null));
+        const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : ((canSignDocuments || canManageDocumentSignatures) ? 'signatures' : null)));
 
         if (!token || !user) {
             localStorage.clear();
@@ -1562,6 +1605,8 @@
             document.getElementById('suite-documents').style.display = suiteName === 'documents' ? 'block' : 'none';
             const rolesPanel = document.getElementById('suite-roles');
             if (rolesPanel) rolesPanel.style.display = suiteName === 'roles' ? 'block' : 'none';
+            const signaturesPanel = document.getElementById('suite-signatures');
+            if (signaturesPanel) signaturesPanel.style.display = suiteName === 'signatures' ? 'block' : 'none';
 
             if (suiteName === 'documents') {
                 // Always explicitly (re-)select the right subtab on entry — otherwise
@@ -1571,6 +1616,8 @@
             } else if (suiteName === 'roles') {
                 switchSubtab(defaultRolesSubtab);
                 loadRolesData();
+            } else if (suiteName === 'signatures') {
+                loadSignatureQueue();
             }
         }
 
@@ -1905,6 +1952,129 @@
                 renderDesignationsList();
                 await loadPermissionsCatalog();
                 renderDesignationPermissionsMatrix();
+            }
+        }
+
+        async function loadSignatureQueue() {
+            const tbody = document.getElementById('signature-queue-rows-target');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/queue`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) {
+                    tbody.innerHTML = '<tr><td style="text-align: center; color: var(--foreground); font-weight: 600;">Failed to load signing queue.</td></tr>';
+                    return;
+                }
+                const items = await response.json();
+                if (items.length === 0) {
+                    tbody.innerHTML = '<tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Nothing awaiting signature.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = items.map(r => `
+                    <tr>
+                        <td>
+                            <div class="truncate" style="font-weight: 700; color: var(--foreground); max-width:320px;" title="${truncTitle(r.document_title)}">${escapeHtml(truncText(r.document_title, 60))}</div>
+                            <div style="font-size:12px; color:var(--muted-foreground);">${escapeHtml(formatCategory(r.document_category))}</div>
+                        </td>
+                        <td style="text-align:right;">
+                            <button class="action-select" style="cursor:pointer;" onclick="openSignDocumentModal('${r.document_id}', '${escapeHtml(r.document_title).replace(/'/g, "\\'")}')">Sign</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td style="text-align: center; color: var(--foreground); font-weight: 600;">Database connection offline.</td></tr>';
+            }
+        }
+
+        function openSignDocumentModal(documentId, title) {
+            document.getElementById('sign-document-id').value = documentId;
+            document.getElementById('sign-document-title').textContent = title;
+            document.getElementById('sign-document-file').value = '';
+            const feedback = document.getElementById('sign-document-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('sign-document-modal').style.display = 'flex';
+        }
+
+        function closeSignDocumentModal() {
+            document.getElementById('sign-document-modal').style.display = 'none';
+        }
+
+        async function submitSignDocument() {
+            const documentId = document.getElementById('sign-document-id').value;
+            const fileInput = document.getElementById('sign-document-file');
+            const feedback = document.getElementById('sign-document-feedback');
+            const btn = document.getElementById('sign-document-submit-btn');
+
+            if (fileInput.files.length === 0) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Please choose the signed file.`;
+                return;
+            }
+            if (fileInput.files[0].size > 1024 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> File size must be under 1GB.`;
+                return;
+            }
+
+            const file = fileInput.files[0];
+
+            btn.disabled = true;
+            btn.textContent = 'Uploading...';
+            try {
+                // Presigned upload — the file goes straight from the browser to S3,
+                // never through this app's Lambda-backed API (which caps request size
+                // around 6MB, far below what a signed document can be).
+                const urlResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/replace-upload-url`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_id: documentId, content_type: file.type || 'application/octet-stream' })
+                });
+                if (!urlResp.ok) {
+                    const errText = await readErrorMessage(urlResp);
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(errText)}`;
+                    return;
+                }
+                const { new_document_id, upload_url } = await urlResp.json();
+
+                const putResp = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+                if (!putResp.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> Upload to storage failed. Please try again.`;
+                    return;
+                }
+
+                const confirmResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/replace-confirm-upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_id: documentId, new_document_id })
+                });
+                if (confirmResp.ok) {
+                    closeSignDocumentModal();
+                    await loadSignatureQueue();
+                } else {
+                    const errText = await readErrorMessage(confirmResp);
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(errText)}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Upload & Sign';
             }
         }
 
@@ -2705,6 +2875,28 @@
         let subbarCategoryFilter = 'ALL';
         let subbarSubcategoryFilter = 'ALL';
 
+        // document_id -> signed_document_id and the reverse, COMPLETED requirements only.
+        // Best-effort: a caller without any signature-read permission just sees no badges.
+        let signatureLineage = { originalToSigned: {}, signedToOriginal: {} };
+
+        async function loadSignatureLineage() {
+            signatureLineage = { originalToSigned: {}, signedToOriginal: {} };
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/all`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) return;
+                const items = await response.json();
+                for (const r of items) {
+                    if (r.status === 'COMPLETED' && r.signed_document_id) {
+                        signatureLineage.originalToSigned[r.document_id] = r.signed_document_id;
+                        signatureLineage.signedToOriginal[r.signed_document_id] = r.document_id;
+                    }
+                }
+            } catch (err) {}
+        }
+
         async function loadAdminDocuments() {
             try {
                 const response = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {
@@ -2714,6 +2906,7 @@
 
                 if (response.ok) {
                     allAdminDocs = await response.json();
+                    await loadSignatureLineage();
                     renderAdminCategoryFilterChips();
                     filterAdminDocs();
                 } else {
@@ -2858,6 +3051,15 @@
                     ? '<span class="badge deleted">Deleted</span>'
                     : '';
 
+                const signedCopyId = signatureLineage.originalToSigned[doc.document_id];
+                const originalId = signatureLineage.signedToOriginal[doc.document_id];
+                let signatureLineageHtml = '';
+                if (signedCopyId) {
+                    signatureLineageHtml = `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Signed &check; <span onclick="downloadDocument('${escapeHtml(signedCopyId)}', true)" style="color:var(--primary); font-weight:600; cursor:pointer;">View signed copy</span></div>`;
+                } else if (originalId) {
+                    signatureLineageHtml = `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Signed copy of <span onclick="downloadDocument('${escapeHtml(originalId)}', true)" style="color:var(--primary); font-weight:600; cursor:pointer;">original</span></div>`;
+                }
+
                 const subcategoryChip = (meta && meta.subcategory_label)
                     ? `<span style="display:inline-block; margin-top:6px; padding:3px 9px; font-size:11px; font-weight:600; border-radius:999px; background:var(--background); border:1px solid var(--border); color:var(--foreground);">${escapeHtml(meta.subcategory_label)}</span>`
                     : '';
@@ -2875,6 +3077,7 @@
                         <div class="truncate-2-lines" style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;" title="${truncTitle(doc.description)}">
                             ${escapeHtml(doc.description) || 'No description...'}
                         </div>
+                        ${signatureLineageHtml}
                     </td>
                     <td>
                         <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span>

@@ -669,7 +669,7 @@
                 <button onclick="closeUploadModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground);">&times;</button>
                 <h3 style="margin-top: 0;">Upload Document</h3>
                 <p style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 24px;">
-                    Upload personal documents (max 10MB). They will be automatically linked to your flat and kept private.
+                    Upload personal documents (max 1GB). They will be automatically linked to your flat and kept private.
                 </p>
                 <form id="user-upload-form" onsubmit="handleUserUpload(event)" style="display: flex; flex-direction: column; gap: 16px;">
                     <div>
@@ -1089,10 +1089,10 @@
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            // 10MB limit
-            if (file.size > 10 * 1024 * 1024) {
+            // 1GB limit
+            if (file.size > 1024 * 1024 * 1024) {
                 statusEl.style.color = '#EF4444';
-                statusEl.textContent = 'Error: File size must be under 10MB.';
+                statusEl.textContent = 'Error: File size must be under 1GB.';
                 return;
             }
 
