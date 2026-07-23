@@ -25,6 +25,7 @@ pub enum Permission {
     DocumentsCategoriesManage,
     ProcessView,
     ProcessReviewer,
+    ProcessTemplatesManage,
 }
 
 impl Permission {
@@ -39,6 +40,7 @@ impl Permission {
             Permission::DocumentsCategoriesManage => "documents.categories.manage",
             Permission::ProcessView => "process.view",
             Permission::ProcessReviewer => "process.reviewer",
+            Permission::ProcessTemplatesManage => "process.templates.manage",
         }
     }
 
@@ -53,6 +55,7 @@ impl Permission {
             "documents.categories.manage" => Some(Permission::DocumentsCategoriesManage),
             "process.view" => Some(Permission::ProcessView),
             "process.reviewer" => Some(Permission::ProcessReviewer),
+            "process.templates.manage" => Some(Permission::ProcessTemplatesManage),
             _ => None,
         }
     }
@@ -92,6 +95,8 @@ pub struct Capabilities {
     pub can_manage_documents: bool,
     /// Can browse every resident's process (read-only unless `can_review_process`).
     pub can_view_all_processes: bool,
+    /// Can create/edit process templates (the versioned builder) and activate versions.
+    pub can_manage_process_templates: bool,
 }
 
 impl User {
@@ -178,6 +183,7 @@ fn derived_capabilities(permissions: &[String]) -> Capabilities {
         can_review_process,
         can_manage_documents: false,
         can_view_all_processes: can_review_process || has(Permission::ProcessView),
+        can_manage_process_templates: has(Permission::ProcessTemplatesManage),
     }
 }
 

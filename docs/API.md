@@ -23,6 +23,7 @@ There is no blanket admin guard. Every `/api/v1/admin/*` route group is gated by
 | `documents.categories.manage` | Create/rename/delete document categories and subcategories |
 | `process.view` | Read-only: view every resident's processes and attached files, no write/review access |
 | `process.reviewer` | Approve/reject process steps, upload documents as a reviewer, add internal notes |
+| `process.templates.manage` | Create/edit process templates (the versioned builder) and activate versions |
 
 ---
 
@@ -69,7 +70,8 @@ Returned by `/api/v1/login`, `/api/v1/profile`, and `/api/v1/admin/users/list`:
   "can_view_roles": false,
   "can_review_process": false,
   "can_manage_documents": false,
-  "can_view_all_processes": false
+  "can_view_all_processes": false,
+  "can_manage_process_templates": false
 }
 ```
 
@@ -142,20 +144,20 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
 * **Response (200):**
   ```json
   {
-    "processes": [ { "process_id": "uuid", "template_id": "tenant_onboarding_v1", "ownership_id": 5, "flat_label": "A-301", "user_email": "...", "created_at": "...", "steps_total": 9, "steps_completed": 3, "status": "USER_INPUT_REQUIRED" } ],
+    "processes": [ { "process_id": "uuid", "template_version_id": 1001, "template_name": "Tenant Onboarding", "ownership_id": 5, "flat_label": "A-301", "user_email": "...", "created_at": "...", "steps_total": 9, "steps_completed": 3, "status": "USER_INPUT_REQUIRED" } ],
     "flats": [ { "flat_id": 5, "wing": "A", "flat_number": "301" } ]
   }
   ```
-  `status` is one of `COMPLETED`, `ADMIN_REVIEW_REQUIRED`, `USER_INPUT_REQUIRED`.
+  `status` is one of `COMPLETED`, `ADMIN_REVIEW_REQUIRED`, `USER_INPUT_REQUIRED`. `template_version_id` is the exact pinned version this process started on (see [Process Templates](#process-templates-versioned-admin-authored) below); `template_name` comes from a join and is just for display.
 
 ### POST `/api/v1/process/state`
-Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing one, or `template_id` (+ optional `flat_id` if the caller owns multiple flats) to fetch-or-create.
-* **Request:** `{ "process_id": "uuid" }` or `{ "template_id": "tenant_onboarding_v1", "flat_id": 5, "personal_only": false }`
+Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing one, or `template_id` (the `process_templates.template_id` of the process *type* to start — always resolves to whichever version is currently active — plus optional `flat_id` if the caller owns multiple flats) to fetch-or-create.
+* **Request:** `{ "process_id": "uuid" }` or `{ "template_id": 1, "flat_id": 5, "personal_only": false }`
 * **Response (200):**
   ```json
   {
     "process_id": "uuid",
-    "template_id": "tenant_onboarding_v1",
+    "template_version_id": 1001,
     "process_name": "Tenant Onboarding",
     "ownership_id": 5,
     "flat_label": "A-301",
@@ -163,11 +165,11 @@ Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing 
     "next_actions": [ { "template_step_id": 3, "name": "Upload ID Proof", "assigned_to": "user" } ],
     "reviews": [ { "review_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "is_approved": true, "notes": "Looks good", "created_at": "...", "flagged_step_ids": [] } ],
     "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "..." } ],
-    "steps": [ { "template_step_id": 2, "name": "...", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf" }, "history": [] } ], "substeps": [] } ]
+    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf" }, "history": [] } ], "substeps": [] } ]
   }
   ```
-  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` is only populated for callers with `process.reviewer`/`process.view`.
-* **400** if neither `process_id` nor `template_id` given, or the caller owns multiple flats and didn't disambiguate with `flat_id`; **403** if the caller doesn't own the process; **404** if not found.
+  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` is only populated for callers with `process.reviewer`/`process.view`. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
+* **400** if neither `process_id` nor `template_id` given, the given `template_id` has no active version yet, or the caller owns multiple flats and didn't disambiguate with `flat_id`; **403** if the caller doesn't own the process; **404** if not found.
 
 ### POST `/api/v1/process/save-step`
 * **Request:**
@@ -299,6 +301,75 @@ Adds a standalone internal-only comment on a process step — never shown to the
 * **Request:** `{ "process_id": "uuid", "template_step_id": 2, "comment": "Called resident, awaiting callback" }`
 * **Response (200):** `{ "status": "success", "message": "Internal note added" }`
 * **400** if `comment` is empty.
+
+---
+
+## Process Templates (versioned, admin-authored)
+
+A process template is authored in the admin builder UI and stored in Postgres, not a git-committed file. `process_templates` is the logical template ("process type", e.g. "Tenant Onboarding") — a stable `template_id` plus which version is currently `active`. Every Save appends a new, immutable `process_template_versions` row (own `version_id`) rather than mutating one in place; a version never auto-activates itself — activation is always a separate, explicit action. A process instance is permanently pinned to the one `version_id` it started on for its entire lifetime, so editing/activating a newer version never affects processes already in progress.
+
+`step_id`/`field_id` are assigned by the server on Save (the client posts a tree with no IDs at all) and only need to be unique **within that one version's `definition` JSON** — nothing else relies on them being unique anywhere else, so different versions (even of the same template) may reuse the same numbers freely.
+
+### POST `/api/v1/admin/process-templates/list`
+Requires `process.templates.manage`.
+* **Response (200):** `Vec<TemplateSummary>`:
+  ```json
+  [
+    {
+      "template_id": 1,
+      "name": "Tenant Onboarding",
+      "active_version_id": 3,
+      "versions": [ { "version_id": 3, "version_number": 2, "created_at": "...", "created_by": 12, "created_by_email": "admin@..." }, { "version_id": 1, "version_number": 1, "created_at": "...", "created_by": 12, "created_by_email": "admin@..." } ]
+    }
+  ]
+  ```
+  `active_version_id` is `null` until a version has been explicitly activated. `versions` is every version ever saved for that template, newest first.
+
+### POST `/api/v1/admin/process-templates/get-version`
+Requires `process.templates.manage`. Loads one version's full tree, for opening it in the builder or previewing it.
+* **Request:** `{ "version_id": 3 }`
+* **Response (200):** the full `ProcessTemplate` tree (same shape as a saved definition — `name`, `description`, `step_id`, `is_optional`, `is_review_required`, `substeps`, `fields`, recursively).
+* **404** if the version doesn't exist.
+
+### POST `/api/v1/admin/process-templates/save`
+Requires `process.templates.manage`. The upsert: omitting `template_id` (or `null`) creates a brand-new template; an existing `template_id` appends a new draft version to it. Never auto-activates — a fresh template's first version, and every subsequent edit, sits inactive until a separate Activate call.
+* **Request:** a `TemplateDraft` — no IDs anywhere, the server assigns every `step_id`/`field_id`:
+  ```json
+  {
+    "template_id": null,
+    "name": "Tenant Onboarding",
+    "description": null,
+    "is_optional": false,
+    "is_review_required": false,
+    "substeps": [
+      {
+        "name": "Stage 1",
+        "description": "optional",
+        "is_review_required": true,
+        "substeps": [
+          {
+            "name": "Substep 1",
+            "fields": [
+              { "name": "ID Proof", "type": "document", "is_optional": false, "filled_by": "user" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+  ```
+* **Response (200):** `{ "version_id": 4 }` — the newly created version's id.
+* **400** on an unknown `template_id`.
+
+### POST `/api/v1/admin/process-templates/activate`
+Requires `process.templates.manage`. Makes the given version the one residents start new processes against.
+* **Request:** `{ "template_id": 1, "version_id": 4 }`
+* **Response (200):** `{ "status": "ok" }`
+* **400** if `version_id` doesn't belong to `template_id`.
+
+### POST `/api/v1/process-templates/available`
+No special permission — any authenticated user. Resident-facing: populates the "Start Process" picker.
+* **Response (200):** `Vec<{ "template_id": 1, "name": "Tenant Onboarding" }>` — only templates that currently have an active version.
 
 ---
 

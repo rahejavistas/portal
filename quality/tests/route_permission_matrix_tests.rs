@@ -163,7 +163,7 @@ async fn test_process_reviewer_only() {
     let owner_jwt = quick_onboard_user(&env, "reviewee@test.com", "password123");
     let init: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &auth(&owner_jwt))
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap()
         .into_json()
         .unwrap();

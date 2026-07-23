@@ -45,7 +45,7 @@ pub struct ReviewState {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProcessStateInput {
     pub steps: HashMap<i32, StepStateDb>,
     pub fields: HashMap<i32, FieldState>,
@@ -414,10 +414,52 @@ pub fn validate_save(
         ));
     }
 
-    let target_completed = check_step_completed(step_id, &info_map, &updated_fields);
+    let updated_state = ProcessStateInput {
+        fields: updated_fields,
+        ..state.clone()
+    };
+    let steps_to_update = compute_completion_updates(template, &updated_state, step_id);
+    let target_completed = steps_to_update
+        .iter()
+        .find(|(sid, _)| *sid == step_id)
+        .map(|(_, completed)| *completed)
+        .unwrap_or(false);
+
+    let new_status = if target_completed {
+        if info.is_review_required {
+            StepStatus::PendingReview
+        } else {
+            StepStatus::Completed
+        }
+    } else {
+        StepStatus::Open
+    };
+
+    Ok(SaveResult {
+        steps_to_update,
+        fields_to_save,
+        new_status,
+    })
+}
+
+/// Given a step's freshly-computed completion and the rest of process state, returns
+/// the (template_step_id, is_completed) pairs to persist for that step and (if
+/// applicable) its parent. Shared by `validate_save` and by callers reacting to
+/// out-of-band completion changes.
+pub fn compute_completion_updates(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+) -> Vec<(i32, bool)> {
+    let info_map = build_step_info_map(template);
+    let info = match info_map.get(&step_id) {
+        Some(i) => i,
+        None => return vec![],
+    };
+
+    let target_completed = check_step_completed(step_id, &info_map, &state.fields);
     let mut steps_to_update = vec![(step_id, target_completed)];
 
-    // Propagate completion to parent (skip root)
     if let Some(parent_id) = info.parent_id {
         if parent_id != template.step_id {
             if let Some(parent_info) = info_map.get(&parent_id) {
@@ -437,21 +479,7 @@ pub fn validate_save(
         }
     }
 
-    let new_status = if target_completed {
-        if info.is_review_required {
-            StepStatus::PendingReview
-        } else {
-            StepStatus::Completed
-        }
-    } else {
-        StepStatus::Open
-    };
-
-    Ok(SaveResult {
-        steps_to_update,
-        fields_to_save,
-        new_status,
-    })
+    steps_to_update
 }
 
 /// Compute step updates for an admin review (approve or reject).
@@ -579,12 +607,8 @@ mod tests {
 
     #[test]
     fn test_compute_statuses_initial() {
-        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
-        let state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let template = crate::test_fixtures::tenant_onboarding_fixture();
+        let state = ProcessStateInput::default();
 
         let statuses = compute_statuses(&template, &state);
 
@@ -596,12 +620,8 @@ mod tests {
 
     #[test]
     fn test_validate_save_and_completion() {
-        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
-        let state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let template = crate::test_fixtures::tenant_onboarding_fixture();
+        let state = ProcessStateInput::default();
 
         let doc_id = Uuid::new_v4();
         let fields = vec![
@@ -642,14 +662,10 @@ mod tests {
 
     #[test]
     fn test_determine_turn() {
-        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
+        let template = crate::test_fixtures::tenant_onboarding_fixture();
 
         // 1. Initial: user fields unfilled → User
-        let mut state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let mut state = ProcessStateInput::default();
         assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
 
         // 2. Some substeps done, others have unfilled user fields → User
@@ -761,15 +777,11 @@ mod tests {
 
     #[test]
     fn test_compute_review_updates_allows_open_steps() {
-        let template = crate::ProcessTemplate::load_tenant_onboarding().unwrap();
+        let template = crate::test_fixtures::tenant_onboarding_fixture();
         let doc_id = Uuid::new_v4();
 
         // Build state: all Step 1 substeps completed, Step 1 (id=2) pending review
-        let mut state = ProcessStateInput {
-            steps: HashMap::new(),
-            fields: HashMap::new(),
-            reviews: HashMap::new(),
-        };
+        let mut state = ProcessStateInput::default();
         for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
             state.fields.insert(
                 fid,

@@ -13,14 +13,16 @@ use crate::state_machine::{
 pub async fn init_process(
     conn: &mut sqlx::PgConnection,
     user_id: i32,
+    template_version_id: i32,
     template: &crate::ProcessTemplate,
     ownership_id: Option<i32>,
 ) -> Result<Uuid, sqlx::Error> {
     let process_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO processes (user_id, template_id, ownership_id) VALUES ($1, $2, $3) RETURNING process_id",
+        "INSERT INTO processes (user_id, template_version_id, ownership_id) \
+         VALUES ($1, $2, $3) RETURNING process_id",
     )
     .bind(user_id)
-    .bind(&template.template_id)
+    .bind(template_version_id)
     .bind(ownership_id)
     .fetch_one(&mut *conn)
     .await?;
@@ -70,7 +72,13 @@ pub async fn init_process(
     Ok(process_id)
 }
 
-/// Save fields for a step. Validates, persists fields, updates completion. Returns the new step status.
+/// Outcome of a successful `save_step` call.
+pub struct SaveStepOutcome {
+    pub status: StepStatus,
+}
+
+/// Save fields for a step. Validates, persists fields, and updates completion.
+/// Returns the new step status.
 pub async fn save_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -78,7 +86,7 @@ pub async fn save_step(
     step_id: i32,
     fields: &[state_machine::SaveFieldInput],
     is_admin: bool,
-) -> Result<StepStatus, String> {
+) -> Result<SaveStepOutcome, String> {
     let state = load_state(conn, process_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -88,7 +96,28 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    persist_step_completions(&mut *conn, process_id, &result.steps_to_update)
+    let steps_to_update = result.steps_to_update;
+    let status = steps_to_update
+        .iter()
+        .find(|(sid, _)| *sid == step_id)
+        .map(|(_, completed)| {
+            if *completed {
+                if state_machine::build_step_info_map(template)
+                    .get(&step_id)
+                    .map(|i| i.is_review_required)
+                    .unwrap_or(false)
+                {
+                    StepStatus::PendingReview
+                } else {
+                    StepStatus::Completed
+                }
+            } else {
+                StepStatus::Open
+            }
+        })
+        .unwrap_or(result.new_status);
+
+    persist_step_completions(&mut *conn, process_id, &steps_to_update)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -96,7 +125,7 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(result.new_status)
+    Ok(SaveStepOutcome { status })
 }
 
 /// Parameters for recording an admin review.
@@ -221,7 +250,7 @@ pub async fn get_process_turn(
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ProcessInfo {
     pub user_id: i32,
-    pub template_id: String,
+    pub template_version_id: i32,
     pub ownership_id: Option<i32>,
 }
 
@@ -229,10 +258,13 @@ pub async fn get_process_info(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
 ) -> Result<Option<ProcessInfo>, sqlx::Error> {
-    sqlx::query_as("SELECT user_id, template_id, ownership_id FROM processes WHERE process_id = $1")
-        .bind(process_id)
-        .fetch_optional(conn)
-        .await
+    sqlx::query_as(
+        "SELECT user_id, template_version_id, ownership_id \
+         FROM processes WHERE process_id = $1",
+    )
+    .bind(process_id)
+    .fetch_optional(conn)
+    .await
 }
 
 /// Look up a user's email address by their user_id.
@@ -309,7 +341,8 @@ pub async fn get_field_history(
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ProcessListItem {
     pub process_id: Uuid,
-    pub template_id: String,
+    pub template_version_id: i32,
+    pub template_name: String,
     pub ownership_id: Option<i32>,
     pub flat_label: Option<String>,
     pub user_email: String,
@@ -321,7 +354,7 @@ pub struct ProcessListItem {
 }
 
 const PROCESS_LIST_QUERY_BASE: &str =
-    "SELECT p.process_id, p.template_id, p.ownership_id, \
+    "SELECT p.process_id, p.template_version_id, pt.name AS template_name, p.ownership_id, \
             CASE WHEN fo.flat_id IS NOT NULL \
                  THEN f.wing || '-' || f.flat_number \
                  ELSE NULL END AS flat_label, \
@@ -331,6 +364,8 @@ const PROCESS_LIST_QUERY_BASE: &str =
             COUNT(ps.step_instance_id) FILTER (WHERE ps.parent_step_instance_id IS NOT NULL AND ps.is_completed = TRUE) AS steps_completed \
      FROM processes p \
      JOIN users u ON p.user_id = u.user_id \
+     JOIN process_template_versions ptv ON ptv.version_id = p.template_version_id \
+     JOIN process_templates pt ON pt.template_id = ptv.template_id \
      LEFT JOIN flat_ownerships fo ON p.ownership_id = fo.ownership_id \
      LEFT JOIN flats f ON fo.flat_id = f.flat_id \
      LEFT JOIN process_steps ps ON p.process_id = ps.process_id";
@@ -341,7 +376,7 @@ pub async fn list_processes_for_user(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} WHERE p.user_id = $1 AND (fo.ownership_id IS NULL OR fo.is_active = TRUE) \
-         GROUP BY p.process_id, p.template_id, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
+         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
          ORDER BY p.created_at DESC",
         PROCESS_LIST_QUERY_BASE
     );
@@ -353,7 +388,7 @@ pub async fn list_all_processes(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} \
-         GROUP BY p.process_id, p.template_id, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
+         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
          ORDER BY p.created_at DESC",
         PROCESS_LIST_QUERY_BASE
     );

@@ -257,6 +257,28 @@ async fn main() {
                     ]),
                 ));
 
+            let process_templates_manage_routes = Router::new()
+                .route(
+                    "/process-templates/list",
+                    post(handlers::process_templates::list),
+                )
+                .route(
+                    "/process-templates/get-version",
+                    post(handlers::process_templates::get_version),
+                )
+                .route(
+                    "/process-templates/save",
+                    post(handlers::process_templates::save),
+                )
+                .route(
+                    "/process-templates/activate",
+                    post(handlers::process_templates::activate),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_permission(&[Permission::ProcessTemplatesManage]),
+                ));
+
             let admin_routes = users_view_routes
                 .merge(users_manage_routes)
                 .merge(documents_manage_routes)
@@ -264,7 +286,8 @@ async fn main() {
                 .merge(roles_user_designation_routes)
                 .merge(roles_designation_definition_routes)
                 .merge(document_categories_manage_routes)
-                .merge(roles_shared_read_routes);
+                .merge(roles_shared_read_routes)
+                .merge(process_templates_manage_routes);
 
             Router::new()
                 .route("/health", get(handlers::health::health_check))
@@ -293,6 +316,10 @@ async fn main() {
                 .route(
                     "/api/v1/documents/confirm-upload",
                     post(handlers::documents::user_confirm_upload),
+                )
+                .route(
+                    "/api/v1/process-templates/available",
+                    post(handlers::process_templates::available),
                 )
                 .route(
                     "/api/v1/process/list",

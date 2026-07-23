@@ -59,7 +59,7 @@ async fn test_process_api_workflow_lifecycle() {
     let state_resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &resident_auth)
         .send_json(serde_json::json!({
-            "template_id": "tenant_onboarding_v1"
+            "template_id": 1
         }))
         .expect("Failed to get process state");
 
@@ -71,10 +71,7 @@ async fn test_process_api_workflow_lifecycle() {
         .expect("process_id should be string");
     let process_id = Uuid::parse_str(process_id_str).expect("process_id should be valid UUID");
 
-    assert_eq!(
-        state_val["template_id"].as_str().unwrap(),
-        "tenant_onboarding_v1"
-    );
+    assert_eq!(state_val["template_version_id"].as_i64().unwrap(), 1);
     assert!(!state_val["is_completed"].as_bool().unwrap());
 
     // Verify steps exist

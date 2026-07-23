@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,8 +7,6 @@
     <title>Vistas Portal - Admin Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
-        // Set the initial suite before the page paints, so the correct panel
-        // is visible from the first frame instead of flashing Residents first.
         document.documentElement.setAttribute(
             'data-tab',
             new URLSearchParams(window.location.search).get('tab') || 'residents'
@@ -23,8 +22,6 @@
         html {
             overflow-x: hidden;
         }
-        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
-           in <script>) so the full text is still available on hover. */
         .truncate {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -61,14 +58,12 @@
             width: 100%;
         }
 
-        /* Layout Container */
         .layout-container {
             display: flex;
             width: 100%;
             min-height: 100vh;
         }
 
-        /* Decorative Background Shapes — clipped to never overflow viewport */
         .bg-shape-top-right {
             position: fixed;
             width: 500px;
@@ -81,7 +76,6 @@
             pointer-events: none;
         }
 
-        /* Left Main Sidebar */
         .sidebar {
             width: 260px;
             min-width: 260px;
@@ -100,7 +94,6 @@
             will-change: transform;
         }
 
-        /* Mobile Top Bar */
         .mobile-topbar {
             display: none;
             position: fixed;
@@ -259,7 +252,6 @@
             transform: scale(1.03);
         }
 
-        /* Category filter bar and chips */
         .category-filter-bar {
             display: flex;
             gap: 10px;
@@ -318,7 +310,6 @@
             border-color: var(--primary);
         }
 
-        /* Main Workspace Contents */
         .workspace {
             flex-grow: 1;
             margin-left: 260px;
@@ -328,7 +319,6 @@
             z-index: 10;
         }
 
-        /* Typography */
         h2 {
             font-size: 2.75rem;
             font-weight: 800;
@@ -338,25 +328,19 @@
             margin-bottom: 8px;
         }
         .header-thick-rule {
-            display: none; /* Replaced by color blocks and spaces */
-        }
+            display: none; }
 
-        /* Tabs Panels */
         .suite-panel {
             display: none;
         }
         .suite-panel.active {
             display: block;
         }
-        /* Initial-tab state, set synchronously in <head> before first paint
-           (see the inline script above) — avoids a flash to the Residents suite
-           on a fresh page load with ?tab=documents. */
         html[data-tab="documents"] #suite-residents { display: none; }
         html[data-tab="documents"] #suite-documents { display: block; }
         html[data-tab="documents"] #suite-btn-residents { background-color: transparent; color: var(--foreground); }
         html[data-tab="documents"] #suite-btn-documents { background-color: var(--primary); color: var(--background); }
 
-        /* Subtabs */
         .subtab-bar {
             display: flex;
             gap: 12px;
@@ -392,7 +376,6 @@
             display: block;
         }
 
-        /* Cards and Splits */
         .card {
             background-color: var(--background);
             border-radius: var(--radius-lg);
@@ -415,7 +398,6 @@
             }
         }
 
-        /* Forms */
         .form-group {
             margin-bottom: 24px;
         }
@@ -448,6 +430,11 @@
             font-size: 14px;
             transition: all 0.2s ease;
         }
+        input[type="checkbox"] {
+            width: auto;
+            padding: 0;
+            flex-shrink: 0;
+        }
         textarea {
             resize: vertical;
             height: 100px;
@@ -477,7 +464,6 @@
             transform: scale(1.05);
         }
 
-        /* Feedback box */
         .feedback-box {
             display: none;
             padding: 12px;
@@ -495,7 +481,6 @@
             color: #059669;
         }
 
-        /* Permission info icon (click to open a description popup — works on touch, unlike hover tooltips) */
         .perm-info-btn {
             display: inline-flex;
             align-items: center;
@@ -519,7 +504,6 @@
             color: var(--primary);
         }
 
-        /* Table */
         .table-container {
             overflow-x: auto;
             border-radius: var(--radius-lg);
@@ -558,7 +542,6 @@
             background-color: #FAFAFA;
         }
 
-        /* Badges */
         .badge {
             display: inline-block;
             padding: 2px 8px;
@@ -583,7 +566,6 @@
             color: #EF4444;
         }
 
-        /* Category tag (matches the resident document list's badge styling) */
         .doc-category-badge {
             font-size: 0.6875rem;
             text-transform: uppercase;
@@ -611,7 +593,6 @@
             color: #6D28D9;
         }
 
-        /* Action elements */
         .action-select {
             width: 120px;
             padding: 6px 8px;
@@ -664,43 +645,114 @@
                 max-width: 100vw;
                 overflow-x: hidden;
             }
-            /* Reduce card padding so inner content fits */
             .card { padding: 20px; margin-bottom: 20px; }
-            /* Collapse split grid immediately */
             .split-grid { grid-template-columns: 1fr; gap: 0; }
-            /* Subtabs wrap instead of overflowing */
             .subtab-bar { flex-wrap: wrap; gap: 8px; }
-            /* Category filter bar must not widen the page */
             .category-filter-bar {
                 max-width: 100%;
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
             }
-            /* Table: horizontal scroll only, vertical handled by page */
             table {
                 min-width: 480px;
             }
-            /* Hide least critical table columns on very small screens */
             .admin-col-hide-mobile { display: none; }
             h2 { font-size: 1.75rem; }
         }
+
+        .builder-overlay {
+            position: fixed; inset: 0; background: var(--background); z-index: 10001;
+            display: none; flex-direction: column;
+        }
+        .builder-topbar {
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 16px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap;
+        }
+        .builder-body { display: flex; flex: 1; min-height: 0; }
+        .builder-sidebar {
+            width: 300px; min-width: 300px; border-right: 1px solid var(--border);
+            overflow-y: auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 10px;
+        }
+        .builder-detail { flex: 1; overflow-y: auto; padding: 32px 40px; }
+        .builder-detail-inner { max-width: 760px; margin: 0 auto; }
+        .step-nav-item {
+            background-color: var(--background); border: 1px solid var(--border);
+            border-radius: var(--radius-lg); padding: 16px 20px; display: flex;
+            align-items: center; justify-content: space-between; cursor: pointer;
+            transition: all 0.2s ease; text-align: left; width: 100%;
+        }
+        .step-nav-item:hover {
+            border-color: var(--primary); background-color: var(--muted); transform: translateY(-2px);
+        }
+        .step-nav-item.active {
+            border-color: var(--primary); background-color: #EFF6FF;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.08);
+        }
+        .step-nav-item.active .step-nav-name { color: var(--primary); font-weight: 700; }
+        .step-nav-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .step-nav-num {
+            font-size: 0.75rem; text-transform: uppercase; font-weight: 700;
+            color: var(--muted-foreground); letter-spacing: 0.05em;
+        }
+        .step-nav-name { font-size: 0.9375rem; font-weight: 600; color: var(--foreground); }
+        .step-nav-add {
+            padding: 14px; text-align: center; border: 2px dashed var(--border);
+            border-radius: var(--radius-lg); cursor: pointer; color: var(--muted-foreground); font-weight: 700;
+        }
+        .step-nav-add:hover { border-color: var(--primary); color: var(--primary); }
+        .step-card {
+            border: 1px solid var(--border); border-radius: var(--radius-lg);
+            background-color: var(--background); padding: 24px; margin-bottom: 20px;
+        }
+        .step-header {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            flex-wrap: wrap; gap: 8px; margin-bottom: 12px;
+        }
+        .step-title-input {
+            font-size: 1.25rem; font-weight: 700; border: none; border-bottom: 2px solid transparent;
+            background: transparent; color: var(--foreground); padding: 2px 0; flex: 1; min-width: 200px;
+        }
+        .step-title-input:focus { outline: none; border-bottom-color: var(--primary); }
+        .step-desc-input {
+            width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--radius-md);
+            background: var(--muted); color: var(--foreground); padding: 8px 12px; margin-bottom: 16px; min-height: 44px;
+        }
+        .fields-container {
+            display: flex; flex-direction: column; gap: 16px; border-top: 1px solid var(--border); padding-top: 16px;
+        }
+        .field-row {
+            display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+            padding: 14px; background-color: #F8FAFC; border-radius: var(--radius-md);
+        }
+        .field-row input[type="text"], .field-row select {
+            padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md);
+            background: var(--background); color: var(--foreground); font-size: 0.875rem;
+        }
+        .field-row .field-name-input { flex: 1; min-width: 180px; font-weight: 600; }
+        .field-row-main { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .field-row-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+        .field-check-label {
+            display: flex; align-items: center; gap: 6px; font-size: 0.8125rem; font-weight: 600;
+            text-transform: none; letter-spacing: normal;
+            color: var(--muted-foreground); background: var(--background); border: 1px solid var(--border);
+            border-radius: 9999px; padding: 6px 12px; cursor: pointer; user-select: none;
+        }
+        .field-check-label input[type="checkbox"] { accent-color: var(--primary); cursor: pointer; }
+        .field-row-meta .del-action-btn { margin-left: auto; padding: 6px 12px; font-size: 0.8125rem; }
     </style>
 </head>
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <!-- Mobile Top Bar -->
     <div class="mobile-topbar" id="mobile-topbar">
         <span class="mobile-topbar-brand">Admin</span>
         <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
             <span></span><span></span><span></span>
         </button>
     </div>
-    <!-- Sidebar Overlay -->
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
     <div class="layout-container">
-        <!-- Sidebar Navigation -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
                 <h1>Admin</h1>
@@ -716,6 +768,9 @@
                     <button class="nav-item" id="suite-btn-roles" style="display:none;" onclick="switchSuite('roles'); closeSidebar()">
                         Roles
                     </button>
+                    <button class="nav-item" id="suite-btn-templates" style="display:none;" onclick="switchSuite('templates'); closeSidebar()">
+                        Process Templates
+                    </button>
                     <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
                     </a>
@@ -729,15 +784,12 @@
 
 
 
-        <!-- Main Workspace Contents -->
         <main class="workspace" id="main-workspace">
             
-            <!-- RESIDENTS SUITE PANEL -->
             <section class="suite-panel active" id="suite-residents">
                 <h2>Residents</h2>
                 
                 <div class="split-grid" id="residents-split-grid">
-                    <!-- Left: Add Form & Upload Form (requires users.manage) -->
                     <div id="residents-left-column" style="display: flex; flex-direction: column; gap: 32px;">
                         <div class="card">
                             <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Resident</h3>
@@ -789,7 +841,6 @@
                         </div>
                     </div>
 
-                    <!-- Right: Resident list -->
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Registry</h3>
                         <div style="margin-bottom: 24px;">
@@ -808,21 +859,17 @@
                 </div>
             </section>
 
-            <!-- DOCUMENTS SUITE PANEL -->
             <section class="suite-panel" id="suite-documents">
                 <h2>Documents</h2>
                 
-                <!-- Subtabs Menu -->
                 <div class="subtab-bar">
                     <button class="subtab-btn active" id="subtab-btn-db" onclick="switchSubtab('db')">Explorer</button>
                     <button class="subtab-btn" id="subtab-btn-register" onclick="switchSubtab('register')">Add Document</button>
                     <button class="subtab-btn" id="subtab-btn-categories" style="display:none;" onclick="switchSubtab('categories')">Categories</button>
                 </div>
 
-                <!-- Subtab 1: Document Database Explorer -->
                 <div class="subtab-panel active" id="subtab-panel-db">
                     
-                    <!-- Category Filter Bar (Desktop & Mobile) -->
                     <div class="category-filter-bar" id="admin-filter-bar">
                         <button class="filter-chip active" id="admin-filter-all" onclick="filterAdminDocsBySubbar('ALL')">All</button>
                         <button class="filter-chip" id="admin-filter-deleted" onclick="filterAdminDocsBySubbar('DELETED')">Deleted Files</button>
@@ -844,7 +891,6 @@
                     </div>
                 </div>
 
-                <!-- Subtab 2: Register Document Form -->
                 <div class="subtab-panel" id="subtab-panel-register">
                     <div class="card" style="width: 100%; max-width: 700px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Document</h3>
@@ -868,7 +914,6 @@
                                 </select>
                             </div>
 
-                            <!-- Resident Flat (shown only for RESIDENT_SPECIFIC) -->
                             <div id="flat-mapping-section" style="display: none;">
                                 <h4 style="margin: 25px 0 15px 0; color: var(--foreground); font-size:14px; text-transform: uppercase; padding-bottom: 8px; font-weight: 800; border-bottom: 1px solid var(--border);">Flat Visibility Mapping</h4>
                                 <div class="form-row-2">
@@ -884,7 +929,6 @@
                                 <div id="flat-owner-preview" style="font-size:12.5px; color:var(--muted-foreground); margin-top:-8px; margin-bottom:15px; min-height:16px;"></div>
                             </div>
 
-                            <!-- Optional Details fields -->
                             <h4 style="margin: 25px 0 15px 0; color: var(--foreground); font-size:14px; text-transform: uppercase; padding-bottom: 8px; font-weight: 800; border-bottom: 1px solid var(--border);">Other Info (Optional)</h4>
                             
                             <div class="form-row-2">
@@ -922,7 +966,6 @@
                     </div>
                 </div>
 
-                <!-- Subtab 3: Document Categories (create + designation access matrix — requires documents.categories.manage) -->
                 <div class="subtab-panel" id="subtab-panel-categories">
                     <div class="card" id="category-access-card" style="display:none; margin-bottom: 24px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Document Category Access</h3>
@@ -981,17 +1024,14 @@
                 </div>
             </section>
 
-            <!-- ROLES SUITE PANEL (visible only if the caller can manage roles and/or designations) -->
             <section class="suite-panel" id="suite-roles">
                 <h2>Roles</h2>
 
-                <!-- Subtabs Menu -->
                 <div class="subtab-bar">
                     <button class="subtab-btn active" id="subtab-btn-user-designations" style="display:none;" onclick="switchSubtab('user-designations')">User Designations</button>
                     <button class="subtab-btn" id="subtab-btn-manage-designations" style="display:none;" onclick="switchSubtab('manage-designations')">Manage Designations</button>
                 </div>
 
-                <!-- Subtab 1: User Designations (assign/revoke — requires users.roles.manage) -->
                 <div class="subtab-panel active" id="subtab-panel-user-designations">
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">User Designations</h3>
@@ -1010,7 +1050,6 @@
                     </div>
                 </div>
 
-                <!-- Subtab 2: Manage Designations (create + their permissions/document access — requires designations.manage) -->
                 <div class="subtab-panel" id="subtab-panel-manage-designations">
                     <div class="card" style="margin-bottom: 24px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">All Designations</h3>
@@ -1052,10 +1091,70 @@
                     </div>
                 </div>
             </section>
+
+            <section class="suite-panel" id="suite-templates">
+                <h2>Process Templates</h2>
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
+                        <p style="color:var(--muted-foreground); font-size:14px; margin:0;">Each template has versions; only the active one is what residents can start.</p>
+                        <button type="button" class="submit-btn" style="width:auto; padding:10px 18px; margin:0;" onclick="openTemplateBuilder(null)">+ New Template</button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <tbody id="template-list-rows-target">
+                                <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 
-    <!-- Revoke Flat Modal -->
+    <div id="template-builder-modal" class="builder-overlay">
+        <div class="builder-topbar">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <input type="text" id="builder-template-name" placeholder="Template name (e.g. Resident Onboarding)" style="font-size:18px; font-weight:800; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); min-width:280px;">
+                <span id="builder-version-badge" style="font-size:12px; font-weight:700; color:var(--muted-foreground);"></span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <span id="builder-feedback" style="font-size:13px; font-weight:600;"></span>
+                <button onclick="closeTemplateBuilder()" style="height:38px; padding:0 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+                <button type="button" id="builder-save-btn" onclick="saveTemplateBuilder()" class="submit-btn" style="width:auto; padding:10px 20px; margin:0;">Save New Version</button>
+            </div>
+        </div>
+        <div class="builder-body">
+            <div class="builder-sidebar" id="builder-stage-list"></div>
+            <div class="builder-detail" id="builder-stage-detail"></div>
+        </div>
+    </div>
+
+    <div id="template-preview-modal" class="builder-overlay">
+        <div class="builder-topbar">
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <span id="preview-template-name" style="font-size:18px; font-weight:800;"></span>
+                <span style="font-size:12px; font-weight:700; color:var(--muted-foreground);">Preview — how this looks to a resident</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <button onclick="closeTemplatePreview()" style="height:38px; padding:0 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+            </div>
+        </div>
+        <div class="builder-body">
+            <div class="builder-sidebar" id="preview-stage-list"></div>
+            <div class="builder-detail" id="preview-stage-detail"></div>
+        </div>
+    </div>
+
+    <div id="template-versions-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closeTemplateVersionsModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(560px, 92vw); max-height:80vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 id="template-versions-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;"></h3>
+            <div id="template-versions-modal-rows"></div>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button onclick="closeTemplateVersionsModal()" style="padding:10px 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div id="revoke-flat-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 style="margin-top:0; color:var(--foreground); font-size:18px;">Revoke Resident Flat</h3>
@@ -1076,7 +1175,6 @@
         </div>
     </div>
 
-    <!-- Manage Designations Modal -->
     <div id="manage-designations-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
         <div style="background:var(--background); padding:28px; border-radius:12px; width:min(440px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="manage-designations-title" style="margin-top:0; margin-bottom:20px; color:var(--foreground); font-size:18px; word-break:break-word;">Manage Designations</h3>
@@ -1095,7 +1193,6 @@
         </div>
     </div>
 
-    <!-- Manage Category Access Modal -->
     <div id="manage-category-access-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
         <div style="background:var(--background); padding:28px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="manage-category-access-title" style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px; word-break:break-word;">Category Access</h3>
@@ -1120,7 +1217,6 @@
         </div>
     </div>
 
-    <!-- Permission Info Popup -->
     <div id="perm-info-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closePermInfoModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(360px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="perm-info-title" style="margin-top:0; margin-bottom:10px; color:var(--foreground); font-size:16px;"></h3>
@@ -1131,7 +1227,6 @@
         </div>
     </div>
 
-    <!-- Edit Modal (shared by designations + document categories/subcategories: rename + delete) -->
     <div id="rename-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closeRenameModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="rename-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Edit</h3>
@@ -1152,9 +1247,16 @@
         </div>
     </div>
 
-    <!-- Confirm Modal (replaces native confirm() — Chrome silently swallows those unless
-         DevTools is open, which reads as "the button just doesn't work") -->
-    <div id="confirm-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeConfirmModal(false)">
+    <div id="alert-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10011; justify-content:center; align-items:center;" onclick="if (event.target === this) closeAlertModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <p id="alert-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5; white-space:pre-line;"></p>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button id="alert-modal-ok-btn" onclick="closeAlertModal()" class="submit-btn" style="width:auto; padding:10px 20px; margin:0;">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10010; justify-content:center; align-items:center;" onclick="if (event.target === this) closeConfirmModal(false)">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5;"></p>
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
@@ -1164,7 +1266,6 @@
         </div>
     </div>
 
-    <!-- Add Staff Modal -->
     <div id="add-staff-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeAddStaffModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Add Staff</h3>
@@ -1181,7 +1282,6 @@
         </div>
     </div>
 
-    <!-- Edit Document Modal -->
     <div id="edit-document-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; overflow-y:auto;" onclick="if (event.target === this) closeEditDocumentModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin:32px 0; max-height:calc(100vh - 64px); overflow-y:auto;">
             <h3 style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Edit Document</h3>
@@ -1251,7 +1351,6 @@
             ));
         }
 
-        // ---- Sidebar toggle (mobile) ----
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -1282,9 +1381,6 @@
                  .replace(/'/g, "&#039;");
         }
 
-        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
-        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
-        // element so the full value is still readable on hover.
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -1293,7 +1389,6 @@
             return escapeHtml((text === null || text === undefined) ? '' : text.toString());
         }
 
-        // Replaces native confirm() — resolves true/false once the user picks.
         let _confirmResolve = null;
         function showConfirm(message, okLabel) {
             document.getElementById('confirm-modal-message').textContent = message;
@@ -1310,9 +1405,21 @@
             }
         }
 
-        // API error bodies are either a bare JSON string or a {message: "..."} object —
-        // reading the raw response text directly would show the JSON quoting/escaping
-        // to the user. This unwraps either shape down to a plain message.
+        let _alertResolve = null;
+        function showAlert(message) {
+            document.getElementById('alert-modal-message').textContent = message;
+            document.getElementById('alert-modal').style.display = 'flex';
+            return new Promise(resolve => { _alertResolve = resolve; });
+        }
+        function closeAlertModal() {
+            document.getElementById('alert-modal').style.display = 'none';
+            if (_alertResolve) {
+                const resolve = _alertResolve;
+                _alertResolve = null;
+                resolve();
+            }
+        }
+
         async function readErrorMessage(response) {
             const raw = await response.text();
             try {
@@ -1323,7 +1430,7 @@
             return raw;
         }
 
-        const API_BASE = "";
+        const API_BASE = "https://krm3err35eo7fqlzwfv5qrjtgy0oltum.lambda-url.ap-south-1.on.aws";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
         const user = userStr ? JSON.parse(userStr) : null;
@@ -1334,6 +1441,11 @@
         const canManageUsers = !!(user && user.can_manage_users);
         const canManageDocuments = !!(user && user.can_manage_documents);
         const canViewRoles = !!(user && user.can_view_roles);
+        const canManageProcessTemplates = !!(user && user.can_manage_process_templates);
+        if (canManageProcessTemplates) {
+            const templatesBtn = document.getElementById('suite-btn-templates');
+            if (templatesBtn) templatesBtn.style.display = 'block';
+        }
         let defaultRolesSubtab = 'user-designations';
         if (canManageRoles || canManageDesignations || canViewRoles) {
             const rolesBtn = document.getElementById('suite-btn-roles');
@@ -1344,9 +1456,6 @@
             if (canManageDesignations && manageDesigBtn) manageDesigBtn.style.display = 'inline-block';
             defaultRolesSubtab = (canManageRoles || canViewRoles) ? 'user-designations' : 'manage-designations';
         }
-        // Add Staff hits /users/create-staff, which the backend gates on users.manage —
-        // not users.roles.manage — so its visibility must track that permission
-        // independently of the surrounding Roles suite's own gate.
         if (canManageUsers) {
             const addStaffBtn = document.getElementById('add-staff-btn');
             if (addStaffBtn) addStaffBtn.style.display = 'inline-block';
@@ -1355,9 +1464,6 @@
             const categoriesBtn = document.getElementById('subtab-btn-categories');
             if (categoriesBtn) categoriesBtn.style.display = 'inline-block';
         }
-        // Explorer/Add Document deal with actual document content, gated on
-        // canManageDocuments — a categories-only manager has no business there and
-        // should land straight on (and only ever see) the Categories subtab.
         if (!canManageDocuments) {
             const dbBtn = document.getElementById('subtab-btn-db');
             if (dbBtn) dbBtn.style.display = 'none';
@@ -1386,11 +1492,6 @@
         const canViewAllProcesses = !!(user && user.can_view_all_processes);
         const myFlatDashboardLink = document.getElementById('my-flat-dashboard-link');
         if (myFlatDashboardLink) myFlatDashboardLink.style.display = hasFlat ? 'block' : 'none';
-        // Only show a Processes link here if this account actually holds process oversight
-        // permission. Personal-flat processes are NOT admin business — they're already
-        // reachable via "My Flat Dashboard →" -> /dashboard -> Processes, so duplicating
-        // that here off of hasFlat alone just clutters the admin nav with a dead-end link
-        // for accounts that have a flat but no process-related permission at all.
         const workflowsBtn = document.getElementById('suite-btn-workflows');
         if (workflowsBtn) {
             workflowsBtn.style.display = canViewAllProcesses ? 'block' : 'none';
@@ -1407,7 +1508,6 @@
                 window.location.href = '/dashboard';
             }
 
-            // Sync user profile from server in background
             async function refreshProfile() {
                 try {
                     const response = await fetch(`${API_BASE}/api/v1/profile`, {
@@ -1423,12 +1523,6 @@
                             window.location.href = '/dashboard';
                             return;
                         }
-                        // All capability flags above (canManageRoles, canViewRoles, etc.) were
-                        // computed once, synchronously, from the localStorage snapshot at page
-                        // load. If a designation/permission was granted or revoked after this
-                        // tab's last login, that snapshot is stale — reload so every gate on
-                        // this page recomputes from the fresh grant instead of silently sitting
-                        // on outdated access until the user manually logs out and back in.
                         if (JSON.stringify(freshUser) !== JSON.stringify(user)) {
                             window.location.reload();
                         }
@@ -1454,7 +1548,6 @@
             const select = document.getElementById('doc-category');
             const cat = select.value;
 
-            // Show/hide flat mapping section for RESIDENT_SPECIFIC category
             const flatSection = document.getElementById('flat-mapping-section');
             flatSection.style.display = (cat === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
 
@@ -1464,9 +1557,6 @@
             subcatSelect.innerHTML = '<option value="">None</option>' +
                 matching.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`).join('');
 
-            // Toggling that section shifts page layout right below the still-focused
-            // select — browsers then auto-scroll to keep it in view, which reads as an
-            // unwanted jump right as the dropdown closes. Blurring avoids that.
             select.blur();
         }
 
@@ -1530,10 +1620,8 @@
             handleCategoryChange();
         }
 
-        // Initialize category dynamic selection
         loadUploadCategories();
 
-        // Suite initialization from URL parameter
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab');
         if (initialTab === 'documents' && (canManageDocuments || canManageCategories)) {
@@ -1542,39 +1630,36 @@
             switchSuite('roles');
         } else if (initialTab === 'residents' && canViewUsers) {
             switchSuite('residents');
+        } else if (initialTab === 'templates' && canManageProcessTemplates) {
+            switchSuite('templates');
         } else if (defaultSuite) {
             switchSuite(defaultSuite);
         }
 
-        // High Level Suite Toggle
         function switchSuite(suiteName) {
-            // Keep the FOUC-prevention attribute (set once from the URL at page load,
-            // see the inline <head> script) in sync so its CSS overrides don't fight
-            // the .active class toggled below on later clicks.
             document.documentElement.setAttribute('data-tab', suiteName);
 
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
 
             document.getElementById(`suite-btn-${suiteName}`).classList.add('active');
             
-            // Switch panels
             document.getElementById('suite-residents').style.display = suiteName === 'residents' ? 'block' : 'none';
             document.getElementById('suite-documents').style.display = suiteName === 'documents' ? 'block' : 'none';
             const rolesPanel = document.getElementById('suite-roles');
             if (rolesPanel) rolesPanel.style.display = suiteName === 'roles' ? 'block' : 'none';
+            const templatesPanel = document.getElementById('suite-templates');
+            if (templatesPanel) templatesPanel.style.display = suiteName === 'templates' ? 'block' : 'none';
 
             if (suiteName === 'documents') {
-                // Always explicitly (re-)select the right subtab on entry — otherwise
-                // whichever subtab was left active from a previous visit stays shown
-                // without its data ever being (re-)loaded, and the suite renders blank.
                 switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
             } else if (suiteName === 'roles') {
                 switchSubtab(defaultRolesSubtab);
                 loadRolesData();
+            } else if (suiteName === 'templates') {
+                loadProcessTemplates();
             }
         }
 
-        // Document Suite Subtab Toggle
         function switchSubtab(subName) {
             document.querySelectorAll('.subtab-btn').forEach(btn => btn.classList.remove('active'));
             document.querySelectorAll('.subtab-panel').forEach(p => p.classList.remove('active'));
@@ -1589,7 +1674,6 @@
             }
         }
 
-        // Resident Onboarding Handling
         const onboardForm = document.getElementById('onboard-form');
         const feedback = document.getElementById('feedback');
 
@@ -1632,7 +1716,6 @@
             }
         });
 
-        // Bulk Upload Form
         const uploadCsvForm = document.getElementById('upload-csv-form');
         const uploadFeedback = document.getElementById('upload-feedback');
         const uploadResultsSection = document.getElementById('upload-results');
@@ -1693,7 +1776,6 @@
             }
         });
 
-        // Resident Directory Handling
         let allUsers = [];
         async function loadUsers() {
             const tbody = document.getElementById('user-rows-target');
@@ -1730,7 +1812,7 @@
             }
             
             if (select.options.length === 0) {
-                alert("No active flat mappings to revoke.");
+                showAlert("No active flat mappings to revoke.");
                 return;
             }
             
@@ -1801,9 +1883,6 @@
                 if (hasAdmin) {
                     mappingText = `<span style="color:var(--foreground); font-style:italic;">Admin Account</span>`;
                 } else if (u.wing === 'TBD' || u.flat_number === 'TBD') {
-                    // No active flat mapping (e.g. revoked) — not necessarily an admin;
-                    // they may still hold a non-admin designation, which is why they're
-                    // listed at all (see get_all_users' WHERE clause).
                     mappingText = `<span style="color:var(--muted-foreground); font-style:italic;">No Flat Assigned</span>`;
                 } else {
                     const wings = u.wing.split(', ');
@@ -1812,7 +1891,6 @@
                     mappingText = `Flats: <strong>${mappings}</strong>`;
                 }
 
-                // Only show Revoke Flat if they actually have a flat assigned, and the caller can manage users
                 const hasRealFlat = u.wing !== 'TBD' && u.flat_number !== 'TBD';
                 const revokeFlatHtml = (hasRealFlat && canManageUsers)
                     ? `<button class="del-action-btn" style="font-size: 11px; padding: 6px 10px; white-space: nowrap;" onclick="openRevokeFlatModal(${u.user_id}, '${escapeHtml(u.wing)}', '${escapeHtml(u.flat_number)}')">Revoke Flat</button>`
@@ -1844,18 +1922,11 @@
             renderUsers(filtered);
         });
 
-        // ==========================================
-        // ROLES TAB — user designations + document category access matrix
-        // ==========================================
 
         let allNonSystemDesignations = [];
         let allPermissions = [];
         let allNonSystemCategories = [];
 
-        // Fixed display order + friendly copy for the permission matrix. Any permission
-        // the backend returns that isn't listed here still renders (falls back to its raw
-        // code/label), appended after these — keeps the UI forward-compatible with new
-        // permissions the server adds before this map is updated.
         const PERMISSION_ORDER = [
             'users.view', 'users.manage', 'users.roles.view', 'users.roles.manage',
             'designations.manage', 'documents.all.manage', 'documents.categories.manage',
@@ -1871,6 +1942,7 @@
             'documents.categories.manage': { title: 'Manage Document Categories', desc: 'Add new document categories.' },
             'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
             'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
+            'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions.' },
         };
 
         function sortPermissionsForDisplay(permissions) {
@@ -1908,6 +1980,379 @@
             }
         }
 
+        let allProcessTemplates = [];
+        let builderState = null;
+        let builderSelectedPath = null;
+
+        async function loadProcessTemplates() {
+            const tbody = document.getElementById('template-list-rows-target');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!resp.ok) {
+                    tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--foreground); font-weight:600;">Failed to load templates.</td></tr>';
+                    return;
+                }
+                allProcessTemplates = await resp.json();
+                renderProcessTemplatesList();
+            } catch (err) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--foreground); font-weight:600;">Database connection offline.</td></tr>';
+            }
+        }
+
+        function renderProcessTemplatesList() {
+            const tbody = document.getElementById('template-list-rows-target');
+            if (allProcessTemplates.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="2" style="text-align:center; color:var(--muted-foreground); font-weight:600;">No templates yet.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = allProcessTemplates.map(t => {
+                const sortedVersions = [...t.versions].sort((a, b) => b.version_number - a.version_number);
+                return `
+                    <tr>
+                        <td style="font-weight:700;">${escapeHtml(t.name)}</td>
+                        <td style="text-align:right; vertical-align:top; white-space:nowrap;">
+                            <button class="action-select" style="cursor:pointer;" onclick="openTemplateVersionsModal(${t.template_id})">Versions (${t.versions.length})</button>
+                            <button class="action-select" style="cursor:pointer;" onclick="openTemplateBuilder(${t.template_id}, ${sortedVersions[0].version_id})">Edit Latest</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        let versionsModalTemplateId = null;
+
+        function openTemplateVersionsModal(templateId) {
+            versionsModalTemplateId = templateId;
+            renderTemplateVersionsModal();
+            document.getElementById('template-versions-modal').style.display = 'flex';
+        }
+
+        function closeTemplateVersionsModal() {
+            document.getElementById('template-versions-modal').style.display = 'none';
+            versionsModalTemplateId = null;
+        }
+
+        function renderTemplateVersionsModal() {
+            const t = allProcessTemplates.find(t => t.template_id === versionsModalTemplateId);
+            if (!t) return;
+            document.getElementById('template-versions-modal-title').textContent = `Versions — ${t.name}`;
+            const sortedVersions = [...t.versions].sort((a, b) => b.version_number - a.version_number);
+            document.getElementById('template-versions-modal-rows').innerHTML = sortedVersions.map(v => {
+                const isActive = v.version_id === t.active_version_id;
+                return `
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid var(--border);">
+                        <div>
+                            <span style="font-weight:700;">v${v.version_number}</span>
+                            ${isActive ? '<span style="margin-left:8px; font-size:11px; font-weight:800; color:#166534; background:#DCFCE7; padding:2px 8px; border-radius:999px;">ACTIVE</span>' : ''}
+                            <div style="font-size:12px; color:var(--muted-foreground); margin-top:2px;">${new Date(v.created_at).toLocaleString()}${v.created_by_email ? ` &middot; by ${escapeHtml(v.created_by_email)}` : ''}</div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+                            <button class="action-select" style="cursor:pointer;" onclick="openTemplatePreview(${v.version_id}, '${escapeHtml(t.name).replace(/'/g, "\\'")}')">View</button>
+                            ${isActive
+                                ? ''
+                                : `<button type="button" class="submit-btn" style="width:auto; padding:6px 14px; margin:0; font-size:12px;" onclick="activateTemplateVersion(${t.template_id}, ${v.version_id})">Activate</button>`}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function emptyField() {
+            return { name: '', type: 'document', is_optional: false, filled_by: 'user' };
+        }
+        function emptyStage() {
+            return { name: 'New Stage', description: '', is_optional: false, is_review_required: true, fields: null, substeps: [emptySubstep()] };
+        }
+        function emptySubstep() {
+            return { name: 'New Substep', description: '', is_optional: false, is_review_required: false, fields: [] };
+        }
+
+        async function openTemplateBuilder(templateId, versionId) {
+            document.getElementById('template-builder-modal').style.display = 'flex';
+            document.getElementById('builder-feedback').textContent = '';
+
+            if (versionId) {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/get-version`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ version_id: versionId })
+                    });
+                    const tree = await resp.json();
+                    builderState = { template_id: templateId, name: tree.name, description: tree.description,
+                        is_optional: tree.is_optional, is_review_required: tree.is_review_required,
+                        fields: null, substeps: (tree.substeps || []).map(stageFromServer) };
+                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a NEW version`;
+                } catch (err) {
+                    builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
+                }
+            } else {
+                builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
+                document.getElementById('builder-version-badge').textContent = 'New template';
+            }
+
+            document.getElementById('builder-template-name').value = builderState.name || '';
+            builderSelectedPath = builderState.substeps && builderState.substeps.length > 0 ? [0] : null;
+            renderBuilderStages();
+            renderBuilderStageDetail();
+        }
+
+        function stageFromServer(s) {
+            const substeps = s.substeps
+                ? s.substeps.map(sub => ({
+                    name: sub.name, description: sub.description, is_optional: sub.is_optional, is_review_required: sub.is_review_required,
+                    fields: (sub.fields || []).map(fieldFromServer)
+                }))
+                : [{ name: s.name, description: '', is_optional: false, is_review_required: false, fields: (s.fields || []).map(fieldFromServer) }];
+            return {
+                name: s.name, description: s.description, is_optional: s.is_optional, is_review_required: s.is_review_required,
+                fields: null,
+                substeps
+            };
+        }
+        function fieldFromServer(f) {
+            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by };
+        }
+
+        function closeTemplateBuilder() {
+            document.getElementById('template-builder-modal').style.display = 'none';
+            builderState = null;
+            builderSelectedPath = null;
+        }
+
+        function renderBuilderStages() {
+            const container = document.getElementById('builder-stage-list');
+            const stages = builderState.substeps || [];
+            let html = stages.map((stage, i) => {
+                const isSelected = builderSelectedPath && builderSelectedPath[0] === i;
+                return `<div class="step-nav-item ${isSelected ? 'active' : ''}" onclick="builderSelectedPath=[${i}]; renderBuilderStages(); renderBuilderStageDetail();">
+                    <div class="step-nav-info">
+                        <span class="step-nav-num">Stage ${i + 1}</span>
+                        <span class="step-nav-name">${escapeHtml(stage.name || '(untitled stage)')}</span>
+                    </div>
+                </div>`;
+            }).join('');
+            html += `<div class="step-nav-add" onclick="addBuilderStage()">+ Add Stage</div>`;
+            container.innerHTML = html;
+        }
+
+        function addBuilderStage() {
+            builderState.substeps = builderState.substeps || [];
+            builderState.substeps.push(emptyStage());
+            builderSelectedPath = [builderState.substeps.length - 1];
+            renderBuilderStages();
+            renderBuilderStageDetail();
+        }
+
+        async function removeBuilderStage(index) {
+            if (!await showConfirm('Remove this stage and everything in it?')) return;
+            builderState.substeps.splice(index, 1);
+            builderSelectedPath = builderState.substeps.length > 0 ? [0] : null;
+            renderBuilderStages();
+            renderBuilderStageDetail();
+        }
+
+        function renderFieldRow(field, onchangePrefix) {
+            const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
+            return `
+                <div class="field-row">
+                    <div class="field-row-main">
+                        <input type="text" class="field-name-input" value="${escapeHtml(field.name)}" placeholder="Field name" oninput="${onchangePrefix}.name=this.value">
+                        <select onchange="${onchangePrefix}.type=this.value; renderBuilderStageDetail();">
+                            <option value="document" ${field.type === 'document' ? 'selected' : ''}>Document</option>
+                            <option value="text" ${field.type === 'text' ? 'selected' : ''}>Text</option>
+                        </select>
+                        <select onchange="${onchangePrefix}.filled_by=this.value">
+                            <option value="user" ${field.filled_by === 'user' ? 'selected' : ''}>Filled by Resident</option>
+                            <option value="admin" ${field.filled_by === 'admin' ? 'selected' : ''}>Filled by Admin</option>
+                        </select>
+                    </div>
+                    <div class="field-row-meta">
+                        <label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>
+                        <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBuilderStageDetail() {
+            const container = document.getElementById('builder-stage-detail');
+            if (!builderSelectedPath) {
+                container.innerHTML = '<p style="color:var(--muted-foreground);">Add a stage to get started.</p>';
+                return;
+            }
+            const stageIndex = builderSelectedPath[0];
+            const stage = builderState.substeps[stageIndex];
+            const pathExpr = `builderState.substeps[${stageIndex}]`;
+            stage.fields = null;
+            stage.substeps = stage.substeps && stage.substeps.length > 0 ? stage.substeps : [emptySubstep()];
+
+            const substepsHtml = stage.substeps.map((sub, i) => `
+                <div class="step-card">
+                    <div class="step-header">
+                        <input type="text" class="step-title-input" value="${escapeHtml(sub.name)}" placeholder="Substep name" oninput="${pathExpr}.substeps[${i}].name=this.value">
+                        <button class="del-action-btn" style="padding:6px 12px; font-size:12px;" onclick="${pathExpr}.substeps.splice(${i},1); renderBuilderStageDetail();">Remove Substep</button>
+                    </div>
+                    <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.substeps[${i}].description=this.value">${escapeHtml(sub.description || '')}</textarea>
+                    <div class="fields-container">
+                        ${(sub.fields || []).map((f, fi) => renderFieldRow(f, `${pathExpr}.substeps[${i}].fields[${fi}]`)).join('')}
+                        <button class="action-select" style="cursor:pointer;" onclick="${pathExpr}.substeps[${i}].fields.push(emptyField()); renderBuilderStageDetail();">+ Add Field</button>
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = `
+                <div class="builder-detail-inner">
+                    <div class="step-header">
+                        <input type="text" class="step-title-input" value="${escapeHtml(stage.name)}" placeholder="Stage name" oninput="${pathExpr}.name=this.value; renderBuilderStages();">
+                        <button class="del-action-btn" style="padding:8px 14px;" onclick="removeBuilderStage(${stageIndex})">Remove Stage</button>
+                    </div>
+                    <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.description=this.value">${escapeHtml(stage.description || '')}</textarea>
+                    <label style="font-size:13px; text-transform:none; font-weight:600; letter-spacing:normal; display:flex; align-items:center; gap:8px; margin-bottom:24px; cursor:pointer;"><input type="checkbox" ${stage.is_review_required ? 'checked' : ''} onchange="${pathExpr}.is_review_required=this.checked"> Requires admin review to complete</label>
+                    <h4 style="margin-bottom:12px;">Substeps</h4>
+                    ${substepsHtml}
+                    <div class="step-nav-add" onclick="${pathExpr}.substeps.push(emptySubstep()); renderBuilderStageDetail();">+ Add Substep</div>
+                </div>
+            `;
+        }
+
+        async function saveTemplateBuilder() {
+            const feedback = document.getElementById('builder-feedback');
+            const name = document.getElementById('builder-template-name').value.trim();
+            if (!name) {
+                feedback.style.color = '#B91C1C';
+                feedback.textContent = 'Template name is required.';
+                return;
+            }
+            builderState.name = name;
+            const btn = document.getElementById('builder-save-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/save`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify(builderState)
+                });
+                if (resp.ok) {
+                    feedback.style.color = '#166534';
+                    feedback.textContent = 'Saved as a new version.';
+                    await loadProcessTemplates();
+                } else {
+                    feedback.style.color = '#B91C1C';
+                    feedback.textContent = await readErrorMessage(resp);
+                }
+            } catch (err) {
+                feedback.style.color = '#B91C1C';
+                feedback.textContent = 'Network error communicating with server.';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save New Version';
+            }
+        }
+
+        async function activateTemplateVersion(templateId, versionId) {
+            if (!await showConfirm('Make this the version residents start against?')) return;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/activate`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ template_id: templateId, version_id: versionId })
+                });
+                if (resp.ok) {
+                    await loadProcessTemplates();
+                    if (versionsModalTemplateId === templateId) renderTemplateVersionsModal();
+                } else {
+                    showAlert(await readErrorMessage(resp));
+                }
+            } catch (err) {
+                showAlert('Network error communicating with server.');
+            }
+        }
+
+        let previewState = null;
+        let previewSelectedIndex = null;
+
+        async function openTemplatePreview(versionId, templateName) {
+            document.getElementById('preview-template-name').textContent = templateName;
+            document.getElementById('template-preview-modal').style.display = 'flex';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/get-version`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ version_id: versionId })
+                });
+                previewState = await resp.json();
+            } catch (err) {
+                previewState = { substeps: [] };
+            }
+            previewSelectedIndex = previewState.substeps && previewState.substeps.length > 0 ? 0 : null;
+            renderPreviewStages();
+            renderPreviewStageDetail();
+        }
+
+        function closeTemplatePreview() {
+            document.getElementById('template-preview-modal').style.display = 'none';
+            previewState = null;
+            previewSelectedIndex = null;
+        }
+
+        function renderPreviewStages() {
+            const container = document.getElementById('preview-stage-list');
+            const stages = previewState.substeps || [];
+            container.innerHTML = stages.map((stage, i) => `
+                <div class="step-nav-item ${previewSelectedIndex === i ? 'active' : ''}" onclick="previewSelectedIndex=${i}; renderPreviewStages(); renderPreviewStageDetail();">
+                    <div class="step-nav-info">
+                        <span class="step-nav-num">Stage ${i + 1}</span>
+                        <span class="step-nav-name">${escapeHtml(stage.name || '(untitled stage)')}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderPreviewStageDetail() {
+            const container = document.getElementById('preview-stage-detail');
+            if (previewSelectedIndex === null) {
+                container.innerHTML = '<p style="color:var(--muted-foreground);">This template has no stages yet.</p>';
+                return;
+            }
+            const stage = previewState.substeps[previewSelectedIndex];
+            const substepsHtml = (stage.substeps || []).map(sub => `
+                <div class="step-card">
+                    <div class="step-header">
+                        <h4 class="step-title" style="margin:0;">${escapeHtml(sub.name)}</h4>
+                    </div>
+                    ${sub.description ? `<p class="step-desc">${escapeHtml(sub.description)}</p>` : ''}
+                    <div class="fields-container">
+                        ${(sub.fields || []).map(f => `
+                            <div class="field-row">
+                                <div class="field-row-main">
+                                    <span class="field-name-input">${escapeHtml(f.name)}</span>
+                                    <span style="font-size:12px; color:var(--muted-foreground);">${f.type === 'document' ? 'Document' : 'Text'}</span>
+                                    <span style="font-size:12px; color:var(--muted-foreground);">Filled by ${f.filled_by === 'admin' ? 'Admin' : 'Resident'}</span>
+                                </div>
+                                ${f.is_optional ? '<div class="field-row-meta"><span class="field-check-label" style="cursor:default;">Optional</span></div>' : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `).join('');
+
+            container.innerHTML = `
+                <div class="builder-detail-inner">
+                    <div class="step-header">
+                        <h3 style="margin:0;">${escapeHtml(stage.name)}</h3>
+                    </div>
+                    ${stage.description ? `<p class="step-desc">${escapeHtml(stage.description)}</p>` : ''}
+                    ${stage.is_review_required ? '<p style="font-size:13px; color:var(--muted-foreground); margin-bottom:20px;">Requires admin review to complete.</p>' : ''}
+                    ${substepsHtml}
+                </div>
+            `;
+        }
+
         async function loadCategoriesTabData() {
             await loadNonSystemDesignations();
             await loadNonSystemCategories();
@@ -1918,13 +2363,6 @@
         }
 
         let allCategories = [];
-        // Categories a designation can be granted read/manage access to. This is
-        // deliberately broader than allNonSystemCategories (which drives the All
-        // Categories CRUD list, where is_system rows correctly can't be renamed/deleted):
-        // PUBLIC is is_system but designations still need to be grantable manage access
-        // to it (so e.g. a non-admin role can be allowed to post public documents).
-        // RESIDENT_SPECIFIC stays excluded — it's inherently flat-scoped/personal, not
-        // something granted to a designation.
         let allAccessGrantableCategories = [];
 
         async function loadNonSystemCategories() {
@@ -2073,7 +2511,7 @@
                 });
                 if (resp.ok) {
                     allDesignations = await resp.json();
-                    allNonSystemDesignations = allDesignations.filter(d => !d.is_system);
+                    allNonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin');
                 }
             } catch (err) {
                 console.error('Failed to load designations:', err);
@@ -2102,10 +2540,6 @@
 
         const RENAME_MODAL_TITLES = { category: 'Edit Category', subcategory: 'Edit Subcategory', designation: 'Edit Designation' };
 
-        // Subcategories have no delete action at all (see deleteFromRenameModal); category/
-        // designation just can't be deleted while system-protected or (for designations)
-        // still assigned to someone — that check happens server-side, this only hides the
-        // button for the one case we know client-side (is_system).
         function openRenameModal(kind, code, currentLabel, isSystem) {
             document.getElementById('rename-modal-kind').value = kind;
             document.getElementById('rename-modal-code').value = code;
@@ -2203,11 +2637,11 @@
                     renderDesignationPermissionsMatrix();
                     return true;
                 } else {
-                    alert(data.message || 'Failed to delete designation.');
+                    showAlert(data.message || 'Failed to delete designation.');
                     return false;
                 }
             } catch (err) {
-                alert('Network error communicating with server.');
+                showAlert('Network error communicating with server.');
                 return false;
             }
         }
@@ -2225,11 +2659,6 @@
             const tbody = document.getElementById('roles-user-rows-target');
             tbody.innerHTML = '';
 
-            // Everyone (including yourself) is listed here — this is a visibility list,
-            // not just an edit queue. Self-demotion protection only disables the Manage
-            // Designations action on your own row (and is independently enforced by the
-            // backend); it must never make you disappear from a list you have permission
-            // to view.
             const manageable = usersList
                 .filter(u => !u.designations.includes('super_admin'))
                 .sort((a, b) => (b.designations.length > 0 ? 1 : 0) - (a.designations.length > 0 ? 1 : 0));
@@ -2465,10 +2894,6 @@
             checklist.innerHTML = allAccessGrantableCategories.length > 0
                 ? allAccessGrantableCategories.map(cat => {
                     const cell = byKey.get(`${cat.code}::${designationCode}`) || { can_read: false, can_manage: false };
-                    // PUBLIC is readable by every authenticated user regardless of this
-                    // matrix (see document access resolution) — Read is always on and
-                    // not something to toggle off; only Manage (upload/sign/delete) is
-                    // a real choice here.
                     const isPublic = cat.code === 'PUBLIC';
                     return `
                         <div style="display:flex; align-items:center; padding:8px; border-radius:6px;">
@@ -2550,11 +2975,11 @@
                     await loadCategoryMatrix();
                     return true;
                 } else {
-                    alert(data.message || 'Failed to delete category.');
+                    showAlert(data.message || 'Failed to delete category.');
                     return false;
                 }
             } catch (err) {
-                alert('Connection error while deleting category.');
+                showAlert('Connection error while deleting category.');
                 return false;
             }
         }
@@ -2593,8 +3018,6 @@
             }
 
             tbody.innerHTML = allNonSystemDesignations.map(d => {
-                // A caller can never edit the permissions of a designation they themselves
-                // hold — self-escalation guard, enforced server-side too (see toggle_designation_permission).
                 const isOwn = !!(user && (user.designations || []).includes(d.code));
                 return `
                 <tr>
@@ -2697,9 +3120,6 @@
             }
         }
 
-        // ==========================================
-        // DOCUMENT CONTROL ROOM ACTIONS
-        // ==========================================
 
         let allAdminDocs = [];
         let subbarCategoryFilter = 'ALL';
@@ -2786,7 +3206,6 @@
             subbarCategoryFilter = category;
             subbarSubcategoryFilter = 'ALL';
 
-            // Update active state of filter chips
             document.querySelectorAll('#admin-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'admin-filter-' + category.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
@@ -2909,15 +3328,15 @@
                     if (data.download_url) {
                         window.open(data.download_url, '_blank');
                     } else {
-                        alert('No download link returned by server.');
+                        showAlert('No download link returned by server.');
                     }
                 } else {
                     const errText = await readErrorMessage(response);
-                    alert(`Failed to get download link: ${errText}`);
+                    showAlert(`Failed to get download link: ${errText}`);
                 }
             } catch (err) {
                 console.error(err);
-                alert('Connection error while fetching download link.');
+                showAlert('Connection error while fetching download link.');
             }
         }
 
@@ -2933,11 +3352,11 @@
                     loadAdminDocuments();
                     return true;
                 } else {
-                    alert('Failed to delete document.');
+                    showAlert('Failed to delete document.');
                     return false;
                 }
             } catch (e) {
-                alert('Connection failure deleting document.');
+                showAlert('Connection failure deleting document.');
                 return false;
             }
         }
@@ -2961,8 +3380,6 @@
 
             const categorySelect = document.getElementById('edit-doc-category');
             if (doc.category === 'RESIDENT_SPECIFIC') {
-                // Flat-mapped documents can't have their category changed here — that would
-                // require re-mapping flats, which this modal doesn't handle.
                 categorySelect.innerHTML = `<option value="RESIDENT_SPECIFIC">${escapeHtml(formatCategory('RESIDENT_SPECIFIC'))}</option>`;
                 categorySelect.disabled = true;
             } else {
@@ -3070,7 +3487,6 @@
             }
         }
 
-        // Form Submission to Create/Publish Document
         const regDocForm = document.getElementById('register-doc-form');
         const docFeedback = document.getElementById('doc-feedback');
 
@@ -3082,7 +3498,6 @@
             const description = document.getElementById('doc-desc').value.trim() || null;
             const category = document.getElementById('doc-category').value;
 
-            // Collect flat mapping for RESIDENT_SPECIFIC documents
             let flat = null;
             if (category === 'RESIDENT_SPECIFIC') {
                 const wing = document.getElementById('doc-flat-wing').value.trim().toUpperCase();
@@ -3096,10 +3511,6 @@
                 flat = { wing, flat_number };
             }
 
-            // Optional Metadata fields. document_date is required by the backend whenever
-            // metadata is sent at all — default it to today so picking a subcategory (or
-            // tags, or a validity range) without also touching the Date field doesn't
-            // silently drop everything (metadata used to be gated on document_date alone).
             const subcategory_code = document.getElementById('doc-subcategory').value || null;
             const tagsInput = document.getElementById('doc-tags').value.trim();
             const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
@@ -3109,7 +3520,6 @@
             const hasMetadata = subcategory_code || tags.length > 0 || document_date || valid_from || valid_until;
             const today = new Date().toISOString().slice(0, 10);
 
-            // Formulate payload
             const payload = {
                 title,
                 description,
@@ -3133,8 +3543,7 @@
             }
             const file = fileInput.files[0];
 
-            // Validate file size (Max 1GB)
-            const MAX_SIZE = 1024 * 1024 * 1024; // 1GB
+            const MAX_SIZE = 1024 * 1024 * 1024;
             if (file.size > MAX_SIZE) {
                 docFeedback.textContent = 'File size must be 1GB or less.';
                 docFeedback.className = 'feedback-box error';
@@ -3142,7 +3551,6 @@
                 return;
             }
 
-            // Validate file type based on extension
             const allowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
             const fileName = file.name.toLowerCase();
             const isValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
@@ -3154,7 +3562,6 @@
             }
 
             try {
-                // Step 1: Get presigned PUT URL
                 const urlRes = await fetch(`${API_BASE}/api/v1/admin/documents/upload-url`, {
                     method: 'POST',
                     headers: {
@@ -3178,7 +3585,6 @@
 
                 const { document_id, upload_url } = await urlRes.json();
 
-                // Step 2: PUT file directly to S3
                 docFeedback.textContent = 'Uploading file...';
                 docFeedback.className = 'feedback-box';
                 docFeedback.style.display = 'block';
@@ -3195,7 +3601,6 @@
                     return;
                 }
 
-                // Step 3: Confirm upload
                 docFeedback.textContent = 'Confirming upload...';
                 
                 const confirmRes = await fetch(`${API_BASE}/api/v1/admin/documents/confirm-upload`, {
@@ -3227,7 +3632,6 @@
             }
         });
 
-        // Initialize Resident table initially
         loadUsers();
     </script>
 </body>

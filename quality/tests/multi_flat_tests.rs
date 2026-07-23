@@ -197,7 +197,7 @@ async fn test_multi_flat_user_gets_independent_process_per_flat() {
     // Ambiguous without flat_id: must be rejected, not silently pick one.
     let ambiguous = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}));
+        .send_json(serde_json::json!({"template_id": 1}));
     match ambiguous {
         Err(ureq::Error::Status(code, _)) => assert_eq!(code, 400),
         other => panic!(
@@ -224,9 +224,7 @@ async fn test_multi_flat_user_gets_independent_process_per_flat() {
     for flat_id in &flat_ids {
         let resp: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
             .set("Authorization", &res_auth)
-            .send_json(
-                serde_json::json!({"template_id": "tenant_onboarding_v1", "flat_id": flat_id}),
-            )
+            .send_json(serde_json::json!({"template_id": 1, "flat_id": flat_id}))
             .unwrap()
             .into_json()
             .unwrap();
@@ -290,9 +288,7 @@ async fn test_revoking_one_flat_hides_only_that_flats_process() {
     for (label, flat_id) in [("601", flat_601), ("602", flat_602)] {
         let resp: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
             .set("Authorization", &res_auth)
-            .send_json(
-                serde_json::json!({"template_id": "tenant_onboarding_v1", "flat_id": flat_id}),
-            )
+            .send_json(serde_json::json!({"template_id": 1, "flat_id": flat_id}))
             .unwrap()
             .into_json()
             .unwrap();

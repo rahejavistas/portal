@@ -6,6 +6,31 @@ use quality::setup_db_test_env;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Tests build a `ProcessTemplate` in-memory from the static fixture rather than
+/// going through the admin builder API, so there's no real `process_template_versions`
+/// row for it yet — but `processes.template_version_id` has a real FK to one. This
+/// seeds a throwaway template+version row for the given tree and returns its version_id.
+async fn seed_template_version(conn: &mut sqlx::PgConnection, template: &ProcessTemplate) -> i32 {
+    let template_id: i32 = sqlx::query_scalar(
+        "INSERT INTO process_templates (name) VALUES ($1) RETURNING template_id",
+    )
+    .bind(&template.name)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+
+    let definition = serde_json::to_value(template).unwrap();
+    sqlx::query_scalar(
+        "INSERT INTO process_template_versions (template_id, version_number, definition) \
+         VALUES ($1, 1, $2) RETURNING version_id",
+    )
+    .bind(template_id)
+    .bind(&definition)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
 /// Thin test helper that wraps the flat db functions to keep tests concise.
 struct TestProcess<'a> {
     conn: &'a mut sqlx::PgConnection,
@@ -22,9 +47,11 @@ impl<'a> TestProcess<'a> {
         template: &'a ProcessTemplate,
         ownership_id: Option<i32>,
     ) -> Self {
-        let process_id = process::db::init_process(&mut *conn, user_id, template, ownership_id)
-            .await
-            .unwrap();
+        let version_id = seed_template_version(conn, template).await;
+        let process_id =
+            process::db::init_process(&mut *conn, user_id, version_id, template, ownership_id)
+                .await
+                .unwrap();
         let statuses = process::db::get_statuses(&mut *conn, process_id, template)
             .await
             .unwrap();
@@ -156,7 +183,7 @@ async fn test_process_lifecycle_integration() {
     .unwrap();
 
     // Load the onboarding template
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
 
     // 2. Initialize a process workflow in the DB and construct the executor
     let mut conn = pool.acquire().await.unwrap();
@@ -299,7 +326,7 @@ async fn test_admin_reopen_and_edit_lifecycle() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
 
     // Initialize process workflow in the DB
     let mut conn = pool.acquire().await.unwrap();
@@ -488,7 +515,7 @@ async fn test_invalid_process_workflows_and_transitions() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
@@ -583,7 +610,7 @@ async fn test_admin_reopen_parent_step_directly() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
@@ -743,7 +770,7 @@ async fn test_field_history_preservation() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
@@ -824,7 +851,7 @@ async fn test_rejection_resubmission_approval_lifecycle() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
@@ -1052,7 +1079,7 @@ async fn test_process_cascade_deletion_on_user_revoke() {
     .unwrap();
 
     // 2. Initialize a process workflow
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let exec = TestProcess::init(&mut conn, user_id, &template, Some(ownership_id)).await;
@@ -1101,7 +1128,7 @@ async fn test_multiple_documents_upload_per_step() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
 
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
@@ -1189,7 +1216,7 @@ async fn test_turn_logic_full_lifecycle() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
@@ -1380,7 +1407,7 @@ async fn test_revoke_resubmit_turn_and_note_content() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
@@ -1524,7 +1551,7 @@ async fn test_access_control_and_cross_document_usage() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
 
     // User A starts a process
     let mut conn = pool.acquire().await.unwrap();
@@ -1630,7 +1657,7 @@ async fn test_comprehensive_failure_cases() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
@@ -1759,7 +1786,7 @@ async fn test_revoke_without_note_stores_null() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
@@ -1835,7 +1862,7 @@ async fn test_review_flagged_step_ids() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
@@ -1930,7 +1957,7 @@ async fn test_reopen_step_stores_empty_flags() {
     .await
     .unwrap();
 
-    let template = ProcessTemplate::load_tenant_onboarding().unwrap();
+    let template = quality::load_test_template_fixture();
     let mut conn = pool.acquire().await.unwrap();
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 

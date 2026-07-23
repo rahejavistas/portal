@@ -358,7 +358,7 @@ impl DocumentManager {
         })
     }
 
-    async fn insert_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
+    pub(super) async fn insert_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         title: &str,
         description: Option<&str>,
@@ -717,9 +717,9 @@ impl DocumentManager {
             None => {
                 return Err("File not found on S3. Upload may not have completed.".to_string());
             }
-            Some(size) if size > 10 * 1024 * 1024 => {
+            Some(size) if size > 1024 * 1024 * 1024 => {
                 return Err(format!(
-                    "Uploaded file exceeds the 10MB limit ({} bytes). Upload rejected.",
+                    "Uploaded file exceeds the 1GB limit ({} bytes). Upload rejected.",
                     size
                 ));
             }
