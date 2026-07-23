@@ -2,14 +2,14 @@
 
 What UI a resident sees is driven entirely by boolean capability flags returned on the
 `User` object (`can_manage_users`, `can_view_roles`, etc.) — never by raw permission codes.
-See `derived_capability_flags` in `server/authentication/src/lib.rs` for how each flag is
-computed from the 9 seeded permission codes. This doc maps each permission to the concrete
+See `derived_capabilities` in `server/authentication/src/lib.rs` for how each flag is
+computed from the 10 seeded permission codes. This doc maps each permission to the concrete
 UI it unlocks, for screenshotting/reference.
 
 Two things are **not** permissions but still gate UI:
 - **Flat ownership** (`wing`/`flat_number` not `TBD`) — gates "My Flat Dashboard", the
   personal `/process` page, and the `/dashboard` profile view.
-- **`super_admin` designation** — a seed-only designation that holds all 9 permissions.
+- **`super_admin` designation** — a seed-only designation that holds all 10 permissions.
   Nothing in the UI hardcodes a `super_admin` check for capability gating; it just happens
   to unlock everything because it holds every permission.
 
@@ -102,6 +102,26 @@ Two things are **not** permissions but still gate UI:
 - This is the only permission gating any *write* action on someone else's process —
   `personal_only`/write-path handlers on the backend never widen for `process.view` alone.
 
+## `process.templates.manage`
+*Create/edit process templates (the versioned builder) and activate versions.*
+
+- **"Process Templates"** nav link/tab appears — reachable both from the Admin sidebar and
+  from the `/admin-process` (Process Review) sidebar, so it's never hidden behind whichever
+  page you happen to be on.
+- Template list: each row has a **Versions (N)** button (opens a popup listing every version
+  with its creator email, a **View** button to preview it read-only, and an **Activate**
+  button on any non-active version) and an **Edit Latest** button (always opens the highest
+  version number in the builder, regardless of which one is currently active).
+- Builder: `+ New Template` / `+ Add Stage` / `+ Add Substep` / `+ Add Field` — a stage always
+  has substeps (no "direct fields" mode). Saving always creates a new draft version; it never
+  auto-activates — a separate Activate action is required, even for a template's very first
+  version.
+- Preview modal: read-only render of a version's stages/substeps/fields, matching the
+  resident-facing `/process` page's visual language, so an admin can check how a template
+  will actually look before activating it.
+- This permission does not itself grant `process.view`/`process.reviewer` — it only manages
+  template *definitions*, not any resident's in-progress process data.
+
 ---
 
 ## Quick reference table
@@ -117,3 +137,4 @@ Two things are **not** permissions but still gate UI:
 | `documents.categories.manage` | Documents → Categories | Category CRUD |
 | `process.view` | Process Review (`/admin-process`) | Read-only process oversight |
 | `process.reviewer` | Process Review (`/admin-process`) | Approve/reject/upload/notes |
+| `process.templates.manage` | Process Templates | Builder: create/edit/version/activate templates |
