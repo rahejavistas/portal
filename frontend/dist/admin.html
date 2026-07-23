@@ -2374,7 +2374,7 @@
                 if (resp.ok) {
                     allCategories = await resp.json();
                     allNonSystemCategories = allCategories.filter(c => !c.is_system);
-                    allAccessGrantableCategories = allCategories.filter(c => c.code !== 'RESIDENT_SPECIFIC');
+                    allAccessGrantableCategories = allCategories;
                 }
             } catch (err) {
                 console.error('Failed to load document categories:', err);

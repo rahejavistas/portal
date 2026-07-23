@@ -7,23 +7,20 @@ Access control combines two models:
 
 ## Designations
 
-A user can hold zero or more active designations at once.
+A user can hold zero or more active designations at once. Only two designations are seeded — everything else is created dynamically by an admin at runtime (`POST /api/v1/admin/roles/designations/create`), so there is no fixed catalog beyond these two:
 
 | Code | Label | Notes |
 |---|---|---|
-| `super_admin` | Super Admin | Seed-only — granted at startup to `SUPER_ADMIN_EMAIL`, never assignable through the API. Holds every permission. |
-| `staff` | Staff | Manages `OPERATIONAL` documents. |
-| `committee` | Committee | The only designation assignable/revocable through `POST /api/v1/admin/users/roles`. Manages `COMMITTEE` documents. |
-| `office_bearer` | Office Bearer | Reserved — not currently mapped to any permission or document category. |
-| `treasurer` | Treasurer | Manages `FINANCE` documents. |
-| `secretary` | Secretary | Manages `GOVERNANCE` documents. |
-| `auditor` | Auditor | Reserved — not currently mapped to any permission or document category. |
+| `super_admin` | Super Admin | Seed-only (`is_system = TRUE`), granted at startup to `SUPER_ADMIN_EMAIL`, never assignable/revocable/deletable through the API. Seeded with every current permission. |
+| `staff` | Staff | Seed-only (`is_system = TRUE`). Seeded with `users.manage`, `process.view`, `process.reviewer`. |
 
-A user with no designations is a plain resident: no admin-panel access, document visibility limited to `PUBLIC` documents plus `RESIDENT_SPECIFIC` documents mapped to their own flat.
+Any other designation (e.g. "committee", "treasurer") is entirely admin-defined: its code/label, which permissions it holds, and which document categories it can read/manage are all configured through the admin Roles UI — nothing else is hardcoded to a specific designation name in code.
+
+A user with no designations is a plain resident: no admin-panel access, document visibility limited to documents in an `is_public_read` category plus `RESIDENT_SPECIFIC` documents mapped to their own flat.
 
 ## Permissions
 
-Seeded in the same migration, all currently granted only to `super_admin` (`designation_permissions`). Other designations get their access implicitly through `document_category_designations` (see below), not through this permissions table — no code path currently calls `user_has_permission` for `staff`/`committee`/`treasurer`/`secretary`.
+The full permission catalog is a compile-time enum (`authentication::Permission`), seeded into the `permissions` table in the same migration as the designations above:
 
 | Code | Meaning |
 |---|---|
@@ -31,24 +28,23 @@ Seeded in the same migration, all currently granted only to `super_admin` (`desi
 | `users.view` | View all residents |
 | `users.roles.manage` | Manage the designations of users |
 | `users.roles.view` | View the designations of users |
+| `designations.manage` | Create designations and manage their permissions and document category access |
 | `documents.all.manage` | View and manage all categories of documents |
-| `documents.public.manage` | Manage `PUBLIC` documents |
-| `documents.resident_specific.manage` | Manage `RESIDENT_SPECIFIC` documents |
-| `documents.committee.manage` | Manage `COMMITTEE` documents |
-| `documents.finance.manage` | Manage `FINANCE` documents |
-| `documents.governance.manage` | Manage `GOVERNANCE` documents |
-| `documents.operational.manage` | Manage `OPERATIONAL` documents |
+| `documents.categories.manage` | Create document categories |
 | `process.view` | View all existing processes |
 | `process.reviewer` | Review processes |
+| `process.templates.manage` | Create/edit process templates (the versioned builder) and activate versions |
+
+`super_admin` is seeded with all ten; `staff` with `users.manage`/`process.view`/`process.reviewer` only. Any admin-created designation starts with none and gets permissions toggled on individually via `POST /api/v1/admin/roles/designations/permissions/toggle`.
 
 ## Document access resolution
 
 Document visibility is driven by `documents.category`, not by a per-document ACL. `document/manager.rs::get_allowed_document_ids` resolves the set of document IDs a user may see:
 
-1. `super_admin` — bypasses everything, sees all non-deleted documents.
-2. `PUBLIC` category — visible to every authenticated user.
-3. Category mapped to one of the user's active designations, via `document_category_designations` (e.g. a `committee` designation unlocks all `COMMITTEE` documents).
-4. `RESIDENT_SPECIFIC` documents explicitly linked (via `document_flats`) to a flat the user owns/occupies (`flat_ownerships`).
+1. Holding `documents.all.manage` — bypasses everything, sees every non-deleted document. (`super_admin` gets this because it's seeded with every permission, not because of the designation itself — the check is purely permission-based.)
+2. Any category with `is_public_read = TRUE` — visible to every authenticated user.
+3. Category read-mapped to one of the user's active designations, via `document_category_designations` (`can_read = TRUE`).
+4. `RESIDENT_SPECIFIC` (or any other `is_flat_scoped` category) documents explicitly linked (via `document_flats`) to a flat the user actively owns/occupies (`flat_ownerships`).
 
 ## Tables
 
@@ -60,9 +56,9 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 | `user_credentials` | Password hash and password-reset token, 1:1 with `users`. |
 | `flats` | Wing + flat number, the unit of residence. |
 | `flat_ownerships` | Which user owns/occupies which flat, with `is_active` (one active owner per flat, enforced by a partial unique index) and start/end dates. |
-| `designations` | The role catalog (see table above). `is_system` marks seed-only roles (`super_admin`). |
-| `permissions` | The permission catalog (see table above). |
-| `designation_permissions` | Join table: which designations hold which permissions. Currently every row points at `super_admin` — all 13 permissions are seeded only for that designation, so `staff`/`committee`/`treasurer`/`secretary` currently hold none. Those designations get their actual access another way: implicitly, through `document_category_designations` (see below), not through this table. |
+| `designations` | The role catalog — only `super_admin`/`staff` are seeded (`is_system = TRUE`); everything else is admin-created at runtime. |
+| `permissions` | The permission catalog (see table above), seeded once, never admin-created. |
+| `designation_permissions` | Join table: which designations hold which permissions. |
 | `user_designations` | Join table: which users hold which designations, with `is_active` (revocation without deletion) and `assigned_by` (audit trail). |
 
 ### Documents
@@ -70,15 +66,19 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 | Table | Purpose |
 |---|---|
 | `documents` | Core document record: title, description, `category`, upload/deletion/confirmation state. |
+| `document_categories` | Fully admin-creatable category catalog. Only `PUBLIC` and `RESIDENT_SPECIFIC` are seeded (`is_system = TRUE`, the two protected categories); `PUBLIC` has `is_public_read = TRUE`, `RESIDENT_SPECIFIC` has `is_flat_scoped = TRUE`. Any other category an admin creates has both flags `FALSE` by default and relies entirely on `document_category_designations` for visibility. |
+| `document_subcategories` | Optional, UI-only tag nested under a category (unique per `(category, code)`) — never affects access control. |
 | `generic_document_metadata` | Optional 1:1 metadata: subcategory, tags, document date, validity window. |
-| `document_flats` | Many-to-many: which `RESIDENT_SPECIFIC` documents are visible to which flats. |
-| `document_category_designations` | The RBAC-to-document bridge: maps each non-`PUBLIC`, non-`RESIDENT_SPECIFIC` category to the designation(s) that can view/manage it. Seeded as `COMMITTEE`→`committee`, `FINANCE`→`treasurer`, `GOVERNANCE`→`secretary`, `OPERATIONAL`→`staff`. A user's active designations are joined against this table (see [Document access resolution](#document-access-resolution)) to compute visibility — it is additive, so a designation can be mapped to more than one category and a category could be opened up to more than one designation. `PUBLIC` bypasses this table entirely (visible to all); `RESIDENT_SPECIFIC` bypasses it too (governed by `document_flats`/`flat_ownerships` instead). |
+| `document_flats` | Many-to-many: which flat-scoped documents are visible to which flats. |
+| `document_category_designations` | The RBAC-to-document bridge: `(category, designation_id)` → `can_read`/`can_manage`. Fully admin-configured via the Roles UI — nothing is hardcoded here; it is additive, so a designation can be mapped to more than one category and a category can be opened up to more than one designation. `PUBLIC`-like (`is_public_read`) categories bypass this table entirely for reads (visible to all); flat-scoped categories bypass it too (governed by `document_flats`/`flat_ownerships` instead). |
 
-### Process workflows
+### Process workflows & templates
 
 | Table | Purpose |
 |---|---|
-| `processes` | One resident-initiated workflow instance (e.g. tenant onboarding), tied to a `template_id` and optionally a `flat_ownerships` row. |
+| `process_templates` | One row per logical process type (e.g. "Tenant Onboarding"): its `name` and which `active_version_id` residents currently start against (`NULL` until an admin explicitly activates a version). |
+| `process_template_versions` | Append-only: every Save from the admin builder adds a new row here (own `version_id`, a `version_number` for display, and the full tree as `definition` JSONB). Never mutated in place. |
+| `processes` | One resident-initiated workflow instance, permanently pinned to one `template_version_id` for its whole lifetime, optionally tied to a `flat_ownerships` row. |
 | `process_steps` | Steps within a process, tree-shaped via `parent_step_instance_id`; `is_completed` drives the state machine. |
 | `process_fields` | Append-only field submission log per step (documents or text values); latest value per field wins. |
 | `process_step_reviews` | Reviewer decision history per step (`reviewer_user_id`, `is_approved`, notes, flagged step IDs). |
@@ -86,4 +86,4 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 
 ## Frontend
 
-`frontend/src/views/{dashboard,admin,process}.rs` each embed a standalone `<script>` block (no shared JS bundle in this pipeline). All three define an identical `isAdminUser(user)` helper checking `user.designations.includes('super_admin')` — kept in sync manually across the three files.
+`frontend/src/views/{dashboard,admin,process}.rs` each embed a standalone `<script>` block (no shared JS bundle in this pipeline). `process.rs` renders both `/process` (resident) and `/admin-process` (reviewer queue) from one shared template, swapping a mode flag and title at render time. All three files define an identical `isAdminUser(user)` helper checking `user.designations.includes('super_admin')` — kept in sync manually across the three files.

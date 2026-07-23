@@ -33,23 +33,20 @@ There are two variants of this flow, sharing the same three-step shape:
 - Content-type derived from extension (client-provided value ignored)
 - Presigned URL locked to exact S3 key and content-type
 - `is_upload_confirmed` gate prevents unconfirmed files from being used in workflows (list/download/process-field endpoints filter on it)
-- Server-side file size validation via S3 HEAD check during confirmation (10MB max)
+- Server-side file size validation via S3 HEAD check during confirmation (1GB max)
 
 ## S3 key layout
 
-`document/mod.rs::derive_s3_key` computes the object key from category and document ID:
+`document/mod.rs::derive_s3_key` computes the object key from the document ID alone — category plays no part in it:
 
 ```rust
-pub fn derive_s3_key(category: DocumentCategory, document_id: Uuid) -> String {
-    let prefix = match category {
-        DocumentCategory::ResidentSpecific => "private",
-        _ => "public",
-    };
-    ...
+pub fn derive_s3_key(document_id: Uuid) -> String {
+    let uuid_str = document_id.to_string();
+    let first_char = uuid_str.chars().next().unwrap_or('a').to_ascii_lowercase();
+    format!("documents/{}/{}", first_char, uuid_str)
 }
 ```
 
-- `RESIDENT_SPECIFIC` documents live under the `private/` prefix.
-- Every other category (`PUBLIC`, `COMMITTEE`, `FINANCE`, `GOVERNANCE`, `OPERATIONAL`) lives under `public/`.
+Every document, regardless of category, lives under `documents/{first hex char of the document_id}/{document_id}` — a flat shard-by-first-character layout purely to avoid dumping every object into one S3 "directory," not a category-based `private`/`public` split.
 
 This is a storage-layout detail only — it does not itself gate access. Read access is enforced at the database query layer (see [User Hierarchy & Data Model](USER_HIERARCHY.md#document-access-resolution)); presigned URLs are always short-lived and issued only after that check passes.

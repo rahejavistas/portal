@@ -29,11 +29,6 @@ async fn main() {
         .await
         .expect("Failed to create Postgres pool");
 
-    // Run database migrations automatically on startup (SQLx embeds them in the binary)
-    if let Err(e) = sqlx::migrate!("../../infra/migrations").run(&pg_pool).await {
-        eprintln!("WARNING: Database migrations failed: {}", e);
-    }
-
     let s3_accessor = base::s3::S3Accessor::new(&config.s3).await;
 
     // Initialize PermissionsManager
