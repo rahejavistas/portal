@@ -51,7 +51,7 @@ async fn test_upload_url_rejects_invalid_extension() {
     // Create a process
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &u_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let pid = val["process_id"].as_str().unwrap().to_string();
@@ -93,7 +93,7 @@ async fn test_save_step_rejects_unconfirmed_document() {
     // Create a process
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &u_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let pid = val["process_id"].as_str().unwrap().to_string();
@@ -139,7 +139,7 @@ async fn test_confirm_upload_fails_without_s3_file() {
     // Create a process
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &u_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let pid = val["process_id"].as_str().unwrap().to_string();
@@ -183,7 +183,7 @@ async fn test_upload_url_rejects_bad_titles() {
     // Create a process
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &u_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let pid = val["process_id"].as_str().unwrap().to_string();

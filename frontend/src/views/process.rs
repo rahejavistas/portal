@@ -1,6 +1,3 @@
-/// Shared by both /process (personal) and /admin-process (reviewer/auditor queue) — the
-/// `__PROCESS_MODE__` placeholder is swapped for a hardcoded `true`/`false` per route, so
-/// the page's JS never has to guess its own mode from scattered permission checks.
 const PROCESS_HTML_TEMPLATE: &str = r#"
 <!DOCTYPE html>
 <html lang="en">
@@ -19,8 +16,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         html {
             overflow-x: hidden;
         }
-        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
-           in <script>) so the full text is still available on hover. */
         .truncate {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -70,7 +65,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             pointer-events: none;
         }
 
-        /* Sidebar */
         .sidebar {
             width: 260px;
             min-width: 260px;
@@ -89,7 +83,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             will-change: transform;
         }
 
-        /* Mobile Top Bar */
         .mobile-topbar {
             display: none;
             position: fixed;
@@ -248,7 +241,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             transform: scale(1.03);
         }
 
-        /* Workspace */
         .workspace {
             flex-grow: 1;
             margin-left: 260px;
@@ -272,7 +264,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             margin: 0 0 40px 0;
         }
 
-        /* Tab subtabs */
         .subtab-bar {
             display: flex;
             gap: 12px;
@@ -302,7 +293,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             border-color: var(--primary);
         }
 
-        /* Cards */
         .card {
             background-color: var(--background);
             border-radius: var(--radius-lg);
@@ -312,7 +302,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             border: none;
         }
 
-        /* Tables */
         .table-container {
             overflow-x: auto;
             overflow-y: auto;
@@ -320,7 +309,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             border-radius: var(--radius-lg);
             background-color: var(--background);
             margin-top: 16px;
-            /* Custom scrollbar */
             scrollbar-width: thin;
             scrollbar-color: var(--border) transparent;
         }
@@ -367,7 +355,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             cursor: pointer;
             text-decoration: none;
             transition: color 0.15s ease;
-            /* Truncate long names with ellipsis */
             display: -webkit-box;
             -webkit-line-clamp: 2;
             -webkit-box-orient: vertical;
@@ -379,7 +366,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             text-decoration: underline;
         }
 
-        /* Status Pills */
         .status-pill {
             display: inline-block;
             padding: 4px 10px;
@@ -442,7 +428,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             background-color: #DC2626;
         }
 
-        /* Modal */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -475,7 +460,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             color: var(--muted-foreground);
         }
 
-        /* Form Controls */
         .form-group {
             margin-bottom: 20px;
             display: flex;
@@ -495,7 +479,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             font-size: 0.875rem;
         }
 
-        /* Workspace layout */
         .process-workspace {
             display: flex;
             width: 100%;
@@ -509,7 +492,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             flex-direction: column;
             gap: 12px;
         }
-        /* Step list scrolls independently — header and nav stay fixed */
         .process-sidebar-steps {
             max-height: calc(70vh - 80px);
             overflow-y: auto;
@@ -531,10 +513,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             padding: 32px;
             border: 1px solid var(--border);
         }
-        /* step-stages-toggle shown only on mobile via @media above — now unused but kept for compat */
         .step-stages-toggle { display: none; }
 
-        /* Mobile step pill bar — same pattern as working document filter bar */
         .mobile-step-pill-bar {
             display: none;
             overflow-x: auto;
@@ -578,7 +558,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             color: #fff;
         }
 
-        /* Step nav items (Sidebar) */
         .step-nav-item {
             background-color: var(--background);
             border: 1px solid var(--border);
@@ -653,7 +632,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             color: var(--muted-foreground);
         }
 
-        /* Step cards (Timeline) */
         .step-timeline {
             display: flex;
             flex-direction: column;
@@ -701,7 +679,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             margin: 0 0 20px 0;
         }
         
-        /* Field layouts inside steps */
         .fields-container {
             display: flex;
             flex-direction: column;
@@ -760,7 +737,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             margin-bottom: 8px;
             background: #F9FAFB;
         }
-        /* Admin action panel button layout */
         .admin-action-buttons {
             display: flex;
             align-items: center;
@@ -808,12 +784,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
             h2 { font-size: 1.5rem; }
             .section-desc { font-size: 0.875rem; }
-            /* Ensure nothing wider than viewport */
             .card, .table-container, .process-workspace, .subtab-bar, #filters-container {
                 max-width: 100%;
                 box-sizing: border-box;
             }
-            /* Process details: step sidebar as full-width accordion on mobile */
             .process-workspace {
                 flex-direction: column;
                 align-items: stretch;
@@ -842,7 +816,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 flex-direction: column;
                 gap: 8px;
             }
-            /* Process list: transform table into vertical cards on mobile */
             #screen-list .table-container {
                 overflow: visible;
                 background: transparent;
@@ -870,13 +843,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 font-size: 0.875rem;
                 width: 100%;
             }
-            /* Process title fits full width */
             #screen-list .process-title {
                 font-size: 0.9375rem;
                 max-width: 100%;
                 -webkit-line-clamp: 2;
             }
-            /* Content panel: constrained to parent width — page scrolls */
             .process-content-panel {
                 width: 100%;
                 min-width: 0;
@@ -884,11 +855,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 overflow: hidden;
                 padding: 20px 16px;
             }
-            /* Details header: tighter on mobile */
             #screen-details > div:first-child h2 {
                 font-size: 1.25rem;
             }
-            /* Mobile step pill bar — same pattern as the working document filter bar */
             .mobile-step-pill-bar {
                 display: flex !important;
                 overflow-x: auto;
@@ -900,7 +869,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 -webkit-overflow-scrolling: touch;
             }
             .mobile-step-pill-bar::-webkit-scrollbar { display: none; }
-            /* Admin action panel: stack buttons vertically on mobile */
             .admin-action-buttons {
                 flex-direction: column;
                 align-items: stretch;
@@ -919,7 +887,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 min-width: 0;
                 text-align: center;
             }
-            /* Hide the desktop sidebar wrapper on mobile */
             #details-sidebar-target-wrapper { display: none !important; }
         }
         @media (min-width: 769px) {
@@ -942,25 +909,21 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <!-- Mobile Top Bar -->
     <div class="mobile-topbar" id="mobile-topbar">
         <span class="mobile-topbar-brand" id="mobile-brand-label">Vistas</span>
         <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
             <span></span><span></span><span></span>
         </button>
     </div>
-    <!-- Sidebar Overlay -->
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand" id="sidebar-brand-container">
-                <!-- Dynamically populated based on user role, including the Log Out button -->
-            </div>
+                </div>
         </aside>
 
         <main class="workspace">
-            <!-- LIST VIEW SCREEN -->
             <section id="screen-list">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px;">
                     <div>
@@ -971,7 +934,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 </div>
 
                 <div class="subtab-bar" id="process-subtab-bar" style="display: none;">
-                    <button class="subtab-btn active" id="tab-btn-admin-review" onclick="switchProcessTab('ADMIN_REVIEW_REQUIRED')">Admin Review Required</button>
+                    <button class="subtab-btn active" id="tab-btn-admin-review" onclick="switchProcessTab('ADMIN_REVIEW_REQUIRED')">Admin Input Required</button>
                     <button class="subtab-btn" id="tab-btn-user-input" onclick="switchProcessTab('USER_INPUT_REQUIRED')">User Input Required</button>
                     <button class="subtab-btn" id="tab-btn-completed" onclick="switchProcessTab('COMPLETED')">Completed</button>
                 </div>
@@ -1012,44 +975,32 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 </div>
             </section>
 
-            <!-- DETAILS VIEW SCREEN -->
             <section id="screen-details" style="display: none;">
-                <!-- Process Header -->
                 <div style="margin-bottom: 24px;">
                     <button class="btn btn-secondary" onclick="showProcessListScreen()" style="margin-bottom: 12px; font-size: 0.875rem; padding: 8px 14px;">
                         &larr; Back
                     </button>
                     <h2 id="details-process-title" class="truncate" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
-                    <!-- Meta chips row: flat, ID, status -->
                     <div id="details-process-meta" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
-                        <!-- Populated dynamically -->
-                    </div>
+                        </div>
                 </div>
 
                 <div class="process-workspace">
-                    <!-- Mobile step pill bar (always visible on mobile, hidden on desktop) -->
                     <div class="mobile-step-pill-bar" id="mobile-step-pill-bar">
-                        <!-- Populated dynamically by JS -->
-                    </div>
-
-                    <!-- Step Navigation Sidebar (desktop only) -->
-                    <div class="process-sidebar" id="details-sidebar-target-wrapper">
-                        <!-- Steps list -->
-                        <div class="process-sidebar-steps" id="details-sidebar-target">
-                            <!-- Step list items will be rendered here -->
                         </div>
+
+                    <div class="process-sidebar" id="details-sidebar-target-wrapper">
+                        <div class="process-sidebar-steps" id="details-sidebar-target">
+                            </div>
                     </div>
 
-                    <!-- Selected Step Interaction Panel -->
                     <div class="process-content-panel" id="details-content-target">
-                        <!-- Details of the selected step will be rendered here -->
-                    </div>
+                        </div>
                 </div>
             </section>
         </main>
     </div>
 
-    <!-- START PROCESS MODAL -->
     <div class="modal-overlay" id="start-process-modal">
         <div class="modal-content">
             <button class="close-modal-btn" onclick="closeStartProcessModal()">&times;</button>
@@ -1058,14 +1009,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 <div class="form-group">
                     <label for="select-process-template">Process Type</label>
                     <select id="select-process-template" required>
-                        <option value="tenant_onboarding_v1">Tenant Onboarding Process</option>
+                        <option value="">Loading...</option>
                     </select>
                 </div>
                 <div class="form-group" id="flat-select-group" style="display: none;">
                     <label for="select-process-flat">Select Flat</label>
                     <select id="select-process-flat">
-                        <!-- Options populated dynamically -->
-                    </select>
+                        </select>
                 </div>
                 <div id="start-process-status" style="margin-top: 12px; font-size: 0.875rem; font-weight: 600;"></div>
                 <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px;">
@@ -1076,9 +1026,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         </div>
     </div>
 
-    <!-- Confirm Modal (replaces native confirm() — Chrome silently swallows those unless
-         DevTools is open, which reads as "the button just doesn't work") -->
-    <div class="modal-overlay" id="confirm-modal" onclick="if (event.target === this) closeConfirmModal(false)">
+    <div class="modal-overlay" id="confirm-modal" style="z-index:10010;" onclick="if (event.target === this) closeConfirmModal(false)">
         <div class="modal-content" style="max-width: 400px;">
             <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5;"></p>
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
@@ -1088,8 +1036,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         </div>
     </div>
 
+    <div class="modal-overlay" id="alert-modal" style="z-index:10011;" onclick="if (event.target === this) closeAlertModal()">
+        <div class="modal-content" style="max-width: 400px;">
+            <p id="alert-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5; white-space:pre-line;"></p>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button type="button" id="alert-modal-ok-btn" class="btn" onclick="closeAlertModal()">OK</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // Replaces native confirm() — resolves true/false once the user picks.
         let _confirmResolve = null;
         function showConfirm(message, okLabel) {
             document.getElementById('confirm-modal-message').textContent = message;
@@ -1106,12 +1062,23 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Baked in per-route at build time (see frontend/src/views/process.rs::process_html).
-        // /process always renders false (your own process, full stop); /admin-process
-        // always renders true (the reviewer/auditor queue). No client-side guessing.
+        let _alertResolve = null;
+        function showAlert(message) {
+            document.getElementById('alert-modal-message').textContent = message;
+            document.getElementById('alert-modal').style.display = 'flex';
+            return new Promise(resolve => { _alertResolve = resolve; });
+        }
+        function closeAlertModal() {
+            document.getElementById('alert-modal').style.display = 'none';
+            if (_alertResolve) {
+                const resolve = _alertResolve;
+                _alertResolve = null;
+                resolve();
+            }
+        }
+
         const IS_ADMIN_PROCESS_PAGE = __PROCESS_MODE__;
 
-        // Broad "has some admin capability" — used only for sidebar branding/nav links.
         function isAdminUser(user) {
             return !!(user && (
                 user.can_view_users || user.can_manage_users ||
@@ -1121,15 +1088,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             ));
         }
 
-        // Whether this user reviews OTHER people's process steps (write access: approve,
-        // reject, upload as admin, edit admin-role fields). Only ever relevant/rendered
-        // on the /admin-process page — the personal page never shows these regardless.
         function canReviewProcess(user) {
             return IS_ADMIN_PROCESS_PAGE && !!(user && user.can_review_process);
         }
 
-        // Access gate for /admin-process itself — reviewers and the read-only process.view
-        // auditor role may enter; everyone else gets bounced to the personal /process page.
         function canAccessAdminProcessPage(user) {
             return !!(user && user.can_view_all_processes);
         }
@@ -1142,47 +1104,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         let userFlats = [];
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
-        // document_id -> signature requirement (or undefined if the caller has no
-        // signature-read access, or the document was never flagged). Best-effort —
-        // failures just mean no badge, never block rendering the process itself.
-        let fieldSignatureStatus = {};
 
-        async function loadFieldSignatureStatuses(details) {
-            fieldSignatureStatus = {};
-            const docIds = new Set();
-            const collect = (steps) => {
-                for (const step of steps || []) {
-                    for (const f of step.fields || []) {
-                        // Only PENDING lookups matter here — COMPLETED status comes
-                        // straight off `value.is_signed_replacement` in the process-detail
-                        // response. While PENDING, the current value IS the original
-                        // (unsigned) document, which is what the requirement is keyed by.
-                        if (f.requires_signature && f.value && f.value.document_id && !f.value.is_signed_replacement) {
-                            docIds.add(f.value.document_id);
-                        }
-                    }
-                    collect(step.substeps);
-                }
-            };
-            collect(details.steps);
-            if (docIds.size === 0) return;
-
-            await Promise.all([...docIds].map(async (docId) => {
-                try {
-                    const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/for-document`, {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ document_id: docId })
-                    });
-                    if (response.ok) {
-                        const requirement = await response.json();
-                        if (requirement) fieldSignatureStatus[docId] = requirement;
-                    }
-                } catch (err) {}
-            }));
-        }
-
-        // ---- Sidebar toggle (mobile) ----
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -1202,7 +1124,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             document.body.style.overflow = '';
         }
 
-        // ---- Process step sidebar mobile accordion ----
         let stagesExpanded = false;
         function toggleStagesSidebar() {
             stagesExpanded = !stagesExpanded;
@@ -1220,15 +1141,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Redirect if not logged in
         if (!token || !user) {
             window.location.href = '/login';
         } else if (IS_ADMIN_PROCESS_PAGE && !canAccessAdminProcessPage(user)) {
-            // Not a reviewer or auditor — nothing on this page applies to them.
             window.location.href = '/process';
         }
 
-        // Starting a process is a personal-page action — doesn't belong on the oversight queue.
         if (IS_ADMIN_PROCESS_PAGE) {
             const startProcessBtn = document.getElementById('start-process-btn');
             if (startProcessBtn) startProcessBtn.style.display = 'none';
@@ -1236,15 +1154,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (sectionDesc) sectionDesc.textContent = 'Review resident processes';
         }
 
-        // Populate sidebar based on which PAGE this is, not on the viewer's permissions.
-        // The full "Admin" re-branding (header, Residents/Documents/Roles links) only
-        // ever applies on /admin-process — that page IS an admin tool. The personal
-        // /process page always stays "Vistas / Resident Portal", even for admin-capable
-        // hybrid users, exactly like /dashboard: it just adds an "Admin Dashboard" cross-link.
         const isAdmin = isAdminUser(user);
         const showAdminBranding = IS_ADMIN_PROCESS_PAGE;
         const sidebarBrandContainer = document.getElementById('sidebar-brand-container');
-        // Set mobile brand label
         const mobileBrandLabel = document.getElementById('mobile-brand-label');
         if (mobileBrandLabel) mobileBrandLabel.textContent = showAdminBranding ? 'Admin' : 'Vistas';
         if (sidebarBrandContainer) {
@@ -1260,20 +1172,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const rolesLink = canManageRoles
                     ? `<a href="/admin?tab=roles" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Roles</a>`
                     : '';
-                const signaturesLink = (user && (user.can_sign_documents || user.can_manage_document_signatures))
-                    ? `<a href="/admin?tab=signatures" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
+                const templatesLink = (user && user.can_manage_process_templates)
+                    ? `<a href="/admin?tab=templates" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
                     : '';
                 const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
                     : '';
-                // The self link always points at whichever process page is actually loaded.
                 const processesLink = IS_ADMIN_PROCESS_PAGE
                     ? `<a href="/admin-process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
                     : `<a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
-                // Cross-link from the personal page to the admin review queue only.
-                // No reverse link — the admin review queue is an admin tool, not a place
-                // to bounce back to a personal process from.
                 const otherProcessLink = !IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user)
                     ? `<a href="/admin-process" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
                     : '';
@@ -1284,7 +1192,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         ${residentsLink}
                         ${documentsLink}
                         ${rolesLink}
-                        ${signaturesLink}
+                        ${templatesLink}
                         ${processesLink}
                         ${otherProcessLink}
                         ${myFlatDashboardLink}
@@ -1292,9 +1200,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     </nav>
                 `;
             } else {
-                // Personal /process page: always the resident shell, even for admin-capable
-                // hybrid users — matches /dashboard's "Admin Dashboard" cross-link pattern
-                // rather than re-branding the whole sidebar into admin mode.
                 const adminDashboardLink = isAdmin
                     ? `<a href="/admin" class="admin-btn" style="text-decoration: none;">Admin Dashboard &rarr;</a>`
                     : '';
@@ -1312,7 +1217,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Escapes HTML values safely
         function escapeHtml(str) {
             if (!str) return '';
             return str
@@ -1323,9 +1227,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 .replace(/'/g, "&#039;");
         }
 
-        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
-        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
-        // element so the full value is still readable on hover.
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -1334,9 +1235,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return escapeHtml((text === null || text === undefined) ? '' : text.toString());
         }
 
-        // API error bodies are either a bare JSON string or a {message: "..."} object —
-        // reading the raw response text directly would show the JSON quoting/escaping
-        // to the user. This unwraps either shape down to a plain message.
         async function readErrorMessage(response) {
             const raw = await response.text();
             try {
@@ -1347,7 +1245,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return raw;
         }
 
-        // Helper to format ISO dates to "05 Jan 2026, 04:10PM" format
         function formatDateMinimal(isoStr) {
             if (!isoStr) return '';
             try {
@@ -1373,7 +1270,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return formatDateMinimal(isoStr);
         }
 
-        // Switch between tabs
         function switchProcessTab(tab) {
             currentTab = tab;
             document.getElementById('tab-btn-admin-review').className = 'subtab-btn' + (tab === 'ADMIN_REVIEW_REQUIRED' ? ' active' : '');
@@ -1382,7 +1278,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             renderProcessList();
         }
 
-        // Load process list from backend
         async function loadProcesses() {
             if (IS_ADMIN_PROCESS_PAGE) {
                 const adminEmailGroup = document.getElementById('admin-email-filter-group');
@@ -1433,12 +1328,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Apply input filters on input change
         function filterProcesses() {
             renderProcessList();
         }
 
-        // Render processes in table
         function renderProcessList() {
             const tbody = document.getElementById('process-rows-target');
             tbody.innerHTML = '';
@@ -1448,11 +1341,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const emailQuery = document.getElementById('filter-email').value.trim().toLowerCase();
             const isAdmin = IS_ADMIN_PROCESS_PAGE;
 
-            // Sort by creation date descending (oldest one should be below)
             allProcesses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
             const filtered = allProcesses.filter(p => {
-                // Use the backend-provided status to determine if user or admin action is required
                 const isUserAction = p.status === 'USER_INPUT_REQUIRED';
                 const isCompleted = p.status === 'COMPLETED';
                 
@@ -1461,12 +1352,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     if (currentTab === 'ADMIN_REVIEW_REQUIRED' && p.status !== 'ADMIN_REVIEW_REQUIRED') return false;
                     if (currentTab === 'COMPLETED' && !isCompleted) return false;
                 } else {
-                    // Resident sees all processes, we don't hide completed ones anymore.
                 }
 
-                // 1. Search Query (Process Name, Template ID, or Process ID)
                 if (searchQuery) {
-                    const templateName = p.template_id === 'tenant_onboarding_v1' ? 'Tenant Onboarding Process' : p.template_id;
+                    const templateName = p.template_name;
                     const matchesName = templateName.toLowerCase().includes(searchQuery);
                     const matchesId = p.process_id.toLowerCase().includes(searchQuery);
                     if (!matchesName && !matchesId) {
@@ -1474,12 +1363,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     }
                 }
 
-                // 2. Flat Query
                 if (flatQuery && (!p.flat_label || !p.flat_label.toLowerCase().includes(flatQuery))) {
                     return false;
                 }
 
-                // 3. Email Query (Admin-only filter)
                 if (isAdmin && emailQuery && (!p.user_email || !p.user_email.toLowerCase().includes(emailQuery))) {
                     return false;
                 }
@@ -1501,13 +1388,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             filtered.forEach(p => {
                 const tr = document.createElement('tr');
                 let stateText = "User Input Required";
-                if (p.status === 'ADMIN_REVIEW_REQUIRED') stateText = "Admin Review Required";
+                if (p.status === 'ADMIN_REVIEW_REQUIRED') stateText = "Admin Input Required";
                 if (p.status === 'COMPLETED') stateText = "Completed";
                 
                 tr.innerHTML = `
                     <td>
-                        <div class="process-title" title="${p.template_id === 'tenant_onboarding_v1' ? 'Tenant Onboarding Process' : truncTitle(p.template_id)}" onclick="viewProcessDetail('${p.process_id}')">
-                            ${p.template_id === 'tenant_onboarding_v1' ? 'Tenant Onboarding Process' : escapeHtml(p.template_id)}
+                        <div class="process-title" title="${truncTitle(p.template_name)}" onclick="viewProcessDetail('${p.process_id}')">
+                            ${escapeHtml(truncText(p.template_name, 60))}
                         </div>
                         <div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${isAdmin ? truncTitle(p.user_email) : ''}">
                             ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(truncText(p.user_email, 30))})` : ''}
@@ -1527,7 +1414,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             });
         }
 
-        // Open Modal to start process
         async function openStartProcessModal() {
             const statusEl = document.getElementById('start-process-status');
             const flatGroup = document.getElementById('flat-select-group');
@@ -1536,7 +1422,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             
             document.getElementById('start-process-modal').style.display = 'flex';
 
-            // Admins cannot start a process for themselves
             if (canReviewProcess(user)) {
                 statusEl.style.color = 'var(--danger)';
                 statusEl.textContent = 'Administrative accounts cannot initiate processes directly. Please use the resident view.';
@@ -1546,7 +1431,21 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
             document.getElementById('start-process-submit-btn').disabled = false;
 
-            // Populate from preloaded userFlats
+            const templateSelect = document.getElementById('select-process-template');
+            templateSelect.innerHTML = '<option value="">Loading...</option>';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/process-templates/available`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const templates = await resp.json();
+                templateSelect.innerHTML = templates.length > 0
+                    ? templates.map(t => `<option value="${t.template_id}">${escapeHtml(t.name)}</option>`).join('')
+                    : '<option value="">No processes available</option>';
+            } catch (err) {
+                templateSelect.innerHTML = '<option value="">Failed to load process types</option>';
+            }
+
             flatSelect.innerHTML = '';
             if (userFlats.length > 1) {
                 flatGroup.style.display = 'block';
@@ -1566,10 +1465,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             document.getElementById('start-process-form').reset();
         }
 
-        // Handle process creation
         async function handleStartProcess(e) {
             e.preventDefault();
-            const templateId = document.getElementById('select-process-template').value;
+            const templateId = parseInt(document.getElementById('select-process-template').value, 10);
             const flatSelect = document.getElementById('select-process-flat');
             const flatGroup = document.getElementById('flat-select-group');
             const statusEl = document.getElementById('start-process-status');
@@ -1621,7 +1519,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Toggle Screen
         function showProcessListScreen() {
             document.getElementById('screen-list').style.display = 'block';
             document.getElementById('screen-details').style.display = 'none';
@@ -1636,7 +1533,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (menuBtn) menuBtn.classList.remove('active');
         }
 
-        // View single process details
         async function viewProcessDetail(processId) {
             showProcessDetailsScreen();
             
@@ -1665,7 +1561,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 if (response.ok) {
                     currentProcessDetails = await response.json();
-                    await loadFieldSignatureStatuses(currentProcessDetails);
                     renderProcessDetails();
                 } else {
                     const errText = await readErrorMessage(response);
@@ -1683,19 +1578,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // Render Process Details page
         function renderProcessDetails() {
             if (!currentProcessDetails) return;
 
             const p = currentProcessDetails;
             const metaContainer = document.getElementById('details-process-meta');
 
-            // Title
-            const titleText = p.process_name || p.template_id;
+            const titleText = p.process_name || 'Process';
             document.getElementById('details-process-title').textContent = titleText;
             document.getElementById('details-process-title').title = titleText;
 
-            // Meta chips (flat, ID, status)
             const statusChipClass = p.is_completed ? 'background:#D1FAE5;color:#065F46;' : 'background:#DBEAFE;color:#1E40AF;';
             const statusText = p.is_completed ? 'Completed' : 'In Progress';
             metaContainer.innerHTML = `
@@ -1704,7 +1596,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 <span style="display:inline-flex;align-items:center;gap:5px;${statusChipClass}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${statusText}</span>
             `;
 
-            // Render steps in the sidebar
             const sidebar = document.getElementById('details-sidebar-target');
             sidebar.innerHTML = '';
 
@@ -1714,9 +1605,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 return;
             }
 
-            // Set default selected step if not set or not in current list
             if (!currentSelectedStepId || !steps.some(s => s.template_step_id === currentSelectedStepId)) {
-                // Find first OPEN or PENDING_REVIEW step, otherwise default to first step
                 const activeStep = steps.find(s => s.status === 'OPEN' || s.status === 'PENDING_REVIEW');
                 currentSelectedStepId = activeStep ? activeStep.template_step_id : steps[0].template_step_id;
             }
@@ -1730,7 +1619,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 else if (step.status === 'PENDING_REVIEW') { statusLabel = 'Review'; statusSymbol = '⋯'; }
                 else if (step.status === 'OPEN') { statusLabel = 'Active'; statusSymbol = '●'; }
 
-                // Desktop sidebar nav item
                 const btn = document.createElement('button');
                 btn.className = 'step-nav-item' + (isActive ? ' active' : '');
                 btn.onclick = () => selectStep(step.template_step_id);
@@ -1744,7 +1632,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 sidebar.appendChild(btn);
             });
 
-            // Mobile pill bar — always visible, horizontal scroll
             const pillBar = document.getElementById('mobile-step-pill-bar');
             if (pillBar) {
                 pillBar.innerHTML = '';
@@ -1763,7 +1650,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     pillBar.appendChild(pill);
                 });
 
-                // JS drag scroll — works regardless of CSS/browser touch routing
                 let tsX = 0, tsScroll = 0, tsDragging = false;
                 pillBar.addEventListener('touchstart', (e) => {
                     tsX = e.touches[0].clientX;
@@ -1777,13 +1663,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 pillBar.addEventListener('touchend', () => { tsDragging = false; }, { passive: true });
             }
 
-            // Render the currently selected step content in the content panel
             renderSelectedStepContent();
         }
 
         function selectStep(stepId) {
             currentSelectedStepId = stepId;
-            // Auto-collapse stages on mobile after selection
             if (window.innerWidth <= 768) {
                 stagesExpanded = false;
                 const panel = document.getElementById('details-sidebar-target');
@@ -1796,23 +1680,19 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             renderProcessDetails();
         }
 
-        // Helper to render fields list for a step/substep
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
             
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
-                const filledBy = f.filled_by; // 'user' or 'admin'
-                const type = f.type; // 'document' or 'text'
+                const filledBy = f.filled_by;
+                const type = f.type;
                 const val = f.value || { text_value: null, document_id: null, document_title: null };
 
                 let inputHtml = '';
                 let isReadOnly = true;
                 if (stepStatus === 'OPEN' || parentStatus === 'OPEN') {
-                    // 'user' fields belong to the process author and are only ever
-                    // editable from the resident-facing page (never the admin/oversight
-                    // page — process.view holders land there too, and are read-only).
                     if (filledBy === 'user' && !IS_ADMIN_PROCESS_PAGE) {
                         isReadOnly = false;
                     } else if (filledBy === 'admin' && isCurrentAdmin) {
@@ -1821,21 +1701,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 }
 
                 if (type === 'document') {
-                    // is_signed_replacement comes straight from the process-detail response
-                    // (server-computed), not from the permission-gated /signatures/for-document
-                    // endpoint — residents own their process but hold none of the signature/
-                    // review permissions that endpoint requires, so it always 403s for them.
-                    const hideForSigning = f.requires_signature && !isCurrentAdmin && !val.is_signed_replacement;
-
                     const history = f.history || [];
                     let allDocs = [];
                     if (val.document_id) allDocs.push({ document_id: val.document_id, document_title: val.document_title, updated_at: val.updated_at });
-                    // Residents only ever see the current (final) document for a
-                    // signature-tracked field, never the pre-signed drafts in its history.
-                    if (isCurrentAdmin || !f.requires_signature) {
-                        for (const h of history) {
-                            if (h.document_id) allDocs.push(h);
-                        }
+                    for (const h of history) {
+                        if (h.document_id) allDocs.push(h);
                     }
 
                     const uniqueDocs = [];
@@ -1847,9 +1717,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         }
                     }
 
-                    if (hideForSigning) {
-                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">No document uploaded yet</span>`;
-                    } else if (uniqueDocs.length > 0) {
+                    if (uniqueDocs.length > 0) {
                         inputHtml = uniqueDocs.map(doc => `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
                                 <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(doc.document_title || 'File')}</span>
@@ -1869,7 +1737,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         `;
                     }
                 } else {
-                    // text field
                     if (isReadOnly) {
                         inputHtml = `
                             <div class="field-value-display" style="background-color: var(--muted); border-color: var(--border); color: var(--foreground); padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; display: block; min-height: 44px; width: 100%; max-width: 500px;">
@@ -1886,22 +1753,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     }
                 }
 
-                // History removed as per request
                 let historyHtml = '';
 
                 let filledByHtml = '';
                 if (filledBy === 'admin') {
-                    filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin</div>`;
-                }
-
-                let signatureBadgeHtml = '';
-                if (f.requires_signature && val.document_id && isCurrentAdmin) {
-                    const requirement = fieldSignatureStatus[val.document_id];
-                    if (val.is_signed_replacement) {
-                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#DCFCE7; color:#166534;">&check; Signed</span>`;
-                    } else if (requirement && requirement.status === 'PENDING') {
-                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEF3C7; color:#92400E;">Awaiting Signature</span>`;
-                    }
+                    const visibilityNote = isCurrentAdmin
+                        ? ' <span style="text-transform: none; font-weight: 700; color: #b45309;">(Visible to resident)</span>'
+                        : '';
+                    filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin${visibilityNote}</div>`;
                 }
 
                 html += `
@@ -1909,7 +1768,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
-                        ${signatureBadgeHtml ? `<div>${signatureBadgeHtml}</div>` : ''}
                         ${filledByHtml}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
                         ${historyHtml}
@@ -1920,7 +1778,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return html;
         }
 
-        // Render the currently selected step content in the content panel
         function renderSelectedStepContent() {
             const p = currentProcessDetails;
             const contentPanel = document.getElementById('details-content-target');
@@ -1932,10 +1789,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 return;
             }
 
-            const stepStatus = selectedStep.status; // LOCKED, OPEN, PENDING_REVIEW, COMPLETED
+            const stepStatus = selectedStep.status;
             const stepId = selectedStep.template_step_id;
 
-            // Render header
             let statusBanner = '';
             if (stepStatus === 'LOCKED') {
                 statusBanner = `
@@ -1975,7 +1831,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 `;
             }
 
-            // Render ongoing reviews by admin for this step
             const stepReviewIds = [selectedStep.template_step_id];
             if (selectedStep.substeps) {
                 selectedStep.substeps.forEach(sub => stepReviewIds.push(sub.template_step_id));
@@ -2041,9 +1896,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 `;
             }
 
-            // -------------------------------------------------------------
-            // NEW: Render standalone internal admin notes for this step
-            // -------------------------------------------------------------
             let standaloneCommentsHtml = '';
             const stepAdminComments = (p.admin_comments || []).filter(c => c.template_step_id === stepId);
             if (stepAdminComments.length > 0) {
@@ -2055,7 +1907,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         <div style="display: flex; flex-direction: column; gap: 8px;">
                 `;
                 
-                // Sort by created_at desc
                 stepAdminComments.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
                 
                 stepAdminComments.forEach(c => {
@@ -2093,18 +1944,15 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 ${standaloneCommentsHtml}
             `;
 
-            // If the selected step has fields directly, render them
             if (selectedStep.fields && selectedStep.fields.length > 0 && stepStatus !== 'LOCKED') {
                 html += `<div class="fields-container" style="border-top: none; padding-top: 0; margin-bottom: 24px;">`;
                 html += renderFieldsList(selectedStep.fields, stepStatus, stepId);
                 html += `</div>`;
             }
 
-            // If the selected step has substeps, render each substep card vertically
             if (selectedStep.substeps && selectedStep.substeps.length > 0) {
                 html += `<div style="display: flex; flex-direction: column; gap: 24px; margin-top: 16px;">`;
 
-                // Hoist admin context and latest-review flags so each substep card can render the checkbox
                 const isAdminForSubsteps = canReviewProcess(user);
                 const latestRevForCards = (p.reviews || []).reduce((latest, r) => {
                     if (!latest) return r;
@@ -2124,7 +1972,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     else if (subStatus === 'PENDING_REVIEW') subBadgeClass = 'pending_review';
                     else if (subStatus === 'OPEN') subBadgeClass = 'open';
 
-                    // Check if this substep was flagged in the latest review
                     const latestRevForSub = (p.reviews || []).reduce((latest, r) => {
                         if (!latest) return r;
                         return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
@@ -2166,9 +2013,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 html += `</div>`;
             }
 
-            // Admin review logic moved above
 
-            // Render admin action panel (Approve / Reject) if user is admin
             const isCurrentAdmin = canReviewProcess(user);
             if (isCurrentAdmin) {
                 const isCompleted = stepStatus === 'COMPLETED';
@@ -2179,8 +2024,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const approveButtonClass = isCompleted ? 'btn btn-secondary' : 'btn';
                 const approveDisabled = isCompleted ? 'disabled' : '';
 
-                // Build substep flag checkboxes — now embedded in each substep card header above.
-                // No separate panel needed.
 
                 html += `
                     <div style="border-top: 2px solid var(--border); padding-top: 24px; margin-top: 32px;">
@@ -2205,17 +2048,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             contentPanel.innerHTML = html;
         }
 
-        // Fetch presigned URL and download file
         async function downloadProcessDoc(documentId) {
             const processId = currentProcessDetails.process_id;
 
-            // Open the tab synchronously (within the click's user-gesture window) so
-            // browsers don't treat it as a blocked popup once the awaited fetch below
-            // resolves — a blocked-popup notification bar is what was causing the
-            // page to jump back to the top after downloading.
             const newTab = window.open('', '_blank');
 
-            // Preserve scroll position in case anything below still disturbs it.
             const scrollY = window.scrollY;
             const contentPanel = document.getElementById('details-content-target');
             const contentScrollTop = contentPanel ? contentPanel.scrollTop : 0;
@@ -2247,24 +2084,23 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         }
                     } else {
                         if (newTab) newTab.close();
-                        alert('Download URL not returned by server.');
+                        showAlert('Download URL not returned by server.');
                     }
                 } else {
                     if (newTab) newTab.close();
                     const errText = await readErrorMessage(response);
-                    alert(`Download failed: ${errText}`);
+                    showAlert(`Download failed: ${errText}`);
                 }
             } catch(e) {
                 if (newTab) newTab.close();
                 console.error(e);
-                alert('Connection error while retrieving file.');
+                showAlert('Connection error while retrieving file.');
             } finally {
                 restoreScroll();
                 setTimeout(restoreScroll, 50);
             }
         }
 
-        // Upload a document for a process field (presigned URL flow)
         async function uploadFieldDocument(stepId, fieldId) {
             const fileInput = document.getElementById(`file-input-${fieldId}`);
             const progressEl = document.getElementById(`upload-progress-${fieldId}`);
@@ -2273,7 +2109,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const file = fileInput.files[0];
 
             if (file.size > 1024 * 1024 * 1024) {
-                alert('File size must be under 1GB.');
+                showAlert('File size must be under 1GB.');
                 fileInput.value = '';
                 return;
             }
@@ -2284,7 +2120,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const processId = currentProcessDetails.process_id;
 
             try {
-                // Step 1: Get presigned PUT URL
                 const isCurrentAdmin = canReviewProcess(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
@@ -2317,13 +2152,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     const errText = await readErrorMessage(urlRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Failed.';
-                    alert(`Failed to get upload URL: ${errText}`);
+                    showAlert(`Failed to get upload URL: ${errText}`);
                     return;
                 }
 
                 const { document_id, upload_url } = await urlRes.json();
 
-                // Step 2: PUT directly to S3
                 progressEl.textContent = 'Uploading to storage...';
                 const putRes = await fetch(upload_url, {
                     method: 'PUT',
@@ -2334,11 +2168,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 if (!putRes.ok) {
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Upload failed.';
-                    alert('Failed to upload file to storage.');
+                    showAlert('Failed to upload file to storage.');
                     return;
                 }
 
-                // Step 3: Confirm upload
                 progressEl.textContent = 'Confirming...';
                 
                 const confirmEndpoint = isCurrentAdmin
@@ -2358,11 +2191,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     const errText = await readErrorMessage(confirmRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Confirmation failed.';
-                    alert(`Confirmation failed: ${errText}`);
+                    showAlert(`Confirmation failed: ${errText}`);
                     return;
                 }
 
-                // Step 4: Attach to field via save-step
                 const payload = {
                     process_id: processId,
                     template_step_id: stepId,
@@ -2390,17 +2222,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     const err = await readErrorMessage(saveRes);
                     progressEl.style.color = 'var(--danger)';
                     progressEl.textContent = 'Save failed.';
-                    alert(`Failed to save step: ${err}`);
+                    showAlert(`Failed to save step: ${err}`);
                 }
             } catch(e) {
                 console.error(e);
                 progressEl.style.color = 'var(--danger)';
                 progressEl.textContent = 'Error.';
-                alert('Connection error during upload.');
+                showAlert('Connection error during upload.');
             }
         }
 
-        // Save step fields (mainly text inputs)
         async function saveStepFieldsSubmit(stepId) {
             const step = findStepInTree(currentProcessDetails.steps, stepId);
             if (!step) return;
@@ -2419,7 +2250,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         if (inputEl) {
                             const val = inputEl.value.trim();
                             if (!f.is_optional && !val) {
-                                alert(`Field "${f.name}" is required.`);
+                                showAlert(`Field "${f.name}" is required.`);
                                 hasError = true;
                                 return;
                             }
@@ -2438,7 +2269,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         });
                     }
                 } else {
-                    // Preserve non-editable fields' current values
                     const val = f.value || { text_value: null, document_id: null };
                     fieldsPayload.push({
                         template_field_id: fieldId,
@@ -2470,27 +2300,25 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 });
 
                 if (response.ok) {
-                    alert('Step inputs saved successfully!');
+                    showAlert('Step inputs saved successfully!');
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
                     const errText = await readErrorMessage(response);
-                    alert(`Failed to save step inputs: ${errText}`);
+                    showAlert(`Failed to save step inputs: ${errText}`);
                 }
             } catch(e) {
                 console.error(e);
-                alert('Connection error while saving step.');
+                showAlert('Connection error while saving step.');
             } finally {
                 saveBtns.forEach(b => { b.disabled = false; b.textContent = 'Save Remarks'; });
             }
         }
 
-        // Submit administrative approval or rejection for a step
         async function submitAdminReview(stepId, isApproved) {
             const notesEl = document.getElementById(`review-notes-${stepId}`);
             const notes = notesEl ? notesEl.value.trim() : '';
 
 
-            // Collect flagged substep IDs from checked checkboxes
             const flaggedStepIds = Array.from(
                 document.querySelectorAll('.substep-flag-cb:checked')
             ).map(cb => parseInt(cb.dataset.substepId, 10));
@@ -2514,19 +2342,18 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 });
 
                 if (response.ok) {
-                    alert(`Step review submitted successfully: ${isApproved ? 'Approved' : 'Rejected'}`);
+                    showAlert(`Step review submitted successfully: ${isApproved ? 'Approved' : 'Rejected'}`);
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
                     const errText = await readErrorMessage(response);
-                    alert(`Failed to submit review: ${errText}`);
+                    showAlert(`Failed to submit review: ${errText}`);
                 }
             } catch(e) {
                 console.error(e);
-                alert('Connection error while submitting step review.');
+                showAlert('Connection error while submitting step review.');
             }
         }
 
-        // Submit administrative revoke for an already completed step
         async function submitAdminRevoke(stepId) {
             const notesEl = document.getElementById(`review-notes-${stepId}`);
             const notes = notesEl ? notesEl.value.trim() : '';
@@ -2552,19 +2379,18 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 });
 
                 if (response.ok) {
-                    alert('Step has been successfully reopened for resident action.');
+                    showAlert('Step has been successfully reopened for resident action.');
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
                     const errText = await readErrorMessage(response);
-                    alert(`Failed to reopen step: ${errText}`);
+                    showAlert(`Failed to reopen step: ${errText}`);
                 }
             } catch(e) {
                 console.error(e);
-                alert('Connection error while revoking step.');
+                showAlert('Connection error while revoking step.');
             }
         }
 
-        // Recursive search for step in the templates tree
         function findStepInTree(stepsList, stepId) {
             for (let s of stepsList) {
                 if (s.template_step_id === stepId) return s;
@@ -2590,9 +2416,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        // ==========================================
-        // DOCUMENT PICKER MODAL
-        // ==========================================
         let currentPickerStepId = null;
         let currentPickerFieldId = null;
 
@@ -2609,7 +2432,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (isCurrentAdmin) {
                 if (libraryHeading) libraryHeading.style.display = 'none';
                 if (libraryContainer) libraryContainer.style.display = 'none';
-                return; // Admins don't pick from existing docs to avoid confusion
+                return;
             } else {
                 if (libraryHeading) libraryHeading.style.display = 'block';
                 if (libraryContainer) {
@@ -2656,7 +2479,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             document.getElementById('docPickerModal').style.display = 'none';
         }
 
-        // --- Admin Internal Note Modal Logic ---
         let adminNoteStepId = null;
 
         function openAdminNoteModal(stepId) {
@@ -2674,7 +2496,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (!adminNoteStepId) return;
             const noteText = document.getElementById('adminNoteInput').value.trim();
             if (!noteText) {
-                alert('Please enter a note before submitting.');
+                showAlert('Please enter a note before submitting.');
                 return;
             }
 
@@ -2704,11 +2526,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     await viewProcessDetail(currentProcessDetails.process_id); 
                 } else {
                     const err = await readErrorMessage(response);
-                    alert(`Failed to add note: ${err}`);
+                    showAlert(`Failed to add note: ${err}`);
                 }
             } catch(e) {
                 console.error(e);
-                alert('Connection error');
+                showAlert('Connection error');
             } finally {
                 submitBtn.textContent = originalText;
                 submitBtn.disabled = false;
@@ -2718,13 +2540,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         async function uploadNewDocumentFromPicker() {
             const fileInput = document.getElementById('picker-new-upload');
             if (!fileInput.files || fileInput.files.length === 0) {
-                alert('Please select a file to upload.');
+                showAlert('Please select a file to upload.');
                 return;
             }
             const file = fileInput.files[0];
 
             if (file.size > 1024 * 1024 * 1024) {
-                alert('File size must be under 1GB.');
+                showAlert('File size must be under 1GB.');
                 return;
             }
 
@@ -2734,7 +2556,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if(progressEl) { progressEl.style.color = 'var(--primary)'; progressEl.textContent = 'Requesting upload URL...'; }
 
             try {
-                // Step 1: Get presigned PUT URL from server
                 const isCurrentAdmin = canReviewProcess(user);
                 const uploadEndpoint = isCurrentAdmin 
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
@@ -2765,14 +2586,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 if (!urlRes.ok) {
                     const errText = await readErrorMessage(urlRes);
-                    alert('Failed to get upload URL: ' + errText);
+                    showAlert('Failed to get upload URL: ' + errText);
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
                     return;
                 }
 
                 const { document_id, upload_url } = await urlRes.json();
 
-                // Step 2: PUT file directly to S3 using presigned URL
                 if(progressEl) progressEl.textContent = 'Uploading to storage...';
 
                 const putRes = await fetch(upload_url, {
@@ -2784,12 +2604,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 });
 
                 if (!putRes.ok) {
-                    alert('Failed to upload file to storage. Please try again.');
+                    showAlert('Failed to upload file to storage. Please try again.');
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Upload failed'; }
                     return;
                 }
 
-                // Step 3: Confirm upload with server
                 if(progressEl) progressEl.textContent = 'Confirming upload...';
                 
                 const confirmEndpoint = isCurrentAdmin
@@ -2807,17 +2626,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 if (!confirmRes.ok) {
                     const errText = await readErrorMessage(confirmRes);
-                    alert('Upload confirmation failed: ' + errText);
+                    showAlert('Upload confirmation failed: ' + errText);
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Confirmation failed'; }
                     return;
                 }
 
-                // Step 4: Attach to field
                 await attachDocumentToField(currentPickerStepId, currentPickerFieldId, document_id, progressEl);
 
             } catch (e) {
                 console.error(e);
-                alert('Connection error during upload.');
+                showAlert('Connection error during upload.');
                 if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
             }
         }
@@ -2852,20 +2670,18 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     if(progressEl) { progressEl.style.color = 'var(--secondary)'; progressEl.textContent = 'Success!'; }
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
-                    alert('Failed to save step: ' + await readErrorMessage(saveRes));
+                    showAlert('Failed to save step: ' + await readErrorMessage(saveRes));
                     if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
                 }
             } catch (e) {
-                alert('Connection error.');
+                showAlert('Connection error.');
                 if(progressEl) { progressEl.style.color = 'var(--danger)'; progressEl.textContent = 'Failed'; }
             }
         }
 
-        // Initial Load
         loadProcesses();
     </script>
 
-    <!-- Document Picker Modal -->
     <div id="docPickerModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 16px; box-sizing: border-box;">
         <div style="background: var(--background); width: 100%; max-width: 600px; max-height: 85vh; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box;">
             <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
@@ -2882,13 +2698,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 
                 <h4 id="picker-library-heading" style="margin: 0 0 12px 0; font-size: 1rem;">Select from My Library</h4>
                 <div id="picker-existing-docs" style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; padding-right: 4px;">
-                    <!-- Populated dynamically -->
-                </div>
+                    </div>
             </div>
         </div>
     </div>
 
-    <!-- Admin Internal Note Modal -->
     <div id="adminNoteModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 16px; box-sizing: border-box;">
         <div style="background: var(--background); width: 100%; max-width: 500px; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box;">
             <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background-color: #FAF5FF;">
@@ -2915,14 +2729,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 </html>
 "#;
 
-/// Renders the personal /process page — always just the caller's own process.
 pub(crate) fn process_html() -> String {
     render_process_page(false)
 }
 
-/// Renders the /admin-process page — the reviewer/auditor queue over every resident's
-/// process. Access itself is still enforced server-side by the underlying APIs; this page
-/// just won't render anything useful for a caller without process.reviewer/process.view.
 pub(crate) fn admin_process_html() -> String {
     render_process_page(true)
 }

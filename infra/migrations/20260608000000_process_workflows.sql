@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS processes (
     process_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    template_id VARCHAR(255) NOT NULL,
+    template_version_id INT NOT NULL REFERENCES process_template_versions(version_id),
     ownership_id INT REFERENCES flat_ownerships(ownership_id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS process_reviewer_comments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_processes_user ON processes(user_id);
+CREATE INDEX IF NOT EXISTS idx_processes_template_version_id ON processes(template_version_id);
 CREATE INDEX IF NOT EXISTS idx_process_steps_process ON process_steps(process_id);
 CREATE INDEX IF NOT EXISTS idx_process_steps_parent ON process_steps(parent_step_instance_id);
 CREATE INDEX IF NOT EXISTS idx_process_fields_step ON process_fields(step_instance_id);

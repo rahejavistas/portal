@@ -36,7 +36,6 @@ pub(crate) const FORGOT_PASSWORD_HTML: &str = r#"
             position: relative;
         }
 
-        /* Decorative Background Shapes */
         .bg-shape-1 {
             position: absolute;
             width: 400px;

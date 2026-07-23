@@ -170,6 +170,53 @@ pub fn ensure_global_containers_running() {
     });
 }
 
+/// The one and only place this fixture's JSON lives — real templates are DB-backed
+/// (authored via the admin builder), so this exists purely for tests: both this
+/// crate's own DB/API-level tests and, via a dev-dependency on this crate, `process`'s
+/// own pure state-machine unit tests, which need a template with realistic shape.
+pub fn load_test_template_fixture() -> process::ProcessTemplate {
+    let content = include_str!("../fixtures/tenant_onboarding.json");
+    serde_json::from_str(content).expect("Failed to parse test template fixture")
+}
+
+/// Every API-level test starts processes against the real `/api/v1/process/state`
+/// endpoint, which requires an actual, ACTIVE `process_templates` row — there is no
+/// production seed migration for this (it's meant to be authored via the admin
+/// builder), so each fresh test DB needs its own. Seeds the fixture above, active
+/// immediately. Since each test DB is freshly created, this deterministically
+/// becomes template_id 1.
+async fn seed_default_process_template(pool: &PgPool) {
+    let template = load_test_template_fixture();
+
+    let mut conn = pool.acquire().await.expect("Failed to acquire connection");
+
+    let template_id: i32 = sqlx::query_scalar(
+        "INSERT INTO process_templates (name) VALUES ($1) RETURNING template_id",
+    )
+    .bind(&template.name)
+    .fetch_one(&mut *conn)
+    .await
+    .expect("Failed to seed process_templates");
+
+    let definition = serde_json::to_value(&template).expect("Failed to serialize test template");
+    let version_id: i32 = sqlx::query_scalar(
+        "INSERT INTO process_template_versions (template_id, version_number, definition) \
+         VALUES ($1, 1, $2) RETURNING version_id",
+    )
+    .bind(template_id)
+    .bind(&definition)
+    .fetch_one(&mut *conn)
+    .await
+    .expect("Failed to seed process_template_versions");
+
+    sqlx::query("UPDATE process_templates SET active_version_id = $1 WHERE template_id = $2")
+        .bind(version_id)
+        .bind(template_id)
+        .execute(&mut *conn)
+        .await
+        .expect("Failed to activate test template");
+}
+
 /// Dynamic isolated environment builder for API testing.
 pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
     ensure_global_containers_running();
@@ -200,6 +247,8 @@ pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
     infra::db::run_migrations(&db_pool)
         .await
         .expect("Failed to run migrations");
+
+    seed_default_process_template(&db_pool).await;
 
     let binary_path = format!(
         "../target/debug/file_server{}",

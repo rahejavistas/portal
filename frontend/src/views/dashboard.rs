@@ -7,8 +7,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
     <title>Vistas Portal - Resident Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
-        // Set the initial tab before the page paints, so the correct panel
-        // is visible from the first frame instead of flashing Profile first.
         document.documentElement.setAttribute(
             'data-tab',
             new URLSearchParams(window.location.search).get('tab') || 'profile'
@@ -24,8 +22,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         html {
             overflow-x: hidden;
         }
-        /* Single-line truncation utility — pair with a title="" attribute (see truncTitle()
-           in <script>) so the full text is still available on hover. */
         .truncate {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -62,14 +58,12 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             width: 100%;
         }
 
-        /* Layout Container */
         .layout-container {
             display: flex;
             width: 100%;
             min-height: 100vh;
         }
 
-        /* Decorative Background Shapes — clipped to never overflow viewport */
         .bg-shape-top-right {
             position: fixed;
             width: 500px;
@@ -82,7 +76,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             pointer-events: none;
         }
 
-        /* Mobile Top Bar */
         .mobile-topbar {
             display: none;
             position: fixed;
@@ -125,7 +118,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             transition: all 0.3s ease;
         }
 
-        /* Sidebar Overlay (mobile) */
         .sidebar-overlay {
             display: none;
             position: fixed;
@@ -142,7 +134,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             opacity: 1;
         }
 
-        /* Left Main Sidebar */
         .sidebar {
             width: 260px;
             min-width: 260px;
@@ -208,9 +199,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             background-color: var(--primary);
             color: var(--background);
         }
-        /* Initial-tab state, set synchronously in <head> before first paint
-           (see the inline script above) — avoids a flash to the Profile tab
-           on a fresh page load with ?tab=documents. */
         #panel-documents { display: none; }
         html[data-tab="documents"] #panel-profile { display: none; }
         html[data-tab="documents"] #panel-documents { display: block; }
@@ -256,7 +244,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             transform: scale(1.03);
         }
 
-        /* Category filter bar and chips */
         .category-filter-bar {
             display: flex;
             gap: 10px;
@@ -315,7 +302,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             border-color: var(--primary);
         }
 
-        /* Main Workspace Area */
         .main-content {
             flex-grow: 1;
             margin-left: 260px;
@@ -325,7 +311,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             z-index: 10;
         }
 
-        /* Responsive Mobile Layout */
         @media (max-width: 768px) {
             .mobile-topbar { display: flex; }
             .sidebar {
@@ -347,7 +332,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 max-width: 100vw;
                 box-sizing: border-box;
             }
-            /* Document table -> card layout on mobile */
             .doc-table-desktop { display: none; }
             .doc-cards-mobile { display: flex !important; }
             h2 { font-size: 1.5rem; }
@@ -358,7 +342,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             .doc-cards-mobile { display: none !important; }
         }
 
-        /* Document card (mobile view) */
         .doc-cards-mobile {
             display: flex;
             flex-direction: column;
@@ -407,7 +390,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             border: none;
         }
 
-        /* Profile details */
         .profile-table {
             width: 100%;
         }
@@ -433,7 +415,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             font-size: 1.125rem;
         }
 
-        /* Badges */
         .role-pill {
             display: inline-block;
             padding: 4px 10px;
@@ -454,7 +435,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             color: #0369A1;
         }
 
-        /* Table Styles for Documents */
         .table-container {
             overflow-x: auto;
             border-radius: var(--radius-lg);
@@ -528,7 +508,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             display: inline-block;
         }
         
-        /* Category specific badge highlights */
         .cat-resident {
             background-color: #EFF6FF;
             color: #1D4ED8;
@@ -568,24 +547,20 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <!-- Mobile Top Bar -->
     <div class="mobile-topbar" id="mobile-topbar">
         <span class="mobile-topbar-brand">Vistas</span>
         <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
             <span></span><span></span><span></span>
         </button>
     </div>
-    <!-- Sidebar Overlay -->
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
     <div class="layout-container">
-        <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
                 <h1>Vistas</h1>
                 <p>Resident Portal</p>
                 
-                <!-- Nav Tabs -->
                 <nav class="nav-menu">
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
@@ -600,9 +575,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
 
 
-        <!-- Main Content Area -->
         <main class="main-content" id="main-content">
-            <!-- Profile Info -->
             <section id="panel-profile">
                 <h2>Profile</h2>
 
@@ -624,7 +597,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 </div>
             </section>
 
-            <!-- Documents Info -->
             <section id="panel-documents">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 16px;">
                     <div>
@@ -633,14 +605,11 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     </div>
                     <button class="download-btn" onclick="openUploadModal()">Upload Document</button>
                 </div>
-                <!-- Category Filter Bar (Desktop & Mobile) — chips are built dynamically from
-                     the categories actually present in this resident's own document list. -->
                 <div class="category-filter-bar" id="user-filter-bar">
                     <button class="filter-chip active" id="user-filter-all" onclick="filterDocs('ALL')">All</button>
                 </div>
                 <div class="category-filter-bar" id="user-subcategory-filter-bar" style="display:none;"></div>
 
-                <!-- Desktop Table -->
                 <div class="table-container doc-table-desktop">
                     <table>
                         <thead>
@@ -657,14 +626,12 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                         </tbody>
                     </table>
                 </div>
-                <!-- Mobile Cards -->
                 <div class="doc-cards-mobile" id="doc-cards-mobile-target" style="flex-direction: column; gap: 12px; display: none;">
                     <p style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</p>
                 </div>
             </section>
         </main>
         
-        <!-- Upload Modal -->
         <div id="upload-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; padding: 20px; box-sizing: border-box;">
             <div class="card" style="width: 100%; max-width: 500px; padding: 24px; position: relative;">
                 <button onclick="closeUploadModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground);">&times;</button>
@@ -693,11 +660,34 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <div id="upload-status" style="margin-top: 12px; font-size: 0.875rem; font-weight: 600;"></div>
             </div>
         </div>
-        
+
+        <div id="alert-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10011; justify-content:center; align-items:center; padding: 20px; box-sizing: border-box;" onclick="if (event.target === this) closeAlertModal()">
+            <div class="card" style="width: 100%; max-width: 400px; padding: 24px;">
+                <p id="alert-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5; white-space:pre-line;"></p>
+                <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                    <button type="button" id="alert-modal-ok-btn" class="download-btn" style="padding: 10px 24px;" onclick="closeAlertModal()">OK</button>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
-        // ---- Sidebar toggle (mobile) ----
+        let _alertResolve = null;
+        function showAlert(message) {
+            document.getElementById('alert-modal-message').textContent = message;
+            document.getElementById('alert-modal').style.display = 'flex';
+            return new Promise(resolve => { _alertResolve = resolve; });
+        }
+        function closeAlertModal() {
+            document.getElementById('alert-modal').style.display = 'none';
+            if (_alertResolve) {
+                const resolve = _alertResolve;
+                _alertResolve = null;
+                resolve();
+            }
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -728,9 +718,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
-        // Truncates long, unbounded text (emails, titles, labels) to a fixed length with
-        // "…" so it can't blow out table/flex layouts. Pair with truncTitle() on the same
-        // element so the full value is still readable on hover.
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -739,9 +726,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             return escapeHtml((text === null || text === undefined) ? '' : text.toString());
         }
 
-        // API error bodies are either a bare JSON string or a {message: "..."} object —
-        // reading the raw response text directly would show the JSON quoting/escaping
-        // to the user. This unwraps either shape down to a plain message.
         async function readErrorMessage(response) {
             const raw = await response.text();
             try {
@@ -787,9 +771,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
             const hasFlat = user.wing !== 'TBD' && user.flat_number !== 'TBD';
 
-            // No flat means nothing on this page is actually useful to them (no profile
-            // mapping, no personal documents) — send admin-capable accounts straight to
-            // the Admin Dashboard instead of showing an empty resident view.
             if (!hasFlat && isAdmin) {
                 window.location.replace('/admin');
                 return;
@@ -808,11 +789,9 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             localStorage.clear();
             window.location.href = '/login';
         } else {
-            // Render cached profile immediately to prevent flicker
             const user = JSON.parse(userStr);
             renderProfile(user);
 
-            // Fetch fresh profile from server in background to sync database changes
             async function refreshProfile() {
                 try {
                     const response = await fetch(`${API_BASE}/api/v1/profile`, {
@@ -841,15 +820,10 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             window.location.href = '/login';
         });
 
-        // Parse URL params for initial tab
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab') || 'profile';
 
-        // Tabs switcher
         function switchTab(tabName) {
-            // Keep the FOUC-prevention attribute (set once from the URL at page load,
-            // see the inline <head> script) in sync so its CSS overrides don't fight
-            // the .active class toggled below on later clicks.
             document.documentElement.setAttribute('data-tab', tabName);
 
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
@@ -890,16 +864,12 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             }
         }
 
-        // Apply initial tab
         switchTab(initialTab);
 
         function renderCategoryFilterChips() {
             const bar = document.getElementById('user-filter-bar');
             const categories = [...new Set(allResidentDocs.map(d => d.document.category))];
 
-            // Keep "All" first, then one chip per category actually present in what this
-            // resident can see — no hardcoded list, so a resident only ever sees chips for
-            // Public/their own flat plus whatever else a designation grants them.
             bar.innerHTML = '<button class="filter-chip active" id="user-filter-all" onclick="filterDocs(\'ALL\')">All</button>' +
                 categories.map(cat => {
                     const chipId = 'user-filter-' + cat.toLowerCase().replace(/_/g, '-');
@@ -950,7 +920,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             currentCategoryFilter = category;
             currentSubcategoryFilter = 'ALL';
 
-            // Update active state of filter chips
             document.querySelectorAll('#user-filter-bar .filter-chip').forEach(el => el.classList.remove('active'));
             const chipId = 'user-filter-' + category.toLowerCase().replace(/_/g, '-');
             const target = document.getElementById(chipId);
@@ -1014,7 +983,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 const doc = docWithMeta.document;
                 const meta = docWithMeta.metadata;
 
-                // --- Desktop table row ---
                 const tr = document.createElement('tr');
                 let metaHtml = '';
                 if (meta) {
@@ -1037,7 +1005,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 `;
                 tbody.appendChild(tr);
 
-                // --- Mobile card ---
                 const card = document.createElement('div');
                 card.className = 'doc-card-mobile';
                 card.innerHTML = `
@@ -1068,15 +1035,15 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     if (data.download_url) {
                         window.open(data.download_url, '_blank');
                     } else {
-                        alert('No download link returned by server.');
+                        showAlert('No download link returned by server.');
                     }
                 } else {
                     const errText = await readErrorMessage(response);
-                    alert(`Failed to get download link: ${errText}`);
+                    showAlert(`Failed to get download link: ${errText}`);
                 }
             } catch (err) {
                 console.error(err);
-                alert('Connection error while fetching download link.');
+                showAlert('Connection error while fetching download link.');
             }
         }
 
@@ -1090,14 +1057,12 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
-            // 1GB limit
             if (file.size > 1024 * 1024 * 1024) {
                 statusEl.style.color = '#EF4444';
                 statusEl.textContent = 'Error: File size must be under 1GB.';
                 return;
             }
 
-            // Client side ext check
             const allowedExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'jpg', 'jpeg', 'png'];
             const ext = file.name.split('.').pop().toLowerCase();
             if (!allowedExts.includes(ext)) {
@@ -1111,7 +1076,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             statusEl.textContent = '';
 
             try {
-                // Step 1: Get presigned PUT URL
                 const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
                     method: 'POST',
                     headers: {
@@ -1134,7 +1098,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
                 const { document_id, upload_url } = await urlRes.json();
 
-                // Step 2: PUT file directly to S3
                 submitBtn.textContent = 'Uploading...';
                 const putRes = await fetch(upload_url, {
                     method: 'PUT',
@@ -1148,7 +1111,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     return;
                 }
 
-                // Step 3: Confirm upload
                 submitBtn.textContent = 'Confirming...';
                 const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
                     method: 'POST',
@@ -1169,7 +1131,6 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 statusEl.style.color = '#10B981';
                 statusEl.textContent = 'Document uploaded successfully!';
                 
-                // Reload docs
                 loadResidentDocuments();
                 
                 setTimeout(() => {

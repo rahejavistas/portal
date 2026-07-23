@@ -55,7 +55,7 @@ fn setup_process(url: &str, env: &quality::TestEnv) -> (String, String, String) 
 
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let pid = val["process_id"].as_str().unwrap().to_string();
@@ -78,7 +78,7 @@ async fn test_state_auto_init_returns_valid_process() {
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
 
-    assert_eq!(val["template_id"].as_str().unwrap(), "tenant_onboarding_v1");
+    assert_eq!(val["template_version_id"].as_i64().unwrap(), 1);
     assert!(!val["is_completed"].as_bool().unwrap());
     assert_eq!(val["steps"].as_array().unwrap().len(), 5);
     // First step should be OPEN, second should be LOCKED
@@ -96,7 +96,7 @@ async fn test_state_creates_new_process_each_time() {
     // Call again with template_id — should create a new process as per recent changes
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     assert_ne!(val["process_id"].as_str().unwrap(), pid1);
@@ -112,7 +112,7 @@ async fn test_state_admin_can_start_own_process_without_process_id() {
 
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &format!("Bearer {}", admin_jwt))
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}));
+        .send_json(serde_json::json!({"template_id": 1}));
     assert!(resp.is_ok());
 }
 
@@ -512,7 +512,7 @@ async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
     );
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let pid = resp.into_json::<serde_json::Value>().unwrap()["process_id"]
         .as_str()
@@ -575,7 +575,7 @@ async fn test_reviewer_cannot_download_document_not_attached_to_process() {
     );
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &res_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let pid = resp.into_json::<serde_json::Value>().unwrap()["process_id"]
         .as_str()
@@ -636,7 +636,7 @@ async fn test_user_cannot_access_other_users_process() {
     // User 1 initializes their process
     let resp = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &u1_auth)
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap();
     let val: serde_json::Value = resp.into_json().unwrap();
     let u1_pid = val["process_id"].as_str().unwrap();

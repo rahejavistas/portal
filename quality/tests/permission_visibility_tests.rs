@@ -204,7 +204,7 @@ async fn test_process_view_lists_all_processes_but_cannot_review() {
     let owner_jwt = quick_onboard_user(&env, "owner_pv@test.com", "password123");
     let init: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &auth(&owner_jwt))
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap()
         .into_json()
         .unwrap();
@@ -275,7 +275,7 @@ async fn test_super_admin_sees_all_documents_processes_and_residents() {
     let owner_jwt = quick_onboard_user(&env, "owner_sa@test.com", "password123");
     let init: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
         .set("Authorization", &auth(&owner_jwt))
-        .send_json(serde_json::json!({"template_id": "tenant_onboarding_v1"}))
+        .send_json(serde_json::json!({"template_id": 1}))
         .unwrap()
         .into_json()
         .unwrap();

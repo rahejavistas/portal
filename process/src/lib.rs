@@ -2,6 +2,7 @@ pub mod db;
 pub mod fields;
 pub mod notification;
 pub mod state_machine;
+pub mod template_store;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,11 +14,6 @@ pub struct ProcessFieldTemplate {
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
-    /// When true, uploading a document into this field auto-enters it into the
-    /// shared e-signature queue (see `document_signature_requirements`) and blocks
-    /// the step from completing until it's signed.
-    #[serde(default)]
-    pub requires_signature: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -31,9 +27,11 @@ pub struct ProcessStepTemplate {
     pub substeps: Option<Vec<ProcessStepTemplate>>,
 }
 
+/// The template tree itself carries no identity — which template/version this is is
+/// tracked entirely by the DB row wrapping it (`process_template_versions.version_id`,
+/// threaded alongside this struct wherever needed, e.g. `process::db::ProcessInfo`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessTemplate {
-    pub template_id: String,
     pub name: String,
     pub description: Option<String>,
     pub step_id: i32,
@@ -43,33 +41,167 @@ pub struct ProcessTemplate {
     pub fields: Option<Vec<ProcessFieldTemplate>>,
 }
 
-impl ProcessTemplate {
-    /// Load the tenant onboarding process template compiled into the binary.
-    pub fn load_tenant_onboarding() -> Result<Self, serde_json::Error> {
-        let content = include_str!("../templates/tenant_onboarding.json");
-        serde_json::from_str(content)
+/// Test fixture for this crate's own unit tests (can't depend on `quality`'s JSON fixture — cyclic dep).
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    use super::{ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate};
+
+    fn field(
+        field_id: i32,
+        name: &str,
+        r#type: &str,
+        is_optional: bool,
+        filled_by: &str,
+    ) -> ProcessFieldTemplate {
+        ProcessFieldTemplate {
+            field_id,
+            name: name.to_string(),
+            r#type: r#type.to_string(),
+            is_optional,
+            filled_by: filled_by.to_string(),
+            requirements: None,
+        }
     }
 
-    /// Load a process template by its version/template_id.
-    pub fn load_by_version(template_id: &str) -> Result<Self, String> {
-        match template_id {
-            "tenant_onboarding_v1" | "tenant_onboarding" => {
-                Self::load_tenant_onboarding().map_err(|e| e.to_string())
-            }
-            _ => Err(format!("Unknown template version: {}", template_id)),
+    pub(crate) fn tenant_onboarding_fixture() -> ProcessTemplate {
+        ProcessTemplate {
+            name: "Tenant Onboarding Process".to_string(),
+            description: Some(
+                "Stages for tenant onboarding from owner document submission to shifting permission"
+                    .to_string(),
+            ),
+            step_id: 1,
+            is_optional: false,
+            is_review_required: false,
+            fields: None,
+            substeps: Some(vec![
+                ProcessStepTemplate {
+                    step_id: 2,
+                    name: "Step 1: Onboarding Documents and Payments".to_string(),
+                    description: Some(
+                        "Submit owner documents, tenant KYC, undertaking, and pay necessary fees"
+                            .to_string(),
+                    ),
+                    is_optional: false,
+                    is_review_required: true,
+                    fields: None,
+                    substeps: Some(vec![
+                        ProcessStepTemplate {
+                            step_id: 3,
+                            name: "Owner Documents".to_string(),
+                            description: Some(
+                                "Submit ownership documentation (if not submitted already)"
+                                    .to_string(),
+                            ),
+                            is_optional: false,
+                            is_review_required: false,
+                            substeps: None,
+                            fields: Some(vec![
+                                field(101, "Sale Agreement / Chain Agreement", "document", false, "user"),
+                                field(102, "Possession Letter", "document", false, "user"),
+                                field(103, "Parking Allotment Letter", "document", false, "user"),
+                                field(104, "Loan Sanction Letter (If Loan Availed)", "document", true, "user"),
+                                field(105, "Owner KYC Documents", "document", false, "user"),
+                                field(106, "ADDA Enrollment Form", "document", false, "user"),
+                            ]),
+                        },
+                        ProcessStepTemplate {
+                            step_id: 4,
+                            name: "Tenant KYC".to_string(),
+                            description: Some("Submit KYC documents for the tenant".to_string()),
+                            is_optional: false,
+                            is_review_required: false,
+                            substeps: None,
+                            fields: Some(vec![field(107, "Tenant KYC Documents", "document", false, "user")]),
+                        },
+                        ProcessStepTemplate {
+                            step_id: 5,
+                            name: "Undertaking".to_string(),
+                            description: Some(
+                                "Submit signed undertaking on 200/- stamp paper in society format"
+                                    .to_string(),
+                            ),
+                            is_optional: false,
+                            is_review_required: false,
+                            substeps: None,
+                            fields: Some(vec![field(108, "Undertaking (Stamp Paper)", "document", false, "user")]),
+                        },
+                        ProcessStepTemplate {
+                            step_id: 6,
+                            name: "Payments".to_string(),
+                            description: Some(
+                                "Pay shifting charges and one-year NOC charges".to_string(),
+                            ),
+                            is_optional: false,
+                            is_review_required: false,
+                            substeps: None,
+                            fields: Some(vec![
+                                field(109, "One Year NOC Charges (11,800/-)", "document", false, "user"),
+                                field(110, "Shifting Charges (8,614/-)", "document", false, "user"),
+                                field(116, "Additional Notes (e.g. file passwords)", "text", true, "user"),
+                            ]),
+                        },
+                    ]),
+                },
+                ProcessStepTemplate {
+                    step_id: 7,
+                    name: "Step 2: Meeting with Committee".to_string(),
+                    description: Some(
+                        "Schedule and complete the meeting with Office Bearers / Managing Committee"
+                            .to_string(),
+                    ),
+                    is_optional: false,
+                    is_review_required: true,
+                    substeps: None,
+                    fields: Some(vec![field(111, "Meeting Remarks & Status", "text", false, "admin")]),
+                },
+                ProcessStepTemplate {
+                    step_id: 8,
+                    name: "Step 3: NOC Issuance".to_string(),
+                    description: Some("NOC will be issued by the society administration".to_string()),
+                    is_optional: false,
+                    is_review_required: true,
+                    substeps: None,
+                    fields: Some(vec![field(112, "Issued NOC Document", "document", false, "admin")]),
+                },
+                ProcessStepTemplate {
+                    step_id: 9,
+                    name: "Step 4: Agreement Registration & Police Verification".to_string(),
+                    description: Some(
+                        "Submit registered agreement and police verification details".to_string(),
+                    ),
+                    is_optional: false,
+                    is_review_required: true,
+                    substeps: None,
+                    fields: Some(vec![
+                        field(113, "Registered Agreement", "document", false, "user"),
+                        field(114, "Police Verification Form / Receipt", "document", false, "user"),
+                    ]),
+                },
+                ProcessStepTemplate {
+                    step_id: 10,
+                    name: "Step 5: Shifting Permission".to_string(),
+                    description: Some(
+                        "Receive final shifting permission from the society office".to_string(),
+                    ),
+                    is_optional: false,
+                    is_review_required: true,
+                    substeps: None,
+                    fields: Some(vec![field(115, "Shifting Permission Letter", "document", false, "admin")]),
+                },
+            ]),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::test_fixtures::tenant_onboarding_fixture;
     use super::*;
 
     #[test]
-    fn test_load_tenant_onboarding() {
-        let template =
-            ProcessTemplate::load_tenant_onboarding().expect("Failed to load and parse template");
-        assert_eq!(template.template_id, "tenant_onboarding_v1");
+    fn test_load_test_template_fixture() {
+        let template = tenant_onboarding_fixture();
         assert_eq!(template.step_id, 1);
 
         let substeps = template.substeps.expect("Substeps should exist");
@@ -82,29 +214,13 @@ mod tests {
     }
 
     #[test]
-    fn test_load_by_version() {
-        let template = ProcessTemplate::load_by_version("tenant_onboarding_v1").unwrap();
-        assert_eq!(template.template_id, "tenant_onboarding_v1");
-
-        let template_alias = ProcessTemplate::load_by_version("tenant_onboarding").unwrap();
-        assert_eq!(template_alias.template_id, "tenant_onboarding_v1");
-
-        let err = ProcessTemplate::load_by_version("invalid_version");
-        assert!(err.is_err());
-        assert_eq!(
-            err.unwrap_err(),
-            "Unknown template version: invalid_version"
-        );
-    }
-
-    #[test]
     fn test_no_overlapping_ids_in_and_across_templates() {
-        let template_versions = vec!["tenant_onboarding_v1"];
+        let template_versions = vec!["tenant_onboarding"];
         let mut all_step_ids = std::collections::HashSet::new();
         let mut all_field_ids = std::collections::HashSet::new();
 
         for version in template_versions {
-            let template = ProcessTemplate::load_by_version(version).unwrap();
+            let template = tenant_onboarding_fixture();
 
             // Check uniqueness within this single template
             let mut template_step_ids = std::collections::HashSet::new();

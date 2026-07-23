@@ -42,35 +42,6 @@ async fn dispatch(to: &str, subject: String, body: String, process_id: Uuid) {
 //   3. Admin revokes/reopens → user needs to act
 // ---------------------------------------------------------------------------
 
-/// Notify every eligible signer that a document just entered the signing queue.
-/// Unlike the other functions here, the recipient list is dynamic (whoever holds
-/// `documents.signatures.sign`), so it's passed in already resolved rather than
-/// coming from a `NotificationContext` — this function stays DB-free like the rest
-/// of this module.
-pub async fn notify_signature_queue(
-    recipient_emails: &[String],
-    process_name: &str,
-    step_name: &str,
-    document_title: &str,
-    process_id: Uuid,
-) {
-    let subject = format!("[{}] Document Awaiting Signature", process_name);
-    let body = format!(
-        "Hello,\n\n\
-         A document requires your signature.\n\n\
-         Document: {}\n\
-         Step: {}\n\
-         Process: {}\n\
-         Process ID: {}\n\n\
-         Please log in to the Raheja Vistas portal to review and sign.\n",
-        document_title, step_name, process_name, process_id,
-    );
-
-    for email_addr in recipient_emails {
-        dispatch(email_addr, subject.clone(), body.clone(), process_id).await;
-    }
-}
-
 /// Notify admin that a step has been submitted and is pending review.
 pub async fn notify_admin_pending_review(
     ctx: &NotificationContext,

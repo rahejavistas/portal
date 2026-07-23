@@ -37,7 +37,6 @@ pub(crate) const LOGIN_HTML: &str = r#"
             position: relative;
         }
         
-        /* Decorative Background Shapes */
         .bg-shape-1 {
             position: fixed;
             width: 400px;

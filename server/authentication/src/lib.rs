@@ -25,8 +25,7 @@ pub enum Permission {
     DocumentsCategoriesManage,
     ProcessView,
     ProcessReviewer,
-    DocumentsSignaturesSign,
-    DocumentsSignaturesManage,
+    ProcessTemplatesManage,
 }
 
 impl Permission {
@@ -41,8 +40,7 @@ impl Permission {
             Permission::DocumentsCategoriesManage => "documents.categories.manage",
             Permission::ProcessView => "process.view",
             Permission::ProcessReviewer => "process.reviewer",
-            Permission::DocumentsSignaturesSign => "documents.signatures.sign",
-            Permission::DocumentsSignaturesManage => "documents.signatures.manage",
+            Permission::ProcessTemplatesManage => "process.templates.manage",
         }
     }
 
@@ -57,8 +55,7 @@ impl Permission {
             "documents.categories.manage" => Some(Permission::DocumentsCategoriesManage),
             "process.view" => Some(Permission::ProcessView),
             "process.reviewer" => Some(Permission::ProcessReviewer),
-            "documents.signatures.sign" => Some(Permission::DocumentsSignaturesSign),
-            "documents.signatures.manage" => Some(Permission::DocumentsSignaturesManage),
+            "process.templates.manage" => Some(Permission::ProcessTemplatesManage),
             _ => None,
         }
     }
@@ -98,10 +95,8 @@ pub struct Capabilities {
     pub can_manage_documents: bool,
     /// Can browse every resident's process (read-only unless `can_review_process`).
     pub can_view_all_processes: bool,
-    /// Can see the signing queue and complete (sign) documents in it.
-    pub can_sign_documents: bool,
-    /// Can cancel a signature requirement and view signature status outside the queue.
-    pub can_manage_document_signatures: bool,
+    /// Can create/edit process templates (the versioned builder) and activate versions.
+    pub can_manage_process_templates: bool,
 }
 
 impl User {
@@ -188,8 +183,7 @@ fn derived_capabilities(permissions: &[String]) -> Capabilities {
         can_review_process,
         can_manage_documents: false,
         can_view_all_processes: can_review_process || has(Permission::ProcessView),
-        can_sign_documents: has(Permission::DocumentsSignaturesSign),
-        can_manage_document_signatures: has(Permission::DocumentsSignaturesManage),
+        can_manage_process_templates: has(Permission::ProcessTemplatesManage),
     }
 }
 

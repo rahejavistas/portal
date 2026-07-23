@@ -1,5 +1,4 @@
 {
-  "template_id": "tenant_onboarding_v1",
   "name": "Tenant Onboarding Process",
   "description": "Stages for tenant onboarding from owner document submission to shifting permission",
   "step_id": 1,
@@ -195,8 +194,7 @@
           "filled_by": "admin",
           "requirements": {
             "document_type": "RESIDENT_GENERAL"
-          },
-          "requires_signature": true
+          }
         }
       ]
     },
@@ -244,8 +242,7 @@
           "filled_by": "admin",
           "requirements": {
             "document_type": "RESIDENT_GENERAL"
-          },
-          "requires_signature": true
+          }
         }
       ]
     }
