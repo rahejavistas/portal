@@ -53,6 +53,14 @@ async fn main() {
         config.rate_limit.admin_per_min,
     ));
 
+    let signyu_client = config.signyu.api_key.clone().map(|api_key| {
+        std::sync::Arc::new(file_server::signature_providers::signyu::SignYuClient::new(
+            config.signyu.base_url.clone(),
+            api_key,
+            pg_pool.clone(),
+        ))
+    });
+
     // Initialize shared application state (completely stateless!)
     let state = AppState {
         permissions_manager,
@@ -63,6 +71,8 @@ async fn main() {
         forgot_password_expiry: config.forgot_password_expiry,
         rate_limiters,
         super_admin_email: config.super_admin_email.clone(),
+        signyu_client,
+        signyu_webhook_secret: config.signyu.webhook_secret.clone(),
     };
 
     macro_rules! make_app {
@@ -76,7 +86,7 @@ async fn main() {
                 .route("/users/list", post(handlers::admin::list_users))
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[
+                    middleware::require_any_of(&[
                         Permission::UsersView,
                         Permission::UsersManage,
                         Permission::UsersRolesManage,
@@ -97,7 +107,7 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::UsersManage]),
+                    middleware::require_any_of(&[Permission::UsersManage]),
                 ));
 
             // No blanket permission layer — each handler checks per-category access.
@@ -152,9 +162,13 @@ async fn main() {
                     "/process/add-note",
                     post(handlers::process::admin_add_note),
                 )
+                .route(
+                    "/process/documents/add-signers",
+                    post(handlers::process::admin_add_document_signers),
+                )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::ProcessReviewer]),
+                    middleware::require_any_of(&[Permission::ProcessReviewer]),
                 ));
 
             // Assigning/revoking an existing designation to/from a user.
@@ -169,7 +183,7 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::UsersRolesManage]),
+                    middleware::require_any_of(&[Permission::UsersRolesManage]),
                 ));
 
             // Creating designations and editing their permissions/category access.
@@ -196,7 +210,7 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::DesignationsManage]),
+                    middleware::require_any_of(&[Permission::DesignationsManage]),
                 ));
 
             let document_categories_manage_routes = Router::new()
@@ -222,7 +236,7 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::DocumentsCategoriesManage]),
+                    middleware::require_any_of(&[Permission::DocumentsCategoriesManage]),
                 ));
 
             // Read-only listings shared by the roles/category-management capabilities above.
@@ -245,7 +259,7 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[
+                    middleware::require_any_of(&[
                         Permission::UsersRolesManage,
                         Permission::DesignationsManage,
                         Permission::DocumentsCategoriesManage,
@@ -271,7 +285,66 @@ async fn main() {
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_permission(&[Permission::ProcessTemplatesManage]),
+                    middleware::require_any_of(&[Permission::ProcessTemplatesManage]),
+                ));
+
+            // No signatures-specific permission gates these — signing eligibility is
+            // "holds any designation" (see `User::has_any_designation`), and each
+            // handler is self-scoped anyway: `queue` only ever returns the caller's own
+            // requirements, and `replace-upload-url`/`replace-confirm-upload` require the
+            // caller to actually BE the requirement's signer. Authentication alone (the
+            // `SessionUser` extractor) is enough at the router level.
+            let document_signatures_sign_routes = Router::new()
+                .route(
+                    "/documents/signatures/queue",
+                    post(handlers::signatures::queue),
+                )
+                .route(
+                    "/documents/signatures/replace-upload-url",
+                    post(handlers::signatures::replace_upload_url),
+                )
+                .route(
+                    "/documents/signatures/replace-confirm-upload",
+                    post(handlers::signatures::replace_confirm_upload),
+                )
+                .route(
+                    "/documents/signatures/document-download-url",
+                    post(handlers::signatures::document_download_url),
+                );
+
+            let document_signatures_read_routes = Router::new()
+                .route("/documents/signatures/all", post(handlers::signatures::all))
+                .route(
+                    "/documents/signatures/refresh-status",
+                    post(handlers::signatures::refresh_status),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[
+                        Permission::ProcessReviewer,
+                        Permission::ProcessView,
+                        Permission::DocumentsAllManage,
+                    ]),
+                ));
+
+            // Signer directory oversight (set-active/full list) belongs to whoever
+            // attaches signers in the first place — process.reviewer — there is no
+            // separate signatures-management permission. Deliberately no delete route:
+            // a signer is never hard-removed, only deactivated (reversible).
+            let signer_directory_manage_routes = Router::new()
+                .route("/signers/set-active", post(handlers::signers::set_active))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[Permission::ProcessReviewer]),
+                ));
+
+            // /signers/list itself scopes its response by an `include_inactive` request
+            // flag (not by permission) — see the handler.
+            let signer_directory_read_routes = Router::new()
+                .route("/signers/list", post(handlers::signers::list))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[Permission::ProcessReviewer]),
                 ));
 
             let admin_routes = users_view_routes
@@ -282,10 +355,18 @@ async fn main() {
                 .merge(roles_designation_definition_routes)
                 .merge(document_categories_manage_routes)
                 .merge(roles_shared_read_routes)
-                .merge(process_templates_manage_routes);
+                .merge(process_templates_manage_routes)
+                .merge(document_signatures_sign_routes)
+                .merge(document_signatures_read_routes)
+                .merge(signer_directory_manage_routes)
+                .merge(signer_directory_read_routes);
 
             Router::new()
                 .route("/health", get(handlers::health::health_check))
+                .route(
+                    "/webhooks/signyu",
+                    post(handlers::signatures::signyu_webhook),
+                )
                 .route("/api/v1/login", post(handlers::auth::login))
                 .route(
                     "/api/v1/forgot-password",
@@ -296,6 +377,14 @@ async fn main() {
                     post(handlers::auth::reset_password),
                 )
                 .route("/api/v1/profile", post(handlers::auth::profile))
+                .route(
+                    "/api/v1/profile/signer-info",
+                    post(handlers::auth::get_signer_info),
+                )
+                .route(
+                    "/api/v1/profile/signer-info/save",
+                    post(handlers::auth::save_signer_info),
+                )
                 .route(
                     "/api/v1/documents",
                     post(handlers::documents::list_documents),

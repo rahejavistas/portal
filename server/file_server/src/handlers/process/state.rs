@@ -55,6 +55,15 @@ pub struct FieldValue {
     pub document_title: Option<String>,
 }
 
+#[derive(Clone, Serialize)]
+pub struct FieldSignatureStatus {
+    pub requirement_id: i32,
+    pub signer_name: String,
+    pub signer_user_id: i32,
+    pub sign_order: i32,
+    pub status: String,
+}
+
 #[derive(Serialize)]
 pub struct FieldResponse {
     pub template_field_id: i32,
@@ -62,8 +71,19 @@ pub struct FieldResponse {
     pub r#type: String,
     pub filled_by: String,
     pub is_optional: bool,
+    /// Template-declared: this document field cannot count as complete until a
+    /// reviewer has attached at least one signer AND every attached signer has
+    /// signed. See `process::db::load_state`'s matching gating logic.
+    pub requires_signature: bool,
+    /// Designation codes the "Add Signers" picker should scope to for this field
+    /// (empty = no restriction). UI-only, not enforced.
+    pub required_signs_from_designations: Vec<String>,
     pub value: Option<FieldValue>,
     pub history: Vec<FieldHistoryEntry>,
+    /// Signers a process reviewer has attached to the current document (empty until a
+    /// document has been submitted AND a reviewer has attached at least one signer via
+    /// the process review screen — signature requirements are never template-declared).
+    pub signature_status: Vec<FieldSignatureStatus>,
 }
 
 #[derive(Serialize)]
@@ -200,6 +220,7 @@ fn map_step_template(
     field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
     latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
     doc_title_map: &HashMap<Uuid, String>,
+    signature_map: &HashMap<Uuid, Vec<FieldSignatureStatus>>,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
     let status = statuses
@@ -226,14 +247,23 @@ fn map_step_template(
                 }
             });
 
+            let signature_status = latest
+                .and_then(|l| l.document_id)
+                .and_then(|id| signature_map.get(&id))
+                .cloned()
+                .unwrap_or_default();
+
             fields.push(FieldResponse {
                 template_field_id: field_id,
                 name: f.name.clone(),
                 r#type: f.r#type.clone(),
                 filled_by: f.filled_by.clone(),
                 is_optional: f.is_optional,
+                requires_signature: f.requires_signature,
+                required_signs_from_designations: f.required_signs_from_designations.clone(),
                 value,
                 history,
+                signature_status,
             });
         }
     }
@@ -247,6 +277,7 @@ fn map_step_template(
                 field_history_map,
                 latest_field_states,
                 doc_title_map,
+                signature_map,
             ));
         }
     }
@@ -342,7 +373,18 @@ pub async fn get_process_state(
     // --- Resolve process_id, template_version_id, ownership_id ---
     let (process_id, template_version_id, ownership_id) = match payload.process_id {
         Some(pid) => {
-            let (info, _) = load_authorized_process(&mut tx, &user, pid, can_view_all).await?;
+            // A user currently or previously attached as a signer on some document in
+            // this exact process gets read-only access to just this one process, even
+            // without process.reviewer/process.view — deliberately narrower than
+            // `can_view_all` (doesn't affect admin-comment visibility or anything else
+            // gated on that flag below).
+            let is_authorized = can_view_all
+                || state
+                    .document_manager
+                    .signer_has_requirement_for_process(user.user_id, pid)
+                    .await
+                    .internal_err()?;
+            let (info, _) = load_authorized_process(&mut tx, &user, pid, is_authorized).await?;
             (pid, info.template_version_id, info.ownership_id)
         }
         None => {
@@ -436,10 +478,106 @@ pub async fn get_process_state(
         );
     }
 
+    let field_doc_ids: Vec<Uuid> = latest_field_states
+        .values()
+        .filter_map(|f| f.document_id)
+        .collect();
+    let (blocking_document_ids, signature_map): (
+        std::collections::HashSet<Uuid>,
+        HashMap<Uuid, Vec<FieldSignatureStatus>>,
+    ) = if field_doc_ids.is_empty() {
+        (std::collections::HashSet::new(), HashMap::new())
+    } else {
+        // Requirement rows are permanently keyed to the ORIGINAL (pre-signing)
+        // document_id — once every signer has signed, the field gets repointed at
+        // `signed_document_id` instead (see `attach_replacement_and_recompute_gating`),
+        // so a lookup by the field's CURRENT document alone would find nothing for an
+        // already-fully-signed field. Match on either id, and key the map by whichever
+        // one is actually the field's current document, so `signature_map.get(current_doc)`
+        // still resolves after the repoint.
+        type SigRow = (Uuid, Option<Uuid>, i32, String, i32, i32, String);
+        let sig_rows: Vec<SigRow> = sqlx::query_as(
+            "SELECT r.document_id, r.signed_document_id, r.requirement_id, s.name, s.user_id, r.sign_order, r.status::TEXT \
+             FROM document_signature_requirements r \
+             JOIN document_signers s ON s.signer_id = r.signer_id \
+             WHERE r.document_id = ANY($1) OR r.signed_document_id = ANY($1)",
+        )
+        .bind(&field_doc_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .internal_err()?;
+
+        let mut blocking = std::collections::HashSet::new();
+        let mut sig_map: HashMap<Uuid, Vec<FieldSignatureStatus>> = HashMap::new();
+        for (
+            doc_id,
+            signed_document_id,
+            requirement_id,
+            signer_name,
+            signer_user_id,
+            sign_order,
+            status,
+        ) in sig_rows
+        {
+            if status == "PENDING" {
+                blocking.insert(doc_id);
+            }
+            let key = match signed_document_id {
+                Some(signed_id) if field_doc_ids.contains(&signed_id) => signed_id,
+                _ => doc_id,
+            };
+            sig_map.entry(key).or_default().push(FieldSignatureStatus {
+                requirement_id,
+                signer_name,
+                signer_user_id,
+                sign_order,
+                status,
+            });
+        }
+        (blocking, sig_map)
+    };
+    let mut blocking_document_ids = blocking_document_ids;
+
+    // Fields marked `requires_signature` block completion even before any requirement
+    // has been attached at all — mirrors `process::db::load_state`.
+    let step_info_map_for_gating = process::state_machine::build_step_info_map(&template);
+    let require_sig_doc_ids: Vec<Uuid> = step_info_map_for_gating
+        .values()
+        .flat_map(|info| &info.fields)
+        .filter(|f| f.requires_signature && f.r#type == "document")
+        .filter_map(|f| {
+            latest_field_states
+                .get(&f.field_id)
+                .and_then(|fs| fs.document_id)
+        })
+        .collect();
+    if !require_sig_doc_ids.is_empty() {
+        // A document with no requirement of its own is "unattached" UNLESS it's
+        // itself the signed output of a completed requirement on some other (now
+        // historical) document — see the matching comment in process::db::load_state.
+        let unattached: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT d.document_id FROM UNNEST($1::uuid[]) AS d(document_id) \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM document_signature_requirements r \
+                 WHERE r.document_id = d.document_id \
+             ) \
+             AND NOT EXISTS ( \
+                 SELECT 1 FROM document_signature_requirements r2 \
+                 WHERE r2.signed_document_id = d.document_id \
+             )",
+        )
+        .bind(&require_sig_doc_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .internal_err()?;
+        blocking_document_ids.extend(unattached);
+    }
+
     let proc_state = process::state_machine::ProcessStateInput {
         steps,
         fields: latest_field_states,
         reviews: reviews_by_step,
+        blocking_document_ids,
     };
     let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
@@ -493,6 +631,7 @@ pub async fn get_process_state(
                 &field_history_map,
                 &proc_state.fields,
                 &doc_title_map,
+                &signature_map,
             ));
         }
     }

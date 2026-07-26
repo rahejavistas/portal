@@ -25,6 +25,17 @@ There is no blanket admin guard. Every `/api/v1/admin/*` route group is gated by
 | `process.reviewer` | Approve/reject process steps, upload documents as a reviewer, add internal notes |
 | `process.templates.manage` | Create/edit process templates (the versioned builder) and activate versions |
 
+There is no signatures-specific permission at all. Signing eligibility (self-registering
+as a signer on the Profile page, viewing/acting on your own signing queue) is gated on
+**holding any real designation** — `authentication::User::has_any_designation()` — not
+a grantable permission; a plain resident with no designation can't register.
+`super_admin` doesn't count on its own: it's an abstract "holds every permission" role,
+not a real person realistically picked as a document signer, so a bare super_admin
+account (no other designation) is not sign-eligible either. Signer directory oversight
+(viewing everyone/deactivating/deleting) and full signature visibility are covered by
+`process.reviewer`, since that's already who attaches signers to documents in the
+first place.
+
 ---
 
 ## Authentication & Password APIs
@@ -152,6 +163,8 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
 
 ### POST `/api/v1/process/state`
 Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing one, or `template_id` (the `process_templates.template_id` of the process *type* to start — always resolves to whichever version is currently active — plus optional `flat_id` if the caller owns multiple flats) to fetch-or-create.
+
+Fetching by `process_id` is allowed if the caller: owns the process; holds `process.reviewer`/`process.view` (unless `personal_only` is set); OR currently/previously has a signature requirement (any status) attached to some document within that exact process — this is the narrow read-only grant that lets a signer view the one process their signature concerns without giving them `process.reviewer`'s blanket visibility into every resident's processes (it does not affect `admin_comments` visibility, which still requires `process.reviewer`/`process.view`). Otherwise **403**.
 * **Request:** `{ "process_id": "uuid" }` or `{ "template_id": 1, "flat_id": 5, "personal_only": false }`
 * **Response (200):**
   ```json
@@ -165,7 +178,7 @@ Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing 
     "next_actions": [ { "template_step_id": 3, "name": "Upload ID Proof", "assigned_to": "user" } ],
     "reviews": [ { "review_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "is_approved": true, "notes": "Looks good", "created_at": "...", "flagged_step_ids": [] } ],
     "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "..." } ],
-    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf" }, "history": [] } ], "substeps": [] } ]
+    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
   }
   ```
   `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` is only populated for callers with `process.reviewer`/`process.view`. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
@@ -350,7 +363,8 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
           {
             "name": "Substep 1",
             "fields": [
-              { "name": "ID Proof", "type": "document", "is_optional": false, "filled_by": "user" }
+              { "name": "ID Proof", "type": "document", "is_optional": false, "filled_by": "user" },
+              { "name": "NOC Document", "type": "document", "is_optional": false, "filled_by": "admin", "requires_signature": true, "required_signs_from_designations": ["staff", "secretary"] }
             ]
           }
         ]
@@ -358,6 +372,42 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
     ]
   }
   ```
+  A document field's `requires_signature` (default `false`) does not itself declare who
+  must sign, or provision anything — signature requirements are still always attached
+  ad hoc by a process reviewer via [`/admin/process/documents/add-signers`](#post-apiv1adminprocessdocumentsadd-signers).
+  It's purely a completion gate: once a document is submitted to a `requires_signature`
+  field, that field is NOT considered filled — and the step cannot complete — until a
+  reviewer has attached at least one signer AND every attached signer has signed. This
+  stops a reviewer from silently completing the step without ever routing the document
+  for signature.
+
+  `required_signs_from_designations` (default `[]`, order-significant) scopes and orders who
+  can be attached as a signer for this field — it does not provision anything (a
+  reviewer still explicitly attaches signers), but unlike `requires_signature` it IS
+  enforced server-side, not just in the picker UI:
+  - **On attach** (`add-signers`, below): every listed `signer_id` must currently hold
+    at least one of the field's designations, AND the array order must be consistent
+    with the designations' order in the field — i.e. non-decreasing designation rank
+    across `signer_ids` (ties, e.g. two signers who both cover the same designation,
+    may appear in either relative order). Violating either rule is a **400**.
+  - **On signing** (`replace-upload-url`/`replace-confirm-upload`, below): re-checked
+    at the moment of signing, not just at attach time — if the signer's designation was
+    revoked in between, the requirement is effectively invalidated: signing is rejected
+    with **403** and the requirement stays `PENDING`. Since there's no cancel endpoint,
+    this requirement is now permanently stuck until the signer's designation is
+    restored — this is a known consequence of "no cancellation" and worth designing
+    templates/designation changes around.
+
+  Its array order is also what the "Add Signers" picker UI uses to derive `sign_order`
+  client-side before submitting: it groups eligible signers by which listed designation
+  they hold and assigns `sign_order` by that position (not by click order) — e.g.
+  `["staff", "secretary"]` means whichever signer covers `staff` always signs before
+  whichever covers `secretary`. With an empty list, `sign_order` is plain click order
+  and no server-side designation check applies, as before. `SignerDirectoryEntry`
+  responses from [`/admin/signers/list`](#post-apiv1adminsignerslist) include
+  `designation_codes` (that signer's own currently-held, active designation codes) so
+  the frontend can do this filtering/grouping, and so the server can re-check it at
+  attach/sign time.
 * **Response (200):** `{ "version_id": 4 }` — the newly created version's id.
 * **400** on an unknown `template_id`.
 
@@ -370,6 +420,121 @@ Requires `process.templates.manage`. Makes the given version the one residents s
 ### POST `/api/v1/process-templates/available`
 No special permission — any authenticated user. Resident-facing: populates the "Start Process" picker.
 * **Response (200):** `Vec<{ "template_id": 1, "name": "Tenant Onboarding" }>` — only templates that currently have an active version.
+
+### Signature status on process fields
+
+Signature requirements are never declared in the template — a process reviewer attaches signers to a document from the Process Review screen (see `process/documents/add-signers` below). `process/state` and `process/save-step` field responses expose the result as `signature_status: [{ requirement_id, signer_name, sign_order, status }]` on each `document`-type field, sorted by `sign_order`. While any entry is `PENDING`, the field does not count as filled and the step cannot complete — residents see a generic "Submitted — awaiting signature" placeholder instead of the document until every signer has signed.
+
+---
+
+## Signer Directory
+
+There's no signatures-specific permission — eligibility to register as a signer is
+**holding any real designation** (`authentication::User::has_any_designation()`); a
+plain resident holding zero designations can't, and neither can a bare `super_admin`
+account with no other designation (it's an abstract admin role, not counted on its
+own). An eligible user self-registers their
+own contact info (name/phone/digits-only phone/email) from their **Profile page**;
+that's the only way a `document_signers` row is created (never admin-created on
+someone else's behalf, and never admin-*edited* either — a reviewer or even
+super_admin cannot change another person's registered contact info). Nobody but the
+signer themselves can even **view** their own phone/email either — the admin-facing
+`SignerDirectoryEntry` shape (below) deliberately omits both; a reviewer only ever
+sees name + login email, enough to pick the right person without browsing their
+private contact details. Signer directory oversight (viewing everyone incl. inactive,
+deactivating, deleting) and full signature visibility are covered by
+`process.reviewer`, since that's already who attaches signers to documents in the
+first place.
+
+### POST `/api/v1/profile/signer-info`
+Any authenticated user. Returns the caller's own `Signer` row (full shape, incl. phone/email), or `null` if they've never registered.
+
+### POST `/api/v1/profile/signer-info/save`
+Any authenticated user, but rejected with **403** unless the caller holds at least one designation. Self-service upsert of the caller's own signer contact info — always the SESSION user's own row, never another user's.
+* **Request:** `{ "name": "...", "phone": "9876543210", "email": "..." }` — `phone` must be digits only.
+* **Response (200):** the upserted `Signer`.
+
+### POST `/api/v1/admin/signers/list`
+Requires `process.reviewer`.
+* **Request:** `{}` (or no body) — active signers only, the "Add Signers" picker source. `{ "include_inactive": true }` — every signer regardless of `is_active`, for the directory oversight view.
+* **Response (200):** `Vec<SignerDirectoryEntry>` — `{ signer_id, user_id, name, is_active, created_at, updated_at, updated_by, user_email, designation_codes }`. No `phone`/`email` — see the note above. `designation_codes` is that signer's own currently-held, active designation codes — used client-side to filter/order the "Add Signers" picker against a field's `required_signs_from_designations` (see [Process Templates](#post-apiv1adminprocess-templatessave)).
+
+### POST `/api/v1/admin/signers/set-active`
+Requires `process.reviewer`. There is no delete endpoint — a signer is only ever deactivated, never removed. Deactivating never touches anything already in progress: a `PENDING` requirement already waiting on a deactivated signer is completely unaffected, and they can still complete it — deactivation only stops them from being offered for *new* attachments going forward. Reversible any time by setting `is_active: true` again.
+* **Request:** `{ "signer_id": 3, "is_active": false }`
+
+---
+
+## Document Signatures
+
+A `SignatureRequirement` row tracks ONE (document, signer) pair: `requirement_id`, `document_id`, `signed_document_id`, `process_id`, `template_step_id`, `template_field_id`, `signer_id`, `sign_order`, `provider` (`"manual"` or an external provider name), `status` (`PENDING` or `COMPLETED` — there is no `CANCELLED`, see below), `signed_by`, `signed_at`, plus joined `document_title`/`document_category`/`signer_user_id`/`signer_name`/`signer_email`/`signer_phone`. For a `signyu`-provider row, it also carries `external_document_id`/`external_signer_id` (SignYu's own ids, joined in from `signyu_requirement_links`) and `sign_url` — SignYu's own signing-page link for that signer, so the UI can offer "Open Signing Page" directly instead of the signer having to find SignYu's email. Signing never mutates the original document — it uploads (or, for an external provider, downloads back) a brand-new one and points `signed_document_id` at it.
+
+**Signing order**: `sign_order` is assigned in the order signers were attached (1-based). A requirement is only actionable once every lower-`sign_order` requirement for the same document has been signed (`COMPLETED`) — earlier signers must finish before later ones can act.
+
+**No cancellation**: once a signer is attached, that requirement exists until it's signed — there is no endpoint to cancel or remove it. A required signature is required, full stop. This means a reviewer must get `required_signs_from_designations` and the signer selection right at attach time; there's no undo for a mis-attached signer short of the signer actually signing it.
+
+### POST `/api/v1/admin/process/documents/add-signers`
+Requires `process.reviewer`. Attaches one or more signers (by `signer_id`, from the active signer directory) to a document already submitted into a process field, **in the given array order**. Idempotent per (document, signer).
+* **Request:**
+  ```json
+  {
+    "process_id": "<uuid>", "template_step_id": 8, "template_field_id": 112,
+    "document_id": "<uuid>", "signer_ids": [3, 7],
+    "provider": "manual"
+  }
+  ```
+  `provider` defaults to `"manual"`. `"signyu"` sends the document out via SignYu instead (see below) — rejected with **400** if no `SIGNYU_API_KEY` is configured.
+
+  If the target field declares `required_signs_from_designations`, `signer_ids` is validated
+  against it (**400** on failure): every signer must currently hold one of the listed
+  designations, and their designations' order must be non-decreasing across the array
+  (see [Process Templates](#post-apiv1adminprocess-templatessave)).
+* **Response (200):** `{ "status": "success", "requirements": [SignatureRequirement, ...] }` — only the newly-created rows (already-attached signers are skipped).
+* For `provider: "manual"`, each newly attached signer gets our own email notification. For `"signyu"`, SignYu emails its own signing links directly (no double notification).
+
+### POST `/api/v1/admin/documents/signatures/queue`
+Any authenticated user — no permission gate; the response is self-scoped, so nothing else is needed. `PENDING` requirements where the caller IS the signer AND it's currently their turn (see sign_order above).
+* **Response (200):** `Vec<SignatureRequirement>`.
+
+### POST `/api/v1/admin/documents/signatures/all`
+Requires `process.reviewer`, `process.view`, or `documents.all.manage`. The request body is optional:
+* **Request:** `{}` (or no body) — every requirement regardless of status, used to build the document-list signature lineage (original ↔ signed copy). `{ "document_id": "<uuid>" }` — scoped to just that document's requirements, in `sign_order`.
+* **Response (200):** `Vec<SignatureRequirement>`.
+
+### POST `/api/v1/admin/documents/signatures/replace-upload-url`
+No permission gate — the caller must BE the requirement's own signer (**403** otherwise, checked in the handler). Nobody else, not even `process.reviewer` or super_admin, can act on someone else's requirement — signing is a legal act tied to a specific person. Generates a presigned S3 PUT URL for the signed replacement file. **400** if it isn't this signer's turn yet. **403** if the field declares `required_signs_from_designations` and the signer no longer currently holds one of them (re-checked live, not just at attach time — a designation revoked after attach invalidates the pending requirement).
+* **Request:** `{ "requirement_id": 4, "content_type": "application/pdf" }`
+* **Response (200):** `{ "new_document_id": "<uuid>", "upload_url": "..." }`
+
+### POST `/api/v1/admin/documents/signatures/replace-confirm-upload`
+Same rules as above (re-checked again here too). Marks the requirement `COMPLETED`. Only once EVERY attached signer for the underlying document has signed does the process field actually get repointed at a signed copy (the last signer's) — signing while others are still outstanding just satisfies that one signer's row and keeps the step blocked.
+* **Request:** `{ "requirement_id": 4, "new_document_id": "<uuid>" }`
+* **Response (200):** the updated `SignatureRequirement`.
+
+### POST `/api/v1/admin/documents/signatures/refresh-status`
+Same permission set as `/all`. Manual fallback for the "Refresh Status" button — polls the external provider instead of waiting for its webhook. No-op (`reconciled: false`) for `manual`-provider documents.
+* **Request:** `{ "document_id": "<uuid>" }`
+* **Response (200):** `{ "status": "ok", "reconciled": true|false }`
+
+### POST `/webhooks/signyu`
+Public (no session auth) — SignYu fires this on two events, `signer.signed` and `document.completed`. **Requires `SIGNYU_WEBHOOK_SECRET` to be configured**; a webhook is rejected outright (not just ignored) if:
+* no secret is configured at all (**500** — unverifiable input is untrusted input),
+* the `X-SignSetu-Signature` header is missing (**403**),
+* or the signature doesn't verify (**403**).
+
+The signature is `sha256=<hex>`, an HMAC-SHA256 of the **exact raw request body bytes** (not a re-serialized object) keyed with the webhook's signing secret from the SignYu dashboard — verified via `hmac::Mac::verify_slice` (constant-time). Once verified, we still don't trust the payload's own `status`/`signer`/`signers` fields as authoritative — we only read `documentId` and use it as a signal to re-poll SignYu's `GET /documents/{id}` (the exact same path `/documents/signatures/refresh-status` above uses), so there is only ever one code path that actually writes signature completion state. This also makes the handler naturally idempotent against SignYu's documented retry behavior (a non-2xx response or 10s timeout gets retried with backoff) — a redelivered event just re-polls a document that's already fully reconciled, which is a no-op.
+* **Request headers:** `X-SignSetu-Event: signer.signed|document.completed`, `X-SignSetu-Signature: sha256=<hex>`.
+* **Request body:** `{ "event": "...", "documentId": "...", "status": "...", "occurredAt": "...", "signer": {...}, "signers": [...] }` — see SignYu's Webhooks reference for the full per-signer shape.
+* **Response (200):** `{ "status": "ok" }`, or `{ "status": "ignored" }` if the body had no `documentId`.
+* **400** if the body isn't valid JSON (after the signature already verified).
+
+---
+
+## Pluggable e-signature providers
+
+`provider` on a signature requirement is either `"manual"` (the built-in upload-a-signed-copy flow above, always available) or the name of a registered external provider. Adding a new provider tomorrow means: a new module under `server/file_server/src/signature_providers/`, one new `AppState` field for its client, one new provider-specific correlation table (mirroring `signyu_requirement_links`), and one new arm in the `add-signers` provider dispatch — the shared tables (`document_signature_requirements`, `signature_provider_requests`) never gain provider-specific columns; each provider's own ids/links live in its own table instead.
+
+**SignYu** (https://signyu.com/docs) is the only external provider currently wired up: Aadhaar-based e-signature. Configure via env vars — `SIGNYU_API_KEY` (required to enable it), `SIGNYU_WEBHOOK_SECRET` (optional), `SIGNYU_BASE_URL` (optional, defaults to the real API — override for pointing at a mock server in tests). Every request and response to/from SignYu is logged to `signature_provider_requests`, success or failure.
 
 ---
 

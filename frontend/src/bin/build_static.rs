@@ -5,7 +5,6 @@ use std::path::Path;
 mod views;
 
 fn process_html(html: &str, api_base: &str) -> String {
-    // Completely replace the local development ternary logic with the simple API_BASE constant
     let replacement = format!("const API_BASE = \"{}\";", api_base);
     html.replace(
         "const API_BASE = window.location.port === \"4000\" ? `http://${window.location.hostname}:3000` : \"\";",
@@ -19,11 +18,9 @@ fn main() {
         fs::create_dir(dist_dir).unwrap();
     }
 
-    // Read the production API base URL from the environment, defaulting to relative paths
     let api_base = std::env::var("API_BASE").unwrap_or_else(|_| "".to_string());
     println!("Building static files with API_BASE = '{}'", api_base);
 
-    // index.html redirects to login
     let index_html = r#"<!DOCTYPE html>
 <html>
 <head>

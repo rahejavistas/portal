@@ -830,7 +830,7 @@ async fn test_field_history_preservation() {
     let process_id = exec.process_id;
     drop(exec);
 
-    let loaded_state = process::db::load_state(&mut conn, process_id)
+    let loaded_state = process::db::load_state(&mut conn, process_id, &template)
         .await
         .unwrap();
     let field_state = loaded_state.fields.get(&101).unwrap();
@@ -1221,7 +1221,7 @@ async fn test_turn_logic_full_lifecycle() {
     let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
 
     // T0: Fresh process → User turn (step 1 has user fields)
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
@@ -1262,7 +1262,7 @@ async fn test_turn_logic_full_lifecycle() {
     }
 
     assert_eq!(exec.status(2), StepStatus::PendingReview);
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1274,7 +1274,7 @@ async fn test_turn_logic_full_lifecycle() {
     assert_eq!(exec.status(2), StepStatus::Completed);
     assert_eq!(exec.status(7), StepStatus::Open);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1293,7 +1293,7 @@ async fn test_turn_logic_full_lifecycle() {
     .unwrap();
     assert_eq!(exec.status(7), StepStatus::PendingReview);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1305,7 +1305,7 @@ async fn test_turn_logic_full_lifecycle() {
     assert_eq!(exec.status(7), StepStatus::Completed);
     assert_eq!(exec.status(8), StepStatus::Open);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1327,7 +1327,7 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(exec.status(9), StepStatus::Open);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
@@ -1353,7 +1353,7 @@ async fn test_turn_logic_full_lifecycle() {
     .unwrap();
     assert_eq!(exec.status(9), StepStatus::PendingReview);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1363,7 +1363,7 @@ async fn test_turn_logic_full_lifecycle() {
         .await
         .unwrap();
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1385,7 +1385,7 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(exec.status(10), StepStatus::Completed);
 
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::None);
@@ -1458,7 +1458,7 @@ async fn test_revoke_resubmit_turn_and_note_content() {
     assert_eq!(exec.status(7), StepStatus::Locked);
 
     // Turn should be User now (step 3 has user fields)
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::User);
@@ -1524,7 +1524,7 @@ async fn test_revoke_resubmit_turn_and_note_content() {
 
     // Step 1 should be PendingReview again → Admin turn
     assert_eq!(exec.status(2), StepStatus::PendingReview);
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
@@ -1609,7 +1609,7 @@ async fn test_access_control_and_cross_document_usage() {
         .unwrap();
 
     // Verify both saved successfully
-    let state = process::db::load_state(&mut *exec_a.conn, process_a_id)
+    let state = process::db::load_state(&mut *exec_a.conn, process_a_id, &template)
         .await
         .unwrap();
     assert_eq!(
@@ -1763,7 +1763,7 @@ async fn test_comprehensive_failure_cases() {
     .unwrap();
 
     assert_eq!(exec.status(7), StepStatus::PendingReview);
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id)
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);

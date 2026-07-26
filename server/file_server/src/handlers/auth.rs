@@ -242,3 +242,54 @@ pub async fn profile(
             .into_response(),
     }
 }
+
+/// POST /api/v1/profile/signer-info
+/// Self-service: the caller's own signer directory entry, if any (`null` if they've
+/// never filled it in).
+pub async fn get_signer_info(
+    State(state): State<AppState>,
+    crate::extractors::SessionUser(user): crate::extractors::SessionUser,
+) -> impl IntoResponse {
+    match state
+        .document_manager
+        .get_signer_by_user_id(user.user_id)
+        .await
+    {
+        Ok(signer) => (StatusCode::OK, Json(signer)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(e)).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveSignerInfoPayload {
+    pub name: String,
+    pub phone: String,
+    pub email: String,
+}
+
+/// POST /api/v1/profile/signer-info/save
+/// Self-service: eligible to anyone holding at least one designation — there's no
+/// dedicated signing permission. A plain resident (no designation at all) can't
+/// register.
+pub async fn save_signer_info(
+    State(state): State<AppState>,
+    crate::extractors::SessionUser(user): crate::extractors::SessionUser,
+    Json(payload): Json<SaveSignerInfoPayload>,
+) -> impl IntoResponse {
+    if !user.has_any_designation() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json("You must hold a designation to register as a signer".to_string()),
+        )
+            .into_response();
+    }
+
+    match state
+        .document_manager
+        .upsert_own_signer_info(user.user_id, &payload.name, &payload.phone, &payload.email)
+        .await
+    {
+        Ok(signer) => (StatusCode::OK, Json(signer)).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(e)).into_response(),
+    }
+}

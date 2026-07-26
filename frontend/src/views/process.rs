@@ -446,7 +446,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             border-radius: var(--radius-lg);
             width: 100%;
             max-width: 500px;
+            max-height: 90vh;
+            overflow-y: auto;
             padding: 24px;
+            box-sizing: border-box;
             position: relative;
         }
         .close-modal-btn {
@@ -1045,6 +1048,32 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         </div>
     </div>
 
+    <div class="modal-overlay" id="add-signers-modal" style="z-index:10011;" onclick="if (event.target === this) closeAddSignersModal()">
+        <div class="modal-content" style="max-width: 680px;">
+            <h3 style="margin-top:0; margin-bottom:8px; font-size:18px;">Add Signers</h3>
+            <p id="add-signers-intro" style="margin-top:0; margin-bottom:16px; color:var(--muted-foreground); font-size:13px;"></p>
+
+            <div id="add-signers-slots-panel" style="display:none;"></div>
+
+            <div id="add-signers-freeform-panel" style="display:none; gap:16px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:220px;">
+                    <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Available</div>
+                    <div id="add-signers-available" style="border:1px solid var(--border); border-radius:8px; max-height:280px; overflow-y:auto;"></div>
+                </div>
+                <div style="flex:1; min-width:220px;">
+                    <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Selected (signing order)</div>
+                    <div id="add-signers-selected" style="border:1px solid var(--border); border-radius:8px; max-height:280px; overflow-y:auto;"></div>
+                </div>
+            </div>
+
+            <div class="feedback-box" id="add-signers-feedback" style="margin-top:12px; display:none;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button type="button" class="btn btn-secondary" onclick="closeAddSignersModal()">Cancel</button>
+                <button type="button" id="add-signers-submit-btn" class="btn" onclick="submitAddSigners()">Add Signers</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let _confirmResolve = null;
         function showConfirm(message, okLabel) {
@@ -1175,6 +1204,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const templatesLink = (user && user.can_manage_process_templates)
                     ? `<a href="/admin?tab=templates" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
                     : '';
+                const signaturesLink = (user && ((user.designations && user.designations.some(d => d !== 'super_admin')) || user.can_review_process))
+                    ? `<a href="/admin?tab=signatures" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
+                    : '';
                 const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
@@ -1193,6 +1225,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         ${documentsLink}
                         ${rolesLink}
                         ${templatesLink}
+                        ${signaturesLink}
                         ${processesLink}
                         ${otherProcessLink}
                         ${myFlatDashboardLink}
@@ -1700,30 +1733,28 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     }
                 }
 
+                const signatureStatuses = (f.signature_status || []).slice().sort((a, b) => a.sign_order - b.sign_order);
+                const hasPendingSignature = signatureStatuses.some(s => s.status === 'PENDING');
+
                 if (type === 'document') {
-                    const history = f.history || [];
-                    let allDocs = [];
-                    if (val.document_id) allDocs.push({ document_id: val.document_id, document_title: val.document_title, updated_at: val.updated_at });
-                    for (const h of history) {
-                        if (h.document_id) allDocs.push(h);
-                    }
-
-                    const uniqueDocs = [];
-                    const seenIds = new Set();
-                    for (const doc of allDocs) {
-                        if (!seenIds.has(doc.document_id)) {
-                            seenIds.add(doc.document_id);
-                            uniqueDocs.push(doc);
-                        }
-                    }
-
-                    if (uniqueDocs.length > 0) {
-                        inputHtml = uniqueDocs.map(doc => `
+                    const awaitingSignatureSetup = f.requires_signature && signatureStatuses.length === 0 && !!val.document_id;
+                    const pendingReqForCurrentUser = signatureStatuses.find(s => s.status === 'PENDING' && s.signer_user_id === (user && user.user_id));
+                    if (pendingReqForCurrentUser) {
+                        inputHtml = `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
-                                <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(doc.document_title || 'File')}</span>
-                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="downloadProcessDoc('${escapeHtml(doc.document_id)}')">Download</button>
+                                <span style="font-weight: 600; flex: 1; min-width: 0;">Document awaiting your signature</span>
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="viewPendingSignatureDocument(${pendingReqForCurrentUser.requirement_id})">View Document</button>
                             </div>
-                        `).join('');
+                        `;
+                    } else if ((hasPendingSignature || awaitingSignatureSetup) && !isCurrentAdmin) {
+                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">Submitted — under review</span>`;
+                    } else if (val.document_id) {
+                        inputHtml = `
+                            <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
+                                <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(val.document_title || 'File')}</span>
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="downloadProcessDoc('${escapeHtml(val.document_id)}')">Download</button>
+                            </div>
+                        `;
                     } else {
                         inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">No document uploaded yet</span>`;
                     }
@@ -1763,12 +1794,39 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin${visibilityNote}</div>`;
                 }
 
+                const stepIsOpen = stepStatus === 'OPEN' || parentStatus === 'OPEN';
+
+                let signatureBadgeHtml = '';
+                if (isCurrentAdmin && signatureStatuses.length > 0) {
+                    if (hasPendingSignature) {
+                        const parts = signatureStatuses.map(s =>
+                            `#${s.sign_order} ${escapeHtml(s.signer_name)}${s.status === 'COMPLETED' ? ' ✓' : ''}`
+                        ).join(', ');
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEF3C7; color:#92400E;">Awaiting signature: ${parts}</span>`;
+                    } else {
+                        const parts = signatureStatuses.map(s => `#${s.sign_order} ${escapeHtml(s.signer_name)}`).join(', ');
+                        signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#DCFCE7; color:#166534;">&check; Signed: ${parts}</span>`;
+                    }
+                } else if (isCurrentAdmin && f.requires_signature && val.document_id && stepIsOpen) {
+                    signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEE2E2; color:#991B1B;">Requires signature — no signers attached yet</span>`;
+                }
+
+                let addSignersHtml = '';
+                if (isCurrentAdmin && type === 'document' && val.document_id && f.requires_signature && stepIsOpen) {
+                    if (signatureStatuses.length === 0) {
+                        addSignersHtml = `<button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:6px 12px; margin-left:8px;" onclick="openAddSignersModal(${stepId}, ${fieldId}, '${escapeHtml(val.document_id)}', ${escapeHtml(JSON.stringify(f.required_signs_from_designations || []))})">Add Signers</button>`;
+                    } else {
+                        addSignersHtml = `<button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:6px 12px; margin-left:8px;" onclick="refreshSignatureStatus('${escapeHtml(val.document_id)}')">Refresh Status</button>`;
+                    }
+                }
+
                 html += `
                     <div class="field-row" style="padding: 16px; background-color: #F8FAFC; border-radius: var(--radius-lg); border: 1px solid var(--border); margin-bottom: 12px;">
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
                         ${filledByHtml}
+                        ${(signatureBadgeHtml || addSignersHtml) ? `<div>${signatureBadgeHtml}${addSignersHtml}</div>` : ''}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
                         ${historyHtml}
                     </div>
@@ -2020,9 +2078,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
                 const rejectOnClick = isCompleted ? `submitAdminRevoke(${stepId})` : `submitAdminReview(${stepId}, false)`;
                 const approveOnClick = `submitAdminReview(${stepId}, true)`;
-                const approveButtonLabel = isCompleted ? 'Approved' : 'Approve Step';
-                const approveButtonClass = isCompleted ? 'btn btn-secondary' : 'btn';
-                const approveDisabled = isCompleted ? 'disabled' : '';
+                const approveButtonHtml = isCompleted ? '' : `<button class="btn" onclick="${approveOnClick}">Approve Step</button>`;
 
 
                 html += `
@@ -2038,7 +2094,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                             </button>
                             <div class="admin-action-primary">
                                 <button class="btn btn-danger" onclick="${rejectOnClick}">${rejectButtonLabel}</button>
-                                <button class="${approveButtonClass}" ${approveDisabled} onclick="${approveOnClick}">${approveButtonLabel}</button>
+                                ${approveButtonHtml}
                             </div>
                         </div>
                     </div>
@@ -2046,6 +2102,191 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
 
             contentPanel.innerHTML = html;
+        }
+
+        let addSignersContext = null;
+        let addSignersSelectedOrder = [];
+        let addSignersSlotSelections = [];
+        let activeSignersCache = null;
+
+        async function openAddSignersModal(stepId, fieldId, documentId, requiredDesignations) {
+            addSignersContext = { stepId, fieldId, documentId, requiredDesignations: requiredDesignations || [] };
+            addSignersSelectedOrder = [];
+            addSignersSlotSelections = (requiredDesignations || []).map(() => '');
+            const feedback = document.getElementById('add-signers-feedback');
+            feedback.style.display = 'none';
+            feedback.textContent = '';
+
+            const usingSlots = (requiredDesignations || []).length > 0;
+            document.getElementById('add-signers-intro').textContent = usingSlots
+                ? 'Pick the persons for signing for each required designation'
+                : 'Move signers to the right in the order they should sign. Each waits for the one before them to complete.';
+            document.getElementById('add-signers-slots-panel').style.display = usingSlots ? 'block' : 'none';
+            document.getElementById('add-signers-freeform-panel').style.display = usingSlots ? 'none' : 'flex';
+
+            document.getElementById('add-signers-slots-panel').innerHTML = '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">Loading signers...</p>';
+            document.getElementById('add-signers-available').innerHTML = '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">Loading signers...</p>';
+            document.getElementById('add-signers-selected').innerHTML = '';
+            document.getElementById('add-signers-modal').style.display = 'flex';
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/signers/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                activeSignersCache = resp.ok ? await resp.json() : [];
+            } catch (e) {
+                activeSignersCache = [];
+            }
+            renderAddSignersList();
+        }
+
+        function closeAddSignersModal() {
+            document.getElementById('add-signers-modal').style.display = 'none';
+            addSignersContext = null;
+            addSignersSelectedOrder = [];
+            addSignersSlotSelections = [];
+        }
+
+        function addSignerToSelected(signerId) {
+            if (!addSignersSelectedOrder.includes(signerId)) addSignersSelectedOrder.push(signerId);
+            renderAddSignersList();
+        }
+
+        function removeSignerFromSelected(index) {
+            addSignersSelectedOrder.splice(index, 1);
+            renderAddSignersList();
+        }
+
+        function moveSignerInSelected(index, delta) {
+            const target = index + delta;
+            if (target < 0 || target >= addSignersSelectedOrder.length) return;
+            const tmp = addSignersSelectedOrder[index];
+            addSignersSelectedOrder[index] = addSignersSelectedOrder[target];
+            addSignersSelectedOrder[target] = tmp;
+            renderAddSignersList();
+        }
+
+        function setAddSignersSlot(slotIndex, signerIdStr) {
+            addSignersSlotSelections[slotIndex] = signerIdStr ? Number(signerIdStr) : '';
+            renderAddSignersList();
+        }
+
+        function renderAddSignersList() {
+            const requiredDesignations = (addSignersContext && addSignersContext.requiredDesignations) || [];
+
+            if (requiredDesignations.length > 0) {
+                renderAddSignersSlots(requiredDesignations);
+                return;
+            }
+
+            const availableEl = document.getElementById('add-signers-available');
+            const selectedEl = document.getElementById('add-signers-selected');
+            if (!activeSignersCache || activeSignersCache.length === 0) {
+                availableEl.innerHTML = '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No eligible signers yet. They need to hold a designation and fill in their contact info on their Profile page.</p>';
+                selectedEl.innerHTML = '';
+                return;
+            }
+            const available = activeSignersCache.filter(s => !addSignersSelectedOrder.includes(s.signer_id));
+            availableEl.innerHTML = available.length > 0 ? available.map(s => `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; cursor:pointer; border-bottom:1px solid var(--border);" onclick="addSignerToSelected(${s.signer_id})">
+                    <span style="font-size:13px;">${escapeHtml(s.name)}</span>
+                    <span style="font-weight:800; color:var(--primary);">+</span>
+                </div>
+            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No more eligible signers to add.</p>';
+
+            selectedEl.innerHTML = addSignersSelectedOrder.length > 0 ? addSignersSelectedOrder.map((id, i) => {
+                const s = activeSignersCache.find(x => x.signer_id === id) || { name: `#${id}` };
+                return `
+                    <div style="display:flex; align-items:center; gap:4px; padding:8px 10px; border-bottom:1px solid var(--border); flex-wrap:wrap;">
+                        <span style="font-weight:800; width:16px; font-size:12px;">${i + 1}.</span>
+                        <span style="flex:1; min-width:80px; font-size:13px;">${escapeHtml(s.name)}</span>
+                        <button type="button" class="btn btn-secondary" style="font-size:13px; padding:8px 12px; min-width:36px;" ${i === 0 ? 'disabled' : ''} onclick="moveSignerInSelected(${i}, -1)" title="Move earlier">&uarr;</button>
+                        <button type="button" class="btn btn-secondary" style="font-size:13px; padding:8px 12px; min-width:36px;" ${i === addSignersSelectedOrder.length - 1 ? 'disabled' : ''} onclick="moveSignerInSelected(${i}, 1)" title="Move later">&darr;</button>
+                        <button type="button" class="btn btn-secondary" style="font-size:13px; padding:8px 12px; min-width:36px;" onclick="removeSignerFromSelected(${i})">&times;</button>
+                    </div>
+                `;
+            }).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No signers selected yet.</p>';
+        }
+
+        function renderAddSignersSlots(requiredDesignations) {
+            const panel = document.getElementById('add-signers-slots-panel');
+            if (!activeSignersCache || activeSignersCache.length === 0) {
+                panel.innerHTML = '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No eligible signers yet. They need to hold a designation and fill in their contact info on their Profile page.</p>';
+                return;
+            }
+            panel.innerHTML = requiredDesignations.map((code, i) => {
+                const takenElsewhere = addSignersSlotSelections.filter((v, j) => j !== i && v !== '');
+                const eligible = activeSignersCache.filter(s =>
+                    (s.designation_codes || []).includes(code) && !takenElsewhere.includes(s.signer_id)
+                );
+                const selectedValue = addSignersSlotSelections[i] || '';
+                return `
+                    <div style="display:flex; align-items:center; gap:10px; padding:10px 0; flex-wrap:wrap;">
+                        <span style="font-weight:800; width:18px; font-size:13px; flex-shrink:0;">${i + 1}.</span>
+                        <span style="min-width:100px; font-size:16px; font-weight:600; color:var(--foreground); flex-shrink:0;">${escapeHtml(code)}</span>
+                        <select style="flex:1; min-width:180px; padding:10px 8px; font-size:14px;" onchange="setAddSignersSlot(${i}, this.value)">
+                            <option value="">— Select signer —</option>
+                            ${eligible.map(s => `<option value="${s.signer_id}" ${selectedValue === s.signer_id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                        </select>
+                    </div>
+                `;
+            }).join('') || '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">This field has no designation requirements configured.</p>';
+        }
+
+        async function submitAddSigners() {
+            const feedback = document.getElementById('add-signers-feedback');
+            const requiredDesignations = (addSignersContext && addSignersContext.requiredDesignations) || [];
+            const signerIds = requiredDesignations.length > 0
+                ? addSignersSlotSelections.filter(v => v !== '')
+                : addSignersSelectedOrder;
+
+            if (signerIds.length === 0) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Select at least one signer.';
+                return;
+            }
+            const btn = document.getElementById('add-signers-submit-btn');
+            btn.disabled = true;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process/documents/add-signers`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        process_id: currentProcessDetails.process_id,
+                        template_step_id: addSignersContext.stepId,
+                        template_field_id: addSignersContext.fieldId,
+                        document_id: addSignersContext.documentId,
+                        signer_ids: signerIds
+                    })
+                });
+                if (resp.ok) {
+                    closeAddSignersModal();
+                    await viewProcessDetail(currentProcessDetails.process_id);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = await readErrorMessage(resp);
+                }
+            } catch (e) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Network error communicating with server.';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function refreshSignatureStatus(documentId) {
+            try {
+                await fetch(`${API_BASE}/api/v1/admin/documents/signatures/refresh-status`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_id: documentId })
+                });
+            } catch (e) {}
+            await viewProcessDetail(currentProcessDetails.process_id);
         }
 
         async function downloadProcessDoc(documentId) {
@@ -2101,10 +2342,33 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
+        async function viewPendingSignatureDocument(requirementId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/document-download-url`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requirement_id: requirementId })
+                });
+                if (!response.ok) {
+                    const errText = await readErrorMessage(response);
+                    showAlert(`Failed to open document: ${errText}`);
+                    return;
+                }
+                const data = await response.json();
+                if (data.download_url) {
+                    window.open(data.download_url, '_blank');
+                } else {
+                    showAlert('No download link returned by server.');
+                }
+            } catch (e) {
+                showAlert('Connection error while fetching the document.');
+            }
+        }
+
         async function uploadFieldDocument(stepId, fieldId) {
             const fileInput = document.getElementById(`file-input-${fieldId}`);
             const progressEl = document.getElementById(`upload-progress-${fieldId}`);
-            
+
             if (fileInput.files.length === 0) return;
             const file = fileInput.files[0];
 
@@ -2679,7 +2943,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
         }
 
-        loadProcesses();
+        loadProcesses().then(() => {
+            const deepLinkProcessId = new URLSearchParams(window.location.search).get('process_id');
+            if (deepLinkProcessId) {
+                viewProcessDetail(deepLinkProcessId);
+            }
+        });
     </script>
 
     <div id="docPickerModal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; padding: 16px; box-sizing: border-box;">

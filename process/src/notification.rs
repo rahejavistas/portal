@@ -42,6 +42,32 @@ async fn dispatch(to: &str, subject: String, body: String, process_id: Uuid) {
 //   3. Admin revokes/reopens → user needs to act
 // ---------------------------------------------------------------------------
 
+/// Notify a signer that a document was just attached to them for signature. Unlike the
+/// other functions here, the recipient is a specific signer (not derived from
+/// `NotificationContext`), so it's passed in directly — this function stays DB-free
+/// like the rest of this module.
+pub async fn notify_signature_queue(
+    signer_email: &str,
+    process_name: &str,
+    step_name: &str,
+    document_title: &str,
+    process_id: Uuid,
+) {
+    let subject = format!("[{}] Document Awaiting Your Signature", process_name);
+    let body = format!(
+        "Hello,\n\n\
+         A document requires your signature.\n\n\
+         Document: {}\n\
+         Step: {}\n\
+         Process: {}\n\
+         Process ID: {}\n\n\
+         Please log in to the Raheja Vistas portal to review and sign.\n",
+        document_title, step_name, process_name, process_id,
+    );
+
+    dispatch(signer_email, subject, body, process_id).await;
+}
+
 /// Notify admin that a step has been submitted and is pending review.
 pub async fn notify_admin_pending_review(
     ctx: &NotificationContext,

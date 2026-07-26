@@ -176,7 +176,7 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
 }
 
 /// Requires the caller to hold at least one permission in `required`.
-pub fn require_permission<B>(
+pub fn require_any_of<B>(
     required: &'static [authentication::Permission],
 ) -> impl Fn(
     crate::extractors::SessionUser,

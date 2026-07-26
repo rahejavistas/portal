@@ -721,7 +721,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             display: flex; flex-direction: column; gap: 16px; border-top: 1px solid var(--border); padding-top: 16px;
         }
         .field-row {
-            display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+            display: flex; flex-direction: column; gap: 10px;
             padding: 14px; background-color: #F8FAFC; border-radius: var(--radius-md);
         }
         .field-row input[type="text"], .field-row select {
@@ -770,6 +770,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     </button>
                     <button class="nav-item" id="suite-btn-templates" style="display:none;" onclick="switchSuite('templates'); closeSidebar()">
                         Process Templates
+                    </button>
+                    <button class="nav-item" id="suite-btn-signatures" style="display:none;" onclick="switchSuite('signatures'); closeSidebar()">
+                        Signatures
                     </button>
                     <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
                         Processes
@@ -1108,7 +1111,51 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     </div>
                 </div>
             </section>
+
+            <section class="suite-panel" id="suite-signatures">
+                <h2>Signatures</h2>
+                <div class="card" id="signing-queue-card" style="display:none;">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Signing Queue</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Documents currently waiting on your signature.</p>
+                    <div class="table-container">
+                        <table>
+                            <tbody id="signature-queue-rows-target">
+                                <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card" id="signer-directory-card" style="display:none;">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Signer Directory</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Users eligible to be attached as a signer. <button type="button" class="perm-info-btn" onclick="showSignerActionsInfo()" aria-label="What do Deactivate and Delete do?">i</button></p>
+                    <div class="table-container">
+                        <table>
+                            <tbody id="signer-directory-rows-target">
+                                <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
         </main>
+    </div>
+
+    <div id="sign-document-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center; padding:16px; box-sizing:border-box;" onclick="if (event.target === this) closeSignDocumentModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(420px, 92vw); max-height:90vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Sign Document</h3>
+            <p id="sign-document-title" style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:4px;"></p>
+            <p id="sign-document-designation" style="color:var(--muted-foreground); font-size:12px; margin-top:0; margin-bottom:16px;"></p>
+            <input type="hidden" id="sign-document-requirement-id">
+            <div class="form-group">
+                <label for="sign-document-file">Signed File</label>
+                <input type="file" id="sign-document-file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="padding: 8px; width: 100%; background-color: var(--muted);">
+            </div>
+            <div class="feedback-box" id="sign-document-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSignDocumentModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="sign-document-submit-btn" class="submit-btn" style="width:auto; margin:0;" onclick="submitSignDocument()">Upload &amp; Sign</button>
+            </div>
+        </div>
     </div>
 
     <div id="template-builder-modal" class="builder-overlay">
@@ -1196,7 +1243,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
     <div id="manage-category-access-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
         <div style="background:var(--background); padding:28px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="manage-category-access-title" style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px; word-break:break-word;">Category Access</h3>
-            <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Read lets this designation view documents in a category. Manage adds upload, sign, and delete.</p>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Read lets this designation view documents in a category. Manage adds upload and delete.</p>
 
             <div id="manage-category-access-warning" style="display:none; background:#FFFBEB; color:#B45309; border:1px solid #FDE68A; border-radius:8px; padding:10px 12px; font-size:13px; line-height:1.5; margin-bottom:16px;"></div>
 
@@ -1223,6 +1270,26 @@ pub(crate) const ADMIN_HTML: &str = r#"
             <p id="perm-info-desc" style="color:var(--muted-foreground); font-size:14px; line-height:1.5; margin-bottom:20px;"></p>
             <div style="display:flex; justify-content:flex-end;">
                 <button onclick="closePermInfoModal()" style="box-sizing:border-box; height:38px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="designation-picker-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10002; justify-content:center; align-items:center; padding:16px; box-sizing:border-box;" onclick="if (event.target === this) closeDesignationPicker()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(680px, 92vw); max-height:90vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:6px; color:var(--foreground); font-size:16px;">Eligible Signer Designations</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Leave empty for no restriction.</p>
+            <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:240px;">
+                    <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Available</div>
+                    <div id="designation-picker-available" style="border:1px solid var(--border); border-radius:8px; max-height:280px; overflow-y:auto;"></div>
+                </div>
+                <div style="flex:1; min-width:240px;">
+                    <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Selected (signing order)</div>
+                    <div id="designation-picker-selected" style="border:1px solid var(--border); border-radius:8px; max-height:280px; overflow-y:auto;"></div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button onclick="closeDesignationPicker()" style="box-sizing:border-box; height:40px; padding:0 20px; font-size:14px; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Done</button>
             </div>
         </div>
     </div>
@@ -1446,6 +1513,12 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const templatesBtn = document.getElementById('suite-btn-templates');
             if (templatesBtn) templatesBtn.style.display = 'block';
         }
+        const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
+        const canManageSignerDirectory = !!(user && user.can_review_process);
+        if (canSignDocuments || canManageSignerDirectory) {
+            const signaturesBtn = document.getElementById('suite-btn-signatures');
+            if (signaturesBtn) signaturesBtn.style.display = 'block';
+        }
         let defaultRolesSubtab = 'user-designations';
         if (canManageRoles || canManageDesignations || canViewRoles) {
             const rolesBtn = document.getElementById('suite-btn-roles');
@@ -1498,7 +1571,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             workflowsBtn.href = '/admin-process';
             workflowsBtn.textContent = 'Process Review';
         }
-        const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : null));
+        const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : ((canSignDocuments || canManageSignerDirectory) ? 'signatures' : null)));
 
         if (!token || !user) {
             localStorage.clear();
@@ -1632,6 +1705,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             switchSuite('residents');
         } else if (initialTab === 'templates' && canManageProcessTemplates) {
             switchSuite('templates');
+        } else if (initialTab === 'signatures' && (canSignDocuments || canManageSignerDirectory)) {
+            switchSuite('signatures');
         } else if (defaultSuite) {
             switchSuite(defaultSuite);
         }
@@ -1649,6 +1724,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             if (rolesPanel) rolesPanel.style.display = suiteName === 'roles' ? 'block' : 'none';
             const templatesPanel = document.getElementById('suite-templates');
             if (templatesPanel) templatesPanel.style.display = suiteName === 'templates' ? 'block' : 'none';
+            const signaturesPanel = document.getElementById('suite-signatures');
+            if (signaturesPanel) signaturesPanel.style.display = suiteName === 'signatures' ? 'block' : 'none';
 
             if (suiteName === 'documents') {
                 switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
@@ -1657,6 +1734,15 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 loadRolesData();
             } else if (suiteName === 'templates') {
                 loadProcessTemplates();
+            } else if (suiteName === 'signatures') {
+                if (canSignDocuments) {
+                    document.getElementById('signing-queue-card').style.display = 'block';
+                    loadSignatureQueue();
+                }
+                if (canManageSignerDirectory) {
+                    document.getElementById('signer-directory-card').style.display = 'block';
+                    loadSignerDirectory();
+                }
             }
         }
 
@@ -1930,7 +2016,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         const PERMISSION_ORDER = [
             'users.view', 'users.manage', 'users.roles.view', 'users.roles.manage',
             'designations.manage', 'documents.all.manage', 'documents.categories.manage',
-            'process.view', 'process.reviewer',
+            'process.view', 'process.reviewer', 'process.templates.manage',
         ];
         const PERMISSION_INFO = {
             'users.view': { title: 'View Residents', desc: 'View all residents.' },
@@ -1951,6 +2037,16 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 return i === -1 ? PERMISSION_ORDER.length : i;
             };
             return [...permissions].sort((a, b) => rank(a.code) - rank(b.code));
+        }
+
+        function showSignerActionsInfo() {
+            document.getElementById('perm-info-title').textContent = 'Deactivate';
+            document.getElementById('perm-info-desc').innerHTML =
+                'Deactivate only stops this person from being offered in "Add Signers" going forward. ' +
+                'It does not touch anything already in progress — any signature requirement already waiting on ' +
+                'them stays exactly as-is, and they can still complete it.' +
+                '<br><br>Reversible any time via Activate.';
+            document.getElementById('perm-info-modal').style.display = 'flex';
         }
 
         function showPermInfo(code) {
@@ -2061,7 +2157,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
 
         function emptyField() {
-            return { name: '', type: 'document', is_optional: false, filled_by: 'user' };
+            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [] };
         }
         function emptyStage() {
             return { name: 'New Stage', description: '', is_optional: false, is_review_required: true, fields: null, substeps: [emptySubstep()] };
@@ -2074,6 +2170,10 @@ pub(crate) const ADMIN_HTML: &str = r#"
             document.getElementById('template-builder-modal').style.display = 'flex';
             document.getElementById('builder-feedback').textContent = '';
 
+            if (allDesignations.length === 0) {
+                await loadNonSystemDesignations();
+            }
+
             if (versionId) {
                 try {
                     const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/get-version`, {
@@ -2085,7 +2185,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     builderState = { template_id: templateId, name: tree.name, description: tree.description,
                         is_optional: tree.is_optional, is_review_required: tree.is_review_required,
                         fields: null, substeps: (tree.substeps || []).map(stageFromServer) };
-                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a NEW version`;
+                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a new version, which you'll need to activate before residents start using it`;
                 } catch (err) {
                     builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
                 }
@@ -2114,7 +2214,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             };
         }
         function fieldFromServer(f) {
-            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by };
+            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [] };
         }
 
         function closeTemplateBuilder() {
@@ -2155,6 +2255,82 @@ pub(crate) const ADMIN_HTML: &str = r#"
             renderBuilderStageDetail();
         }
 
+let designationPickerField = null;
+
+function openDesignationPicker(field) {
+            designationPickerField = field;
+            field.required_signs_from_designations = field.required_signs_from_designations || [];
+            renderDesignationPickerModal();
+            document.getElementById('designation-picker-modal').style.display = 'flex';
+        }
+
+        function closeDesignationPicker() {
+            document.getElementById('designation-picker-modal').style.display = 'none';
+            designationPickerField = null;
+            renderBuilderStageDetail();
+        }
+
+        function addDesignationToPicker(code) {
+            const list = designationPickerField.required_signs_from_designations;
+            if (!list.includes(code)) list.push(code);
+            renderDesignationPickerModal();
+        }
+
+        function removeDesignationFromPicker(index) {
+            designationPickerField.required_signs_from_designations.splice(index, 1);
+            renderDesignationPickerModal();
+        }
+
+        function moveDesignationInPicker(index, delta) {
+            const list = designationPickerField.required_signs_from_designations;
+            const target = index + delta;
+            if (target < 0 || target >= list.length) return;
+            const tmp = list[index];
+            list[index] = list[target];
+            list[target] = tmp;
+            renderDesignationPickerModal();
+        }
+
+        function renderDesignationPickerModal() {
+            const selected = designationPickerField.required_signs_from_designations || [];
+            const available = allDesignations.filter(d => d.code !== 'super_admin' && !selected.includes(d.code));
+
+            const availableList = document.getElementById('designation-picker-available');
+            availableList.innerHTML = available.length > 0 ? available.map(d => `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; cursor:pointer; border-bottom:1px solid var(--border);" onclick="addDesignationToPicker('${escapeHtml(d.code)}')">
+                    <span style="font-size:13px;">${escapeHtml(d.label)}</span>
+                    <span style="font-weight:800; color:var(--primary);">+</span>
+                </div>
+            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No more designations to add.</p>';
+
+            const selectedList = document.getElementById('designation-picker-selected');
+            selectedList.innerHTML = selected.length > 0 ? selected.map((code, i) => {
+                const label = (allDesignations.find(d => d.code === code) || {}).label || code;
+                return `
+                    <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--border);">
+                        <span style="font-weight:800; width:18px; font-size:13px;">${i + 1}.</span>
+                        <span style="flex:1; font-size:13px;">${escapeHtml(label)}</span>
+                        <button type="button" class="action-select" style="cursor:pointer; padding:2px 8px;" ${i === 0 ? 'disabled' : ''} onclick="moveDesignationInPicker(${i}, -1)" title="Move earlier">&uarr;</button>
+                        <button type="button" class="action-select" style="cursor:pointer; padding:2px 8px;" ${i === selected.length - 1 ? 'disabled' : ''} onclick="moveDesignationInPicker(${i}, 1)" title="Move later">&darr;</button>
+                        <button type="button" class="del-action-btn" onclick="removeDesignationFromPicker(${i})">Remove</button>
+                    </div>
+                `;
+            }).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No restriction — any registered signer can be picked.</p>';
+        }
+
+        function renderFieldDesignationSummary(field, onchangePrefix) {
+            const selected = field.required_signs_from_designations || [];
+            const summary = selected.length > 0
+                ? selected.map((code, i) => `${i + 1}. ${(allDesignations.find(d => d.code === code) || {}).label || code}`).join(', ')
+                : 'No restriction';
+            return `
+                <div class="field-row-meta" style="margin-top:6px; align-items:center;">
+                    <span style="font-size:11px; color:var(--muted-foreground);">Eligible signers: ${escapeHtml(summary)}</span>
+                    <button type="button" class="action-select" style="cursor:pointer;" onclick="openDesignationPicker(${onchangePrefix})">Configure</button>
+                </div>
+            `;
+        }
+
         function renderFieldRow(field, onchangePrefix) {
             const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
             return `
@@ -2165,15 +2341,17 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <option value="document" ${field.type === 'document' ? 'selected' : ''}>Document</option>
                             <option value="text" ${field.type === 'text' ? 'selected' : ''}>Text</option>
                         </select>
-                        <select onchange="${onchangePrefix}.filled_by=this.value">
+                        <select onchange="${onchangePrefix}.filled_by=this.value; if (this.value !== 'admin') { ${onchangePrefix}.requires_signature = false; ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();">
                             <option value="user" ${field.filled_by === 'user' ? 'selected' : ''}>Filled by Resident</option>
                             <option value="admin" ${field.filled_by === 'admin' ? 'selected' : ''}>Filled by Admin</option>
                         </select>
                     </div>
                     <div class="field-row-meta">
                         <label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>
+                        ${(field.type === 'document' && field.filled_by === 'admin') ? `<label class="field-check-label"><input type="checkbox" ${field.requires_signature ? 'checked' : ''} onchange="${onchangePrefix}.requires_signature=this.checked; if (!this.checked) { ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();"> Requires signature</label>` : ''}
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>
+                    ${(field.type === 'document' && field.filled_by === 'admin' && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
                 </div>
             `;
         }
@@ -2334,7 +2512,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                                     <span style="font-size:12px; color:var(--muted-foreground);">${f.type === 'document' ? 'Document' : 'Text'}</span>
                                     <span style="font-size:12px; color:var(--muted-foreground);">Filled by ${f.filled_by === 'admin' ? 'Admin' : 'Resident'}</span>
                                 </div>
-                                ${f.is_optional ? '<div class="field-row-meta"><span class="field-check-label" style="cursor:default;">Optional</span></div>' : ''}
+                                ${(f.is_optional || f.requires_signature) ? `<div class="field-row-meta">${f.is_optional ? '<span class="field-check-label" style="cursor:default;">Optional</span>' : ''}${f.requires_signature ? '<span class="field-check-label" style="cursor:default;">Requires signature</span>' : ''}</div>` : ''}
                             </div>
                         `).join('')}
                     </div>
@@ -2351,6 +2529,201 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     ${substepsHtml}
                 </div>
             `;
+        }
+
+        async function loadSignatureQueue() {
+            const tbody = document.getElementById('signature-queue-rows-target');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/queue`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) {
+                    tbody.innerHTML = '<tr><td style="text-align: center; color: var(--foreground); font-weight: 600;">Failed to load signing queue.</td></tr>';
+                    return;
+                }
+                const items = await response.json();
+                if (items.length === 0) {
+                    tbody.innerHTML = '<tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Nothing awaiting signature.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = items.map(r => `
+                    <tr>
+                        <td>
+                            <div class="truncate" style="font-weight: 700; color: var(--primary); cursor:pointer; text-decoration:underline; max-width:320px;" title="${truncTitle(r.document_title)}" onclick="viewSigningQueueDocument(${r.requirement_id})">${escapeHtml(truncText(r.document_title, 60))}</div>
+                            <div style="font-size:12px; color:var(--muted-foreground);">${escapeHtml(formatCategory(r.document_category))}</div>
+                        </td>
+                        <td style="text-align:right;">
+                            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
+                                <a href="/process?process_id=${escapeHtml(r.process_id)}" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">View Process</a>
+                                ${r.sign_url ? `<a href="${escapeHtml(r.sign_url)}" target="_blank" rel="noopener" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">Open Signing Page</a>` : ''}
+                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${escapeHtml(r.document_title).replace(/'/g, "\\'")}', '${escapeHtml(r.signer_name)}')">Sign</button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td style="text-align: center; color: var(--foreground); font-weight: 600;">Database connection offline.</td></tr>';
+            }
+        }
+
+        async function viewSigningQueueDocument(requirementId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/document-download-url`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requirement_id: requirementId })
+                });
+                if (!response.ok) {
+                    const errText = await readErrorMessage(response);
+                    showAlert(`Failed to open document: ${errText}`);
+                    return;
+                }
+                const data = await response.json();
+                if (data.download_url) {
+                    window.open(data.download_url, '_blank');
+                } else {
+                    showAlert('No download link returned by server.');
+                }
+            } catch (err) {
+                showAlert('Connection error while fetching the document.');
+            }
+        }
+
+        function openSignDocumentModal(requirementId, title, signerName) {
+            document.getElementById('sign-document-requirement-id').value = requirementId;
+            document.getElementById('sign-document-title').textContent = title;
+            document.getElementById('sign-document-designation').textContent = `Signer: ${signerName}`;
+            document.getElementById('sign-document-file').value = '';
+            const feedback = document.getElementById('sign-document-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('sign-document-modal').style.display = 'flex';
+        }
+
+        function closeSignDocumentModal() {
+            document.getElementById('sign-document-modal').style.display = 'none';
+        }
+
+        async function submitSignDocument() {
+            const requirementId = document.getElementById('sign-document-requirement-id').value;
+            const fileInput = document.getElementById('sign-document-file');
+            const feedback = document.getElementById('sign-document-feedback');
+            const btn = document.getElementById('sign-document-submit-btn');
+
+            if (fileInput.files.length === 0) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Please choose the signed file.`;
+                return;
+            }
+            if (fileInput.files[0].size > 1024 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> File size must be under 1GB.`;
+                return;
+            }
+
+            const file = fileInput.files[0];
+
+            btn.disabled = true;
+            btn.textContent = 'Uploading...';
+            try {
+                const urlResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/replace-upload-url`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requirement_id: Number(requirementId), content_type: file.type || 'application/octet-stream' })
+                });
+                if (!urlResp.ok) {
+                    const errText = await readErrorMessage(urlResp);
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(errText)}`;
+                    return;
+                }
+                const { new_document_id, upload_url } = await urlResp.json();
+
+                const putResp = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+                if (!putResp.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> Upload to storage failed. Please try again.`;
+                    return;
+                }
+
+                const confirmResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/replace-confirm-upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ requirement_id: Number(requirementId), new_document_id })
+                });
+                if (confirmResp.ok) {
+                    closeSignDocumentModal();
+                    await loadSignatureQueue();
+                } else {
+                    const errText = await readErrorMessage(confirmResp);
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(errText)}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Upload & Sign';
+            }
+        }
+
+        async function loadSignerDirectory() {
+            const tbody = document.getElementById('signer-directory-rows-target');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/signers/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ include_inactive: true })
+                });
+                if (!resp.ok) {
+                    tbody.innerHTML = '<tr><td style="text-align:center; color:var(--foreground); font-weight:600;">Failed to load signer directory.</td></tr>';
+                    return;
+                }
+                const signers = await resp.json();
+                if (signers.length === 0) {
+                    tbody.innerHTML = '<tr><td style="text-align:center; color:var(--muted-foreground); font-weight:600;">No one has registered as a signer yet.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = signers.map(s => `
+                    <tr>
+                        <td>
+                            <div style="font-weight:700;">${escapeHtml(s.name)}</div>
+                            <div style="font-size:12px; color:var(--muted-foreground);">${escapeHtml(s.user_email)}</div>
+                        </td>
+                        <td>${s.is_active ? '<span class="badge">Active</span>' : '<span class="badge deleted">Inactive</span>'}</td>
+                        <td style="text-align:right; white-space:nowrap;">
+                            <button class="action-select" style="cursor:pointer;" onclick="toggleSignerActive(${s.signer_id}, ${!s.is_active})">${s.is_active ? 'Deactivate' : 'Activate'}</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td style="text-align:center; color:var(--foreground); font-weight:600;">Database connection offline.</td></tr>';
+            }
+        }
+
+        async function toggleSignerActive(signerId, newActive) {
+            try {
+                await fetch(`${API_BASE}/api/v1/admin/signers/set-active`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ signer_id: signerId, is_active: newActive })
+                });
+                await loadSignerDirectory();
+            } catch (err) {
+                showAlert('Network error communicating with server.');
+            }
         }
 
         async function loadCategoriesTabData() {
@@ -3125,6 +3498,26 @@ pub(crate) const ADMIN_HTML: &str = r#"
         let subbarCategoryFilter = 'ALL';
         let subbarSubcategoryFilter = 'ALL';
 
+        let signatureLineage = { byOriginal: {}, signedToOriginal: {} };
+
+        async function loadSignatureLineage() {
+            signatureLineage = { byOriginal: {}, signedToOriginal: {} };
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/all`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) return;
+                const items = await response.json();
+                for (const r of items) {
+                    (signatureLineage.byOriginal[r.document_id] ||= []).push(r);
+                    if (r.status === 'COMPLETED' && r.signed_document_id) {
+                        signatureLineage.signedToOriginal[r.signed_document_id] = r.document_id;
+                    }
+                }
+            } catch (err) {}
+        }
+
         async function loadAdminDocuments() {
             try {
                 const response = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {
@@ -3134,6 +3527,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
                 if (response.ok) {
                     allAdminDocs = await response.json();
+                    await loadSignatureLineage();
                     renderAdminCategoryFilterChips();
                     filterAdminDocs();
                 } else {
@@ -3285,6 +3679,21 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     ? `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Flat: <strong>${escapeHtml(flat.wing)}-${escapeHtml(flat.flat_number)}</strong></div>`
                     : '';
 
+                const requirements = signatureLineage.byOriginal[doc.document_id] || [];
+                const originalId = signatureLineage.signedToOriginal[doc.document_id];
+                let signatureLineageHtml = '';
+                if (requirements.length > 0) {
+                    const parts = requirements.map(r => {
+                        if (r.status === 'COMPLETED' && r.signed_document_id) {
+                            return `#${r.sign_order} ${escapeHtml(r.signer_name)}: <span onclick="downloadDocument('${escapeHtml(r.signed_document_id)}', true)" style="color:var(--primary); font-weight:600; cursor:pointer;">signed &check;</span>`;
+                        }
+                        return `#${r.sign_order} ${escapeHtml(r.signer_name)}: pending`;
+                    });
+                    signatureLineageHtml = `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">${parts.join(' &middot; ')}</div>`;
+                } else if (originalId) {
+                    signatureLineageHtml = `<div style="font-size:11px; color:var(--muted-foreground); margin-top:6px;">Signed copy of <span onclick="downloadDocument('${escapeHtml(originalId)}', true)" style="color:var(--primary); font-weight:600; cursor:pointer;">original</span></div>`;
+                }
+
                 tr.innerHTML = `
                     <td>
                         <div style="display:flex; align-items:center; gap:8px; max-width:480px;">
@@ -3294,6 +3703,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         <div class="truncate-2-lines" style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;" title="${truncTitle(doc.description)}">
                             ${escapeHtml(doc.description) || 'No description...'}
                         </div>
+                        ${signatureLineageHtml}
                     </td>
                     <td>
                         <span class="doc-category-badge ${getCategoryBadgeClass(doc.category)}">${formatCategory(doc.category)}</span>

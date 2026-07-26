@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 // ==========================================
@@ -50,6 +50,11 @@ pub struct ProcessStateInput {
     pub steps: HashMap<i32, StepStateDb>,
     pub fields: HashMap<i32, FieldState>,
     pub reviews: HashMap<i32, Vec<ReviewState>>,
+    /// document_ids with at least one PENDING signature requirement (any required
+    /// designation not yet signed) — a document field whose current document_id is in
+    /// this set is treated as not-filled by `check_step_completed`, on top of the
+    /// existing `is_field_filled` check.
+    pub blocking_document_ids: HashSet<Uuid>,
 }
 
 // ==========================================
@@ -164,6 +169,7 @@ pub fn check_step_completed(
     step_id: i32,
     info_map: &HashMap<i32, StepInfo>,
     fields: &HashMap<i32, FieldState>,
+    blocking_document_ids: &HashSet<Uuid>,
 ) -> bool {
     let info = match info_map.get(&step_id) {
         Some(i) => i,
@@ -172,11 +178,16 @@ pub fn check_step_completed(
     for field in &info.fields {
         if !field.is_optional {
             let is_filled = if let Some(fs) = fields.get(&field.field_id) {
-                crate::fields::is_field_filled(
+                let base_filled = crate::fields::is_field_filled(
                     &field.r#type,
                     fs.text_value.as_deref(),
                     fs.document_id,
-                )
+                );
+                let blocked = fs
+                    .document_id
+                    .map(|id| blocking_document_ids.contains(&id))
+                    .unwrap_or(false);
+                base_filled && !blocked
             } else {
                 false
             };
@@ -457,7 +468,12 @@ pub fn compute_completion_updates(
         None => return vec![],
     };
 
-    let target_completed = check_step_completed(step_id, &info_map, &state.fields);
+    let target_completed = check_step_completed(
+        step_id,
+        &info_map,
+        &state.fields,
+        &state.blocking_document_ids,
+    );
     let mut steps_to_update = vec![(step_id, target_completed)];
 
     if let Some(parent_id) = info.parent_id {
