@@ -105,6 +105,17 @@ impl User {
         self.designations.iter().any(|d| d == code)
     }
 
+    /// Holding ANY real designation at all — this app's bar for "not a simple
+    /// resident," used instead of a dedicated permission for things like signature
+    /// eligibility: any designation holder can self-register as a signer and act on
+    /// their own signing queue, no separate grant needed. `super_admin` doesn't count
+    /// on its own — it's an abstract "holds every permission" role, not a real person
+    /// realistically picked as a document signer, so an otherwise-plain super_admin
+    /// account shouldn't see itself as sign-eligible just by virtue of being admin.
+    pub fn has_any_designation(&self) -> bool {
+        self.designations.iter().any(|d| d != "super_admin")
+    }
+
     /// The single place authorization checks go through: does this user hold `perm`?
     pub fn has_permission(&self, perm: Permission) -> bool {
         self.permissions.iter().any(|p| p == perm.code())

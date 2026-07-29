@@ -14,6 +14,23 @@ pub struct ProcessFieldTemplate {
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
+    /// Document fields only. When true, a process reviewer cannot complete the
+    /// step until the field's current document has at least one signature
+    /// requirement attached AND every attached requirement has been signed —
+    /// enforced via `ProcessStateInput.blocking_document_ids`, computed in
+    /// `db::load_state`.
+    #[serde(default)]
+    pub requires_signature: bool,
+    /// Designation codes eligible to be picked as a signer for this field, in the
+    /// order they must sign. Enforced server-side when a reviewer attaches signers
+    /// (`add-signers`): every submitted signer must currently hold one of these
+    /// designations, and their designations' order must be non-decreasing across the
+    /// submitted array — see
+    /// `handlers::process::actions::validate_signer_order_against_designations`.
+    /// Also re-checked again at the moment of signing (not just at attach time), so a
+    /// designation revoked in between invalidates the pending signature.
+    #[serde(default)]
+    pub required_signs_from_designations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +77,8 @@ pub(crate) mod test_fixtures {
             is_optional,
             filled_by: filled_by.to_string(),
             requirements: None,
+            requires_signature: false,
+            required_signs_from_designations: Vec::new(),
         }
     }
 

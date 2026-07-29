@@ -219,6 +219,37 @@ async fn seed_default_process_template(pool: &PgPool) {
 
 /// Dynamic isolated environment builder for API testing.
 pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
+    setup_api_test_env_inner(server_port, &[]).await
+}
+
+/// Same as `setup_api_test_env`, but with the SignYu provider pointed at a local mock
+/// server (`signyu_base_url`, e.g. `http://127.0.0.1:PORT`) instead of the real API —
+/// lets tests exercise the SignYu request/response path against canned responses.
+pub async fn setup_api_test_env_with_signyu(server_port: u16, signyu_base_url: &str) -> TestEnv {
+    setup_api_test_env_inner(
+        server_port,
+        &[
+            ("SIGNYU_API_KEY", "sk_test_fake_key"),
+            ("SIGNYU_BASE_URL", signyu_base_url),
+        ],
+    )
+    .await
+}
+
+/// Same as `setup_api_test_env`, but with `SIGNYU_WEBHOOK_SECRET` set — for testing
+/// `POST /webhooks/signyu` signature verification. Deliberately does NOT set
+/// `SIGNYU_API_KEY` (no `signyu_client` configured), so a webhook whose signature
+/// verifies successfully still fails fast at the "reconcile" stage with a clear
+/// "SignYu is not configured" error instead of attempting a real network call — safe
+/// to run without a live or mocked SignYu backend.
+pub async fn setup_api_test_env_with_signyu_webhook_secret(
+    server_port: u16,
+    webhook_secret: &str,
+) -> TestEnv {
+    setup_api_test_env_inner(server_port, &[("SIGNYU_WEBHOOK_SECRET", webhook_secret)]).await
+}
+
+async fn setup_api_test_env_inner(server_port: u16, extra_env: &[(&str, &str)]) -> TestEnv {
     ensure_global_containers_running();
 
     let rand_id = Uuid::new_v4().simple().to_string();
@@ -292,6 +323,7 @@ admin_per_min = 300
         .env("APP_ENV", db_name.clone())
         .env("AWS_ACCESS_KEY_ID", "admin")
         .env("AWS_SECRET_ACCESS_KEY", "password")
+        .envs(extra_env.iter().map(|(k, v)| (*k, *v)))
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()

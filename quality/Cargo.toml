@@ -21,3 +21,7 @@ process = { path = "../process" }
 [dev-dependencies]
 authentication = { path = "../server/authentication" }
 file_server = { path = "../server/file_server" }
+axum = "0.6"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"

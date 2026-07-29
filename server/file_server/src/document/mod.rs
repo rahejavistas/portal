@@ -1,8 +1,12 @@
 mod category;
 pub mod manager;
+pub mod signatures;
+pub mod signers;
 mod subcategory;
 
 pub use manager::{AdminUploadIntentInput, DocumentManager, UpdateDocumentInput};
+pub use signatures::{SignatureRequirement, SignatureStatus};
+pub use signers::{Signer, SignerDirectoryEntry};
 
 use base::flat::FlatIdentifier;
 use chrono::{DateTime, NaiveDate, Utc};

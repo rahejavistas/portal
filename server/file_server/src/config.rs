@@ -21,6 +21,38 @@ fn default_true() -> bool {
     true
 }
 
+/// Config for the SignYu e-signature provider. `api_key` and `webhook_secret` are
+/// secrets — always sourced from env vars, never committed to a config_*.toml.
+/// `webhook_secret` is the HMAC-SHA256 signing secret SignYu's dashboard shows for a
+/// configured webhook endpoint — used to verify the `X-SignSetu-Signature` header on
+/// every inbound `POST /webhooks/signyu` call; a webhook received with no secret
+/// configured is rejected outright (unverifiable input is untrusted input).
+/// `base_url` defaults to the real SignYu API but is overridable so tests (and any
+/// future staging setup) can point the client at a local mock server instead.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SignYuConfig {
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
+    #[serde(default = "default_signyu_base_url")]
+    pub base_url: String,
+}
+
+fn default_signyu_base_url() -> String {
+    "https://signyu.com/api/v1".to_string()
+}
+
+impl Default for SignYuConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            webhook_secret: None,
+            base_url: default_signyu_base_url(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub port: u16,
@@ -34,6 +66,8 @@ pub struct AppConfig {
     pub forgot_password_expiry: std::time::Duration,
     pub telemetry: TelemetryConfig,
     pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub signyu: SignYuConfig,
 }
 
 impl AppConfig {
@@ -79,6 +113,25 @@ impl AppConfig {
         }
         if let Ok(super_admin_email) = std::env::var("SUPER_ADMIN_EMAIL") {
             config.super_admin_email = super_admin_email;
+        }
+        // A set-but-empty env var (e.g. `SIGNYU_API_KEY=` in a compose file with no
+        // value supplied) must NOT be treated as "configured" — `api_key.is_some()` is
+        // literally the on/off switch for the whole SignYu provider, so an empty
+        // string here would silently enable it with a blank key.
+        if let Ok(signyu_api_key) = std::env::var("SIGNYU_API_KEY") {
+            if !signyu_api_key.is_empty() {
+                config.signyu.api_key = Some(signyu_api_key);
+            }
+        }
+        if let Ok(signyu_webhook_secret) = std::env::var("SIGNYU_WEBHOOK_SECRET") {
+            if !signyu_webhook_secret.is_empty() {
+                config.signyu.webhook_secret = Some(signyu_webhook_secret);
+            }
+        }
+        if let Ok(signyu_base_url) = std::env::var("SIGNYU_BASE_URL") {
+            if !signyu_base_url.is_empty() {
+                config.signyu.base_url = signyu_base_url;
+            }
         }
 
         config

@@ -19,6 +19,10 @@ pub struct FieldDraft {
     pub filled_by: String,
     #[serde(default)]
     pub requirements: Option<serde_json::Value>,
+    #[serde(default)]
+    pub requires_signature: bool,
+    #[serde(default)]
+    pub required_signs_from_designations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,6 +95,8 @@ fn assign_field_ids(
                     is_optional: f.is_optional,
                     filled_by: f.filled_by,
                     requirements: f.requirements,
+                    requires_signature: f.requires_signature,
+                    required_signs_from_designations: f.required_signs_from_designations,
                 }
             })
             .collect()

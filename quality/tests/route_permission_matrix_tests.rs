@@ -319,3 +319,88 @@ async fn test_documents_routes_have_no_router_level_gate() {
     let cats: Vec<serde_json::Value> = categories_resp.unwrap().into_json().unwrap();
     assert!(cats.is_empty());
 }
+
+/// A designation holding only `documents.signatures.sign` can list the signing queue
+/// and read a requirement's status, but cannot manage the signer directory
+/// (`process.reviewer` — there is no separate signatures-management permission).
+#[tokio::test]
+async fn test_documents_signatures_queue_open_to_any_authenticated_user() {
+    let env = setup_api_test_env(3176).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    // No signatures-specific permission exists at all — seed a designation holding
+    // zero permissions to prove the queue/replace-* routes need nothing beyond plain
+    // authentication (they're self-scoped: queue only ever returns the caller's own
+    // requirements, replace-* requires the caller to actually BE the signer).
+    let jwt = seeded_resident(&env, &admin_jwt, "sigbare", "807", &[]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/queue", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "documents/signatures/queue with no permissions at all",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/all", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/all requires process.reviewer/process.view/documents.all.manage",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/signers/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "signers/list requires process.reviewer",
+    );
+}
+
+/// A designation holding `process.reviewer` can manage the signer directory (list,
+/// set-active, delete) and read requirement status, but cannot see/act on the signing
+/// queue itself (`documents.signatures.sign`) unless they're the actual signer.
+#[tokio::test]
+async fn test_process_reviewer_manages_signer_directory() {
+    let env = setup_api_test_env(3177).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(
+        &env,
+        &admin_jwt,
+        "sigreviewer",
+        "808",
+        &["process.reviewer"],
+    );
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/all", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/all with process.reviewer",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/signers/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"include_inactive": true})),
+        "signers/list with process.reviewer",
+    );
+}
+
+/// `/documents/signatures/all` (optionally scoped to one document) is also reachable
+/// by the general process read/review permissions, since the admin process view needs
+/// to show signature status without requiring a separate signature-specific grant.
+#[tokio::test]
+async fn test_documents_signatures_all_reachable_by_process_permissions() {
+    let env = setup_api_test_env(3178).await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "sigviaproc", "809", &["process.view"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/all", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
+        "documents/signatures/all with process.view",
+    );
+}
