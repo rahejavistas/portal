@@ -1079,6 +1079,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             <h3 style="margin-top:0; margin-bottom:8px; font-size:18px;">Add Signers</h3>
             <p id="add-signers-intro" style="margin-top:0; margin-bottom:16px; color:var(--muted-foreground); font-size:13px;"></p>
 
+            <div id="add-signers-provider-panel" style="display:none; margin-bottom:16px; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Signing Method</div>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer; font-size:14px;">
+                    <input type="radio" name="add-signers-provider" value="manual" checked onchange="setAddSignersProvider('manual')"> Manual (upload a signed copy)
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px;">
+                    <input type="radio" name="add-signers-provider" value="signyu" onchange="setAddSignersProvider('signyu')"> SignYu (sends signers a link to sign electronically)
+                </label>
+            </div>
+
             <div id="add-signers-slots-panel" style="display:none;"></div>
 
             <div id="add-signers-freeform-panel" style="display:none; gap:16px; flex-wrap:wrap;">
@@ -2165,14 +2175,24 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         let addSignersSelectedOrder = [];
         let addSignersSlotSelections = [];
         let activeSignersCache = null;
+        let addSignersProvider = 'manual';
+
+        function setAddSignersProvider(value) {
+            addSignersProvider = value;
+        }
 
         async function openAddSignersModal(stepId, fieldId, documentId, requiredDesignations) {
             addSignersContext = { stepId, fieldId, documentId, requiredDesignations: requiredDesignations || [] };
             addSignersSelectedOrder = [];
             addSignersSlotSelections = (requiredDesignations || []).map(() => '');
+            addSignersProvider = 'manual';
             const feedback = document.getElementById('add-signers-feedback');
             feedback.style.display = 'none';
             feedback.textContent = '';
+
+            const providerPanel = document.getElementById('add-signers-provider-panel');
+            providerPanel.style.display = 'none';
+            document.querySelector('input[name="add-signers-provider"][value="manual"]').checked = true;
 
             const usingSlots = (requiredDesignations || []).length > 0;
             document.getElementById('add-signers-intro').textContent = usingSlots
@@ -2196,6 +2216,17 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 activeSignersCache = [];
             }
             renderAddSignersList();
+
+            try {
+                const statusResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/provider-status`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (statusResp.ok) {
+                    const status = await statusResp.json();
+                    providerPanel.style.display = status.signyu_available ? 'block' : 'none';
+                }
+            } catch (e) {}
         }
 
         function closeAddSignersModal() {
@@ -2315,7 +2346,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         template_step_id: addSignersContext.stepId,
                         template_field_id: addSignersContext.fieldId,
                         document_id: addSignersContext.documentId,
-                        signer_ids: signerIds
+                        signer_ids: signerIds,
+                        provider: addSignersProvider
                     })
                 });
                 if (resp.ok) {

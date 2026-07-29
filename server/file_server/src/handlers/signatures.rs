@@ -91,7 +91,8 @@ async fn ensure_signer_still_eligible(
 
 /// Recompute a step's completion after a signature requirement's status changed,
 /// WITHOUT repointing the field at any signed document — used when a completed sign
-/// still leaves other attached signers outstanding.
+/// still leaves other attached signers outstanding. Also notifies whichever manual
+/// signer just became actionable (SignYu manages its own signer notifications).
 async fn recompute_gating_only(
     state: &AppState,
     requirement: &SignatureRequirement,
@@ -105,7 +106,38 @@ async fn recompute_gating_only(
         requirement.template_step_id,
     )
     .await
-    .map_err(internal_err)
+    .map_err(internal_err)?;
+
+    if let Ok(siblings) = state
+        .document_manager
+        .signature_requirements_for_document(requirement.document_id)
+        .await
+    {
+        if let Some(next) = siblings
+            .iter()
+            .filter(|r| {
+                r.status == SignatureStatus::Pending && r.sign_order > requirement.sign_order
+            })
+            .min_by_key(|r| r.sign_order)
+        {
+            if next.provider == "manual" {
+                let step_name = crate::handlers::process::find_step_name(
+                    &template,
+                    requirement.template_step_id,
+                );
+                process::notification::notify_signature_turn(
+                    &next.signer_email,
+                    &template.name,
+                    &step_name,
+                    &next.document_title,
+                    requirement.process_id,
+                )
+                .await;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Repoints the field at the newly signed document (only valid once every attached
@@ -141,6 +173,12 @@ async fn attach_replacement_and_recompute_gating(
         .map_err(internal_err)?;
     }
 
+    let statuses_before = process::db::get_statuses(&mut conn, requirement.process_id, &template)
+        .await
+        .map_err(internal_err)?;
+    let was_completed = statuses_before.get(&requirement.template_step_id)
+        == Some(&process::state_machine::StepStatus::Completed);
+
     process::db::recompute_gating_for_step(
         &mut conn,
         &template,
@@ -148,7 +186,46 @@ async fn attach_replacement_and_recompute_gating(
         requirement.template_step_id,
     )
     .await
-    .map_err(internal_err)
+    .map_err(internal_err)?;
+
+    // Only notify the resident if THIS signature completion is what pushed the step
+    // over the line into Completed — never for a mid-chain signature, and never if the
+    // step needed something else besides this signature and is still incomplete.
+    if !was_completed {
+        let statuses_after =
+            process::db::get_statuses(&mut conn, requirement.process_id, &template)
+                .await
+                .map_err(internal_err)?;
+        if statuses_after.get(&requirement.template_step_id)
+            == Some(&process::state_machine::StepStatus::Completed)
+        {
+            if let Ok(Some(info)) =
+                process::db::get_process_info(&mut conn, requirement.process_id).await
+            {
+                if let Some(ctx) = crate::handlers::process::build_notification_ctx(
+                    &state.pg_pool,
+                    info.user_id,
+                    &state.super_admin_email,
+                    &template.name,
+                )
+                .await
+                {
+                    let step_name = crate::handlers::process::find_step_name(
+                        &template,
+                        requirement.template_step_id,
+                    );
+                    process::notification::notify_signature_step_complete(
+                        &ctx,
+                        requirement.process_id,
+                        &step_name,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// POST /api/v1/documents/signatures/queue
@@ -196,6 +273,25 @@ pub async fn all(
     }
     .map_err(internal_err)?;
     Ok(Json(items))
+}
+
+#[derive(serde::Serialize)]
+pub struct ProviderStatusResponse {
+    /// Whether the server has `SIGNYU_API_KEY` configured — the actual on/off switch
+    /// for offering "signyu" as a provider choice when attaching signers (see
+    /// `main.rs`'s `signyu_client` construction). Lets the Add Signers UI hide the
+    /// SignYu option entirely rather than offering a choice that will 400.
+    pub signyu_available: bool,
+}
+
+/// POST /api/v1/admin/documents/signatures/provider-status
+pub async fn provider_status(
+    State(state): State<AppState>,
+    _session_user: SessionUser,
+) -> Json<ProviderStatusResponse> {
+    Json(ProviderStatusResponse {
+        signyu_available: state.signyu_client.is_some(),
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -422,9 +518,44 @@ async fn reconcile_external_document(
         }
     }
 
+    let statuses_before = process::db::get_statuses(&mut conn, process_id, &template)
+        .await
+        .map_err(internal_err)?;
+    let was_completed = statuses_before.get(&template_step_id)
+        == Some(&process::state_machine::StepStatus::Completed);
+
     process::db::recompute_gating_for_step(&mut conn, &template, process_id, template_step_id)
         .await
-        .map_err(internal_err)
+        .map_err(internal_err)?;
+
+    if !was_completed {
+        let statuses_after = process::db::get_statuses(&mut conn, process_id, &template)
+            .await
+            .map_err(internal_err)?;
+        if statuses_after.get(&template_step_id)
+            == Some(&process::state_machine::StepStatus::Completed)
+        {
+            if let Ok(Some(info)) = process::db::get_process_info(&mut conn, process_id).await {
+                if let Some(ctx) = crate::handlers::process::build_notification_ctx(
+                    &state.pg_pool,
+                    info.user_id,
+                    &state.super_admin_email,
+                    &template.name,
+                )
+                .await
+                {
+                    let step_name =
+                        crate::handlers::process::find_step_name(&template, template_step_id);
+                    process::notification::notify_signature_step_complete(
+                        &ctx, process_id, &step_name,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 use crate::document::SignatureStatus;

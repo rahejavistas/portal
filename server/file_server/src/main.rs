@@ -166,6 +166,10 @@ async fn main() {
                     "/process/documents/add-signers",
                     post(handlers::process::admin_add_document_signers),
                 )
+                .route(
+                    "/documents/signatures/provider-status",
+                    post(handlers::signatures::provider_status),
+                )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[Permission::ProcessReviewer]),
