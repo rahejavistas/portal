@@ -184,6 +184,32 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             background-color: var(--primary);
             color: var(--background);
         }
+        .nav-group-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .nav-group-arrow {
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .nav-group.collapsed .nav-group-arrow {
+            transform: rotate(-90deg);
+        }
+        .nav-subgroup {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .nav-group.collapsed .nav-subgroup {
+            display: none;
+        }
+        .nav-subitem {
+            padding-left: 28px;
+            font-size: 0.8125rem;
+        }
         .back-btn {
             display: block;
             padding: 12px 16px;
@@ -1134,6 +1160,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
 
+        function toggleProcessNavGroup(groupId) {
+            const group = document.getElementById(groupId);
+            if (group) group.classList.toggle('collapsed');
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -1192,42 +1223,68 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
             if (showAdminBranding) {
                 const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
-                const residentsLink = (user && user.can_view_users)
-                    ? `<a href="/admin?tab=residents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>`
+                const canViewUsers = !!(user && user.can_view_users);
+                const canManageProcessTemplates = !!(user && user.can_manage_process_templates);
+                const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
+                const canManageSignerDirectory = !!(user && user.can_review_process);
+                const residentsLink = canViewUsers
+                    ? `<a href="/admin?tab=residents" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>`
                     : '';
                 const documentsLink = (user && (user.can_manage_documents || user.can_manage_categories))
                     ? `<a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>`
                     : '';
                 const rolesLink = canManageRoles
-                    ? `<a href="/admin?tab=roles" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Roles</a>`
+                    ? `<a href="/admin?tab=roles" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Roles &amp; Designations</a>`
                     : '';
-                const templatesLink = (user && user.can_manage_process_templates)
-                    ? `<a href="/admin?tab=templates" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
+                const residentsGroup = (canViewUsers || canManageRoles)
+                    ? `<div class="nav-group collapsed" id="residents-nav-group">
+                        <button type="button" class="nav-item nav-group-toggle" onclick="toggleProcessNavGroup('residents-nav-group')">
+                            <span>Residents</span>
+                            <span class="nav-group-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup">
+                            ${residentsLink}
+                            ${rolesLink}
+                        </div>
+                    </div>`
                     : '';
-                const signaturesLink = (user && ((user.designations && user.designations.some(d => d !== 'super_admin')) || user.can_review_process))
-                    ? `<a href="/admin?tab=signatures" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
+                const templatesLink = canManageProcessTemplates
+                    ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
+                    : '';
+                const signaturesLink = (canSignDocuments || canManageSignerDirectory)
+                    ? `<a href="/admin?tab=signatures" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
                     : '';
                 const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
                     : '';
                 const processesLink = IS_ADMIN_PROCESS_PAGE
-                    ? `<a href="/admin-process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
-                    : `<a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
+                    ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
                 const otherProcessLink = !IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user)
-                    ? `<a href="/admin-process" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : '';
+                const processesGroup = (IS_ADMIN_PROCESS_PAGE || canAccessAdminProcessPage(user) || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory)
+                    ? `<div class="nav-group" id="processes-nav-group">
+                        <button type="button" class="nav-item nav-group-toggle" onclick="toggleProcessNavGroup('processes-nav-group')">
+                            <span>Processes</span>
+                            <span class="nav-group-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup">
+                            ${processesLink}
+                            ${otherProcessLink}
+                            ${signaturesLink}
+                            ${templatesLink}
+                        </div>
+                    </div>`
                     : '';
                 sidebarBrandContainer.innerHTML = `
                     <h1>Admin</h1>
                     <p>Raheja Vistas Admin Room</p>
                     <nav class="nav-menu">
-                        ${residentsLink}
+                        ${residentsGroup}
                         ${documentsLink}
-                        ${rolesLink}
-                        ${templatesLink}
-                        ${signaturesLink}
-                        ${processesLink}
-                        ${otherProcessLink}
+                        ${processesGroup}
                         ${myFlatDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
