@@ -54,7 +54,7 @@ fn seeded_resident(
 /// gate on /admin/documents/list) and no other resident's processes.
 #[tokio::test]
 async fn test_users_manage_grants_no_document_or_process_visibility() {
-    let env = setup_api_test_env(3180).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -89,7 +89,7 @@ async fn test_users_manage_grants_no_document_or_process_visibility() {
 /// process review access.
 #[tokio::test]
 async fn test_documents_all_manage_grants_no_user_or_process_visibility() {
-    let env = setup_api_test_env(3181).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -140,7 +140,7 @@ async fn test_documents_all_manage_grants_no_user_or_process_visibility() {
 /// `documents.all.manage`) sees only documents in that category, not others.
 #[tokio::test]
 async fn test_category_scoped_designation_sees_only_its_category() {
-    let env = setup_api_test_env(3182).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -196,7 +196,7 @@ async fn test_category_scoped_designation_sees_only_its_category() {
 /// but cannot approve/reject a step (write-gated to `process.reviewer`).
 #[tokio::test]
 async fn test_process_view_lists_all_processes_but_cannot_review() {
-    let env = setup_api_test_env(3183).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -240,7 +240,7 @@ async fn test_process_view_lists_all_processes_but_cannot_review() {
 /// endpoint (no document-category grant), even though it can review every process.
 #[tokio::test]
 async fn test_process_reviewer_has_no_generic_document_list_access() {
-    let env = setup_api_test_env(3184).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -265,7 +265,7 @@ async fn test_process_reviewer_has_no_generic_document_list_access() {
 /// full resident list — sanity check that the matrix above isn't hiding a global bypass.
 #[tokio::test]
 async fn test_super_admin_sees_all_documents_processes_and_residents() {
-    let env = setup_api_test_env(3185).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let a = auth(&admin_jwt);

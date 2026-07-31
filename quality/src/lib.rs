@@ -218,21 +218,18 @@ async fn seed_default_process_template(pool: &PgPool) {
 }
 
 /// Dynamic isolated environment builder for API testing.
-pub async fn setup_api_test_env(server_port: u16) -> TestEnv {
-    setup_api_test_env_inner(server_port, &[]).await
+pub async fn setup_api_test_env() -> TestEnv {
+    setup_api_test_env_inner(&[]).await
 }
 
 /// Same as `setup_api_test_env`, but with the SignYu provider pointed at a local mock
 /// server (`signyu_base_url`, e.g. `http://127.0.0.1:PORT`) instead of the real API —
 /// lets tests exercise the SignYu request/response path against canned responses.
-pub async fn setup_api_test_env_with_signyu(server_port: u16, signyu_base_url: &str) -> TestEnv {
-    setup_api_test_env_inner(
-        server_port,
-        &[
-            ("SIGNYU_API_KEY", "sk_test_fake_key"),
-            ("SIGNYU_BASE_URL", signyu_base_url),
-        ],
-    )
+pub async fn setup_api_test_env_with_signyu(signyu_base_url: &str) -> TestEnv {
+    setup_api_test_env_inner(&[
+        ("SIGNYU_API_KEY", "sk_test_fake_key"),
+        ("SIGNYU_BASE_URL", signyu_base_url),
+    ])
     .await
 }
 
@@ -242,15 +239,28 @@ pub async fn setup_api_test_env_with_signyu(server_port: u16, signyu_base_url: &
 /// verifies successfully still fails fast at the "reconcile" stage with a clear
 /// "SignYu is not configured" error instead of attempting a real network call — safe
 /// to run without a live or mocked SignYu backend.
-pub async fn setup_api_test_env_with_signyu_webhook_secret(
-    server_port: u16,
-    webhook_secret: &str,
-) -> TestEnv {
-    setup_api_test_env_inner(server_port, &[("SIGNYU_WEBHOOK_SECRET", webhook_secret)]).await
+pub async fn setup_api_test_env_with_signyu_webhook_secret(webhook_secret: &str) -> TestEnv {
+    setup_api_test_env_inner(&[("SIGNYU_WEBHOOK_SECRET", webhook_secret)]).await
 }
 
-async fn setup_api_test_env_inner(server_port: u16, extra_env: &[(&str, &str)]) -> TestEnv {
+/// Asks the OS for a free TCP port instead of relying on every test to hand-pick a
+/// unique number — tests used to each hardcode their own port literal, and it was only
+/// a matter of time before two picked the same one (which happened) and started
+/// intermittently failing whenever both ran at once. Binding to port 0 and reading back
+/// whatever the OS assigned, then releasing it immediately before the child process
+/// binds the same port itself, has a theoretical TOCTOU race but is the standard
+/// approach and is effectively immune to the collisions manual numbering caused.
+fn allocate_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("Failed to bind to an ephemeral port")
+        .local_addr()
+        .expect("Failed to read back the allocated port")
+        .port()
+}
+
+async fn setup_api_test_env_inner(extra_env: &[(&str, &str)]) -> TestEnv {
     ensure_global_containers_running();
+    let server_port = allocate_free_port();
 
     let rand_id = Uuid::new_v4().simple().to_string();
     let db_name = format!("db_api_{}", &rand_id[..12]);

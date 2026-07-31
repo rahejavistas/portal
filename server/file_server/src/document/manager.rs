@@ -127,7 +127,7 @@ impl DocumentManager {
 
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
                 g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
                 g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
@@ -159,7 +159,7 @@ impl DocumentManager {
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
                 g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
                 g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
@@ -199,6 +199,7 @@ impl DocumentManager {
             false,
             false, // is_upload_confirmed: admin uploads use presigned URLs now
             input.uploaded_by,
+            Some(input.content_type),
         )
         .await?;
 
@@ -263,6 +264,7 @@ impl DocumentManager {
             false,
             false,
             input.uploaded_by,
+            Some(input.content_type),
         )
         .await?;
 
@@ -336,6 +338,7 @@ impl DocumentManager {
             true, // is_user_uploaded
             true, // is_upload_confirmed: server-proxied upload
             Some(user.user_id),
+            None,
         )
         .await?;
 
@@ -358,6 +361,7 @@ impl DocumentManager {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn insert_document<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
         title: &str,
@@ -366,11 +370,12 @@ impl DocumentManager {
         is_user_uploaded: bool,
         is_upload_confirmed: bool,
         uploaded_by: Option<i32>,
+        content_type: Option<&str>,
     ) -> Result<Document, String> {
         let doc: Document = sqlx::query_as(
-            "INSERT INTO documents (title, description, category, is_user_uploaded, is_upload_confirmed, uploaded_by) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
-             RETURNING document_id, title, description, category, uploaded_date, updated_at, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by",
+            "INSERT INTO documents (title, description, category, is_user_uploaded, is_upload_confirmed, uploaded_by, content_type) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7) \
+             RETURNING document_id, title, description, category, uploaded_date, updated_at, is_deleted, is_user_uploaded, is_upload_confirmed, uploaded_by, content_type",
         )
         .bind(title)
         .bind(description)
@@ -378,6 +383,7 @@ impl DocumentManager {
         .bind(is_user_uploaded)
         .bind(is_upload_confirmed)
         .bind(uploaded_by)
+        .bind(content_type)
         .fetch_one(executor)
         .await
         .map_err(|e| e.to_string())?;
@@ -481,7 +487,7 @@ impl DocumentManager {
     ) -> Result<Option<DocumentWithMetadata>, String> {
         let mut doc_with_meta: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
                 g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
                 g.tags, g.document_date, g.valid_from, g.valid_until \
              FROM documents d \
@@ -506,7 +512,7 @@ impl DocumentManager {
     pub async fn admin_list_all_documents(&self) -> Result<Vec<DocumentWithMetadata>, String> {
         let all_docs: Vec<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
-                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, \
+                d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
                 g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
                 g.tags, g.document_date, g.valid_from, g.valid_until, \
                 f.wing, f.flat_number \
@@ -608,7 +614,7 @@ impl DocumentManager {
     ) -> Result<Vec<Document>, String> {
         sqlx::query_as(
             "SELECT DISTINCT d.document_id, d.title, d.description, d.category, \
-             d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by \
+             d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type \
              FROM documents d \
              JOIN process_fields pf ON d.document_id = pf.document_id \
              JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
@@ -655,6 +661,7 @@ impl DocumentManager {
             true,  // is_user_uploaded
             false, // is_upload_confirmed: NOT confirmed until client finishes S3 upload
             Some(user.user_id),
+            Some(content_type),
         )
         .await?;
 

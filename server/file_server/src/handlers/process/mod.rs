@@ -29,7 +29,7 @@ impl<T, E: ToString> ResultExt<T> for Result<T, E> {
 }
 
 /// Load a process by ID, verify user authorization, and load its pinned template
-/// version. Shared across save-step, review, revoke, note, and upload handlers.
+/// version.
 pub(super) async fn load_authorized_process(
     conn: &mut sqlx::PgConnection,
     user: &authentication::User,
@@ -60,8 +60,6 @@ pub(super) async fn load_authorized_process(
     Ok((info, template))
 }
 
-/// Look up a step's display name from the template. Falls back to a generic
-/// label if the ID isn't in the template (shouldn't happen in practice).
 pub(super) fn find_step_name(template: &process::ProcessTemplate, step_id: i32) -> String {
     process::state_machine::build_step_info_map(template)
         .get(&step_id)

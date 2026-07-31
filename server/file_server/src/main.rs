@@ -155,6 +155,10 @@ async fn main() {
                     post(handlers::process::process_admin_upload_url),
                 )
                 .route(
+                    "/process/confirm-upload",
+                    post(handlers::process::process_admin_confirm_upload),
+                )
+                .route(
                     "/process/revoke",
                     post(handlers::process::admin_revoke_step),
                 )
@@ -267,6 +271,12 @@ async fn main() {
                         Permission::UsersRolesManage,
                         Permission::DesignationsManage,
                         Permission::DocumentsCategoriesManage,
+                        // The template builder's "Eligible Signer Designations" picker
+                        // needs a plain read-only list of designation codes/labels —
+                        // without this, anyone who can manage templates but not
+                        // roles/designations gets a silent 403 here and sees an empty
+                        // picker with nothing to choose from.
+                        Permission::ProcessTemplatesManage,
                     ]),
                 ));
 
@@ -372,6 +382,8 @@ async fn main() {
                     post(handlers::signatures::signyu_webhook),
                 )
                 .route("/api/v1/login", post(handlers::auth::login))
+                .route("/api/v1/mfa/verify", post(handlers::auth::mfa_verify))
+                .route("/api/v1/mfa/resend", post(handlers::auth::mfa_resend))
                 .route(
                     "/api/v1/forgot-password",
                     post(handlers::auth::forgot_password),
@@ -381,6 +393,22 @@ async fn main() {
                     post(handlers::auth::reset_password),
                 )
                 .route("/api/v1/profile", post(handlers::auth::profile))
+                .route(
+                    "/api/v1/profile/mfa",
+                    post(handlers::auth::get_mfa_settings),
+                )
+                .route(
+                    "/api/v1/profile/mfa/toggle",
+                    post(handlers::auth::set_mfa_settings),
+                )
+                .route(
+                    "/api/v1/profile/notifications",
+                    post(handlers::auth::get_notification_settings),
+                )
+                .route(
+                    "/api/v1/profile/notifications/toggle",
+                    post(handlers::auth::set_notification_settings),
+                )
                 .route(
                     "/api/v1/profile/signer-info",
                     post(handlers::auth::get_signer_info),

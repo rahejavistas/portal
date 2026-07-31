@@ -98,6 +98,39 @@ pub async fn process_admin_upload_url(
     ))
 }
 
+#[derive(Deserialize)]
+pub struct ProcessAdminConfirmUploadRequest {
+    pub process_id: Uuid,
+    pub document_id: Uuid,
+}
+
+#[derive(Serialize)]
+pub struct ProcessAdminConfirmUploadResponse {
+    pub status: String,
+}
+
+/// POST /api/v1/admin/process/confirm-upload
+/// Separate from `handlers::documents::admin_confirm_upload` — that one needs
+/// document-category permissions a plain reviewer won't have.
+pub async fn process_admin_confirm_upload(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<ProcessAdminConfirmUploadRequest>,
+) -> Result<Json<ProcessAdminConfirmUploadResponse>, ApiError> {
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
+    load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+
+    state
+        .document_manager
+        .confirm_upload(payload.document_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+
+    Ok(Json(ProcessAdminConfirmUploadResponse {
+        status: "confirmed".to_string(),
+    }))
+}
+
 /// POST /api/v1/process/download-url
 /// On-demand presigned download URL for a process document.
 pub async fn process_download_url(

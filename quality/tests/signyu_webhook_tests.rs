@@ -19,7 +19,7 @@ fn sign(secret: &str, body: &[u8]) -> String {
 async fn test_webhook_rejected_when_no_secret_configured() {
     // setup_api_test_env (not the _with_signyu_webhook_secret variant) never sets
     // SIGNYU_WEBHOOK_SECRET, so state.signyu_webhook_secret is None.
-    let env = quality::setup_api_test_env(3320).await;
+    let env = quality::setup_api_test_env().await;
     let url = env.server_url();
 
     let body = br#"{"event":"document.completed","documentId":"doc_1"}"#;
@@ -35,7 +35,7 @@ async fn test_webhook_rejected_when_no_secret_configured() {
 
 #[tokio::test]
 async fn test_webhook_rejected_when_signature_header_missing() {
-    let env = setup_api_test_env_with_signyu_webhook_secret(3321, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let body = br#"{"event":"document.completed","documentId":"doc_1"}"#;
@@ -50,7 +50,7 @@ async fn test_webhook_rejected_when_signature_header_missing() {
 
 #[tokio::test]
 async fn test_webhook_rejected_when_signature_wrong() {
-    let env = setup_api_test_env_with_signyu_webhook_secret(3322, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let body = br#"{"event":"document.completed","documentId":"doc_1"}"#;
@@ -69,7 +69,7 @@ async fn test_webhook_rejected_when_signature_wrong() {
 
 #[tokio::test]
 async fn test_webhook_rejected_when_body_tampered_after_signing() {
-    let env = setup_api_test_env_with_signyu_webhook_secret(3323, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let signed_body = br#"{"event":"document.completed","documentId":"doc_1"}"#;
@@ -90,7 +90,7 @@ async fn test_webhook_rejected_when_body_tampered_after_signing() {
 
 #[tokio::test]
 async fn test_webhook_accepted_and_ignored_without_document_id() {
-    let env = setup_api_test_env_with_signyu_webhook_secret(3324, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let body = br#"{"event":"document.completed"}"#;
@@ -113,7 +113,7 @@ async fn test_webhook_with_valid_signature_reaches_reconcile_and_fails_cleanly_w
     // proves the signature check passed (we got past it) and the handler then failed
     // for the RIGHT reason (no provider configured), not a signature error, without
     // ever making a real network call.
-    let env = setup_api_test_env_with_signyu_webhook_secret(3325, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let body = br#"{"event":"document.completed","documentId":"doc_1"}"#;
@@ -142,7 +142,7 @@ async fn test_webhook_with_valid_signature_reaches_reconcile_and_fails_cleanly_w
 
 #[tokio::test]
 async fn test_webhook_rejects_malformed_json_after_valid_signature() {
-    let env = setup_api_test_env_with_signyu_webhook_secret(3326, "whsec_test_secret").await;
+    let env = setup_api_test_env_with_signyu_webhook_secret("whsec_test_secret").await;
     let url = env.server_url();
 
     let body = b"not valid json at all";

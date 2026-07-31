@@ -59,7 +59,7 @@ fn list_categories(url: &str, auth_header: &str) -> Vec<serde_json::Value> {
 /// categories listing — there is no separate subcategory-list endpoint.
 #[tokio::test]
 async fn test_subcategory_is_nested_under_its_category() {
-    let env = setup_api_test_env(3180).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -82,7 +82,7 @@ async fn test_subcategory_is_nested_under_its_category() {
 /// Duplicate (category, code) pairs are rejected.
 #[tokio::test]
 async fn test_duplicate_subcategory_code_under_same_category_rejected() {
-    let env = setup_api_test_env(3181).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -103,7 +103,7 @@ async fn test_duplicate_subcategory_code_under_same_category_rejected() {
 /// (category, code), not code alone.
 #[tokio::test]
 async fn test_same_subcategory_code_allowed_across_different_categories() {
-    let env = setup_api_test_env(3182).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -135,7 +135,7 @@ async fn test_same_subcategory_code_allowed_across_different_categories() {
 /// raw FK-violation 500.
 #[tokio::test]
 async fn test_create_subcategory_under_unknown_category_fails() {
-    let env = setup_api_test_env(3183).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -155,7 +155,7 @@ async fn test_create_subcategory_under_unknown_category_fails() {
 /// Renaming changes the label only; the code and parent category are untouched.
 #[tokio::test]
 async fn test_rename_subcategory_updates_label_not_code() {
-    let env = setup_api_test_env(3184).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -186,7 +186,7 @@ async fn test_rename_subcategory_updates_label_not_code() {
 /// Renaming a subcategory ID that doesn't exist is rejected.
 #[tokio::test]
 async fn test_rename_unknown_subcategory_fails() {
-    let env = setup_api_test_env(3185).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -204,7 +204,7 @@ async fn test_rename_unknown_subcategory_fails() {
 /// with the resolved subcategory's code and label.
 #[tokio::test]
 async fn test_upload_with_valid_subcategory_populates_metadata() {
-    let env = setup_api_test_env(3186).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -259,7 +259,7 @@ async fn test_upload_with_valid_subcategory_populates_metadata() {
 /// An unknown subcategory_code is rejected at upload time, not silently dropped.
 #[tokio::test]
 async fn test_upload_with_unknown_subcategory_code_fails() {
-    let env = setup_api_test_env(3187).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -288,7 +288,7 @@ async fn test_upload_with_unknown_subcategory_code_fails() {
 /// being uploaded, is rejected — scoping is enforced, not just code existence.
 #[tokio::test]
 async fn test_upload_with_subcategory_from_wrong_category_fails() {
-    let env = setup_api_test_env(3188).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -319,7 +319,7 @@ async fn test_upload_with_subcategory_from_wrong_category_fails() {
 /// without metadata at all) still succeeds, with subcategory fields left null.
 #[tokio::test]
 async fn test_upload_without_subcategory_succeeds() {
-    let env = setup_api_test_env(3189).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -371,7 +371,7 @@ async fn test_upload_without_subcategory_succeeds() {
 /// without it gets 403, same gate as document categories themselves.
 #[tokio::test]
 async fn test_subcategory_management_requires_categories_manage_permission() {
-    let env = setup_api_test_env(3190).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 

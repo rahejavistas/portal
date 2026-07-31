@@ -635,6 +635,32 @@
                     </div>
                 </div>
 
+                <div class="card" id="account-settings-card">
+                    <h3 style="margin-top:0; font-size:18px; font-weight:800; margin-bottom:8px;">Security &amp; Notifications</h3>
+                    <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 0; border-bottom:1px solid var(--border);">
+                        <input type="checkbox" id="mfa-toggle" onchange="toggleMfa()" style="margin-top:3px; accent-color:var(--primary); cursor:pointer; width:auto;">
+                        <label for="mfa-toggle" style="cursor:pointer;">
+                            <div style="font-weight:700; font-size:14px;">Sign-in OTP</div>
+                            <div style="color:var(--muted-foreground); font-size:13px; margin-top:2px;">Require a one-time code by email to sign in.</div>
+                        </label>
+                    </div>
+                    <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 0; border-bottom:1px solid var(--border);">
+                        <input type="checkbox" id="notify-process-toggle" onchange="saveNotificationSettings()" style="margin-top:3px; accent-color:var(--primary); cursor:pointer; width:auto;">
+                        <label for="notify-process-toggle" style="cursor:pointer;">
+                            <div style="font-weight:700; font-size:14px;">Process updates</div>
+                            <div style="color:var(--muted-foreground); font-size:13px; margin-top:2px;">Email me about process updates.</div>
+                        </label>
+                    </div>
+                    <div id="notify-signature-row" style="display:none; align-items:flex-start; gap:12px; padding:14px 0;">
+                        <input type="checkbox" id="notify-signature-toggle" onchange="saveNotificationSettings()" style="margin-top:3px; accent-color:var(--primary); cursor:pointer; width:auto;">
+                        <label for="notify-signature-toggle" style="cursor:pointer;">
+                            <div style="font-weight:700; font-size:14px;">Signature requests</div>
+                            <div style="color:var(--muted-foreground); font-size:13px; margin-top:2px;">Email me when it's my turn to sign, or a document I'm involved in is fully signed.</div>
+                        </label>
+                    </div>
+                    <div class="feedback-box" id="account-settings-feedback" style="margin-top:12px; display:none;"></div>
+                </div>
+
                 <div class="card" id="signer-info-card" style="display:none;">
                     <h3 style="margin-top:0; font-size:18px; font-weight:800; margin-bottom:8px;">Signer Information</h3>
                     <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:20px;">You've been granted signing access. Fill in your contact details so a process reviewer can attach you as a signer on documents.</p>
@@ -842,12 +868,98 @@
 
             document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
 
+            loadAccountSettings();
+
+            const isSignEligible = !!(user.designations && user.designations.some(d => d !== 'super_admin'));
+
             const signerCard = document.getElementById('signer-info-card');
-            if (user.designations && user.designations.some(d => d !== 'super_admin')) {
+            if (isSignEligible) {
                 signerCard.style.display = 'block';
                 loadSignerInfo();
             } else {
                 signerCard.style.display = 'none';
+            }
+
+            document.getElementById('notify-signature-row').style.display = isSignEligible ? 'flex' : 'none';
+        }
+
+        async function loadAccountSettings() {
+            try {
+                const mfaResp = await fetch(`${API_BASE}/api/v1/profile/mfa`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (mfaResp.ok) {
+                    const mfa = await mfaResp.json();
+                    document.getElementById('mfa-toggle').checked = !!mfa.mfa_enabled;
+                }
+            } catch (err) {}
+
+            try {
+                const notifResp = await fetch(`${API_BASE}/api/v1/profile/notifications`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (notifResp.ok) {
+                    const prefs = await notifResp.json();
+                    document.getElementById('notify-process-toggle').checked = !!prefs.notify_process_updates;
+                    document.getElementById('notify-signature-toggle').checked = !!prefs.notify_signature_events;
+                }
+            } catch (err) {}
+        }
+
+        async function toggleMfa() {
+            const feedback = document.getElementById('account-settings-feedback');
+            const enabled = document.getElementById('mfa-toggle').checked;
+            feedback.style.display = 'none';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/profile/mfa/toggle`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled })
+                });
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.textContent = enabled
+                        ? 'Email login code enabled. You\'ll be asked for a code the next time you log in.'
+                        : 'Email login code disabled.';
+                } else {
+                    document.getElementById('mfa-toggle').checked = !enabled;
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = 'Failed to update setting. Please try again.';
+                }
+            } catch (err) {
+                document.getElementById('mfa-toggle').checked = !enabled;
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Connection error. Please try again.';
+            }
+        }
+
+        async function saveNotificationSettings() {
+            const feedback = document.getElementById('account-settings-feedback');
+            const notify_process_updates = document.getElementById('notify-process-toggle').checked;
+            const notify_signature_events = document.getElementById('notify-signature-toggle').checked;
+            feedback.style.display = 'none';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/profile/notifications/toggle`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notify_process_updates, notify_signature_events })
+                });
+                feedback.style.display = 'block';
+                if (resp.ok) {
+                    feedback.className = 'feedback-box success';
+                    feedback.textContent = 'Notification preferences saved.';
+                } else {
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = 'Failed to update preferences. Please try again.';
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Connection error. Please try again.';
             }
         }
 

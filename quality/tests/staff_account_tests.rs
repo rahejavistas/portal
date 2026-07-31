@@ -6,7 +6,7 @@ fn auth(jwt: &str) -> String {
 
 #[tokio::test]
 async fn test_create_staff_grants_default_permissions() {
-    let env = setup_api_test_env(3190).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -29,7 +29,7 @@ async fn test_create_staff_grants_default_permissions() {
 
 #[tokio::test]
 async fn test_staff_account_can_log_in_and_use_default_permissions() {
-    let env = setup_api_test_env(3191).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -71,7 +71,7 @@ async fn test_staff_account_can_log_in_and_use_default_permissions() {
 
 #[tokio::test]
 async fn test_create_staff_requires_users_manage() {
-    let env = setup_api_test_env(3192).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 

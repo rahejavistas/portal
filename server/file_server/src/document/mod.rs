@@ -42,6 +42,7 @@ pub struct Document {
     pub is_user_uploaded: bool,
     pub is_upload_confirmed: bool,
     pub uploaded_by: Option<i32>,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]

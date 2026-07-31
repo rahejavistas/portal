@@ -44,7 +44,7 @@ fn upload_doc(url: &str, auth: &str, process_id: &str, filename: &str) -> String
 
 #[tokio::test]
 async fn test_process_api_workflow_lifecycle() {
-    let env = setup_api_test_env(3108).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);

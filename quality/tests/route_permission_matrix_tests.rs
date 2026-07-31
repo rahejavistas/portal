@@ -76,7 +76,7 @@ fn seeded_resident(
 /// A designation holding only `users.view` can list users, but nothing else.
 #[tokio::test]
 async fn test_users_view_only() {
-    let env = setup_api_test_env(3170).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(&env, &admin_jwt, "uview", "801", &["users.view"]);
@@ -114,7 +114,7 @@ async fn test_users_view_only() {
 /// or `/process/review`.
 #[tokio::test]
 async fn test_users_manage_only() {
-    let env = setup_api_test_env(3171).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(&env, &admin_jwt, "umanage", "802", &["users.manage"]);
@@ -152,7 +152,7 @@ async fn test_users_manage_only() {
 /// user/role management routes.
 #[tokio::test]
 async fn test_process_reviewer_only() {
-    let env = setup_api_test_env(3172).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(&env, &admin_jwt, "reviewer", "803", &["process.reviewer"]);
@@ -198,7 +198,7 @@ async fn test_process_reviewer_only() {
 /// (`documents.categories.manage`-gated).
 #[tokio::test]
 async fn test_designations_manage_only() {
-    let env = setup_api_test_env(3173).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(
@@ -247,7 +247,7 @@ async fn test_designations_manage_only() {
 /// document categories, but cannot create a designation or assign one.
 #[tokio::test]
 async fn test_documents_categories_manage_only() {
-    let env = setup_api_test_env(3174).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(
@@ -296,7 +296,7 @@ async fn test_documents_categories_manage_only() {
 /// would incorrectly suggest a blanket gate exists.
 #[tokio::test]
 async fn test_documents_routes_have_no_router_level_gate() {
-    let env = setup_api_test_env(3175).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(&env, &admin_jwt, "nodocs", "806", &[]);
@@ -325,7 +325,7 @@ async fn test_documents_routes_have_no_router_level_gate() {
 /// (`process.reviewer` — there is no separate signatures-management permission).
 #[tokio::test]
 async fn test_documents_signatures_queue_open_to_any_authenticated_user() {
-    let env = setup_api_test_env(3176).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     // No signatures-specific permission exists at all — seed a designation holding
@@ -360,7 +360,7 @@ async fn test_documents_signatures_queue_open_to_any_authenticated_user() {
 /// queue itself (`documents.signatures.sign`) unless they're the actual signer.
 #[tokio::test]
 async fn test_process_reviewer_manages_signer_directory() {
-    let env = setup_api_test_env(3177).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(
@@ -391,7 +391,7 @@ async fn test_process_reviewer_manages_signer_directory() {
 /// to show signature status without requiring a separate signature-specific grant.
 #[tokio::test]
 async fn test_documents_signatures_all_reachable_by_process_permissions() {
-    let env = setup_api_test_env(3178).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let jwt = seeded_resident(&env, &admin_jwt, "sigviaproc", "809", &["process.view"]);

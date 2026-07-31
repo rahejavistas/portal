@@ -218,7 +218,7 @@ pub(crate) const LOGIN_HTML: &str = r#"
             <div class="display-subtitle">Access Portal</div>
         </div>
         
-        <div class="login-card">
+        <div class="login-card" id="login-card">
             <h2>Sign In</h2>
             <form id="login-form">
                 <div class="form-group">
@@ -236,6 +236,23 @@ pub(crate) const LOGIN_HTML: &str = r#"
                 <a href="/forgot-password">Reset Password</a>
             </div>
         </div>
+
+        <div class="login-card" id="otp-card" style="display:none;">
+            <h2>Check Your Email</h2>
+            <p class="subtitle" style="margin-bottom:20px;">We sent a 6-digit code to your email. Enter it below to finish signing in.</p>
+            <form id="otp-form">
+                <div class="form-group">
+                    <label for="otp-code">Verification Code</label>
+                    <input type="text" id="otp-code" required placeholder="000000" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" style="letter-spacing:0.4em; text-align:center; font-size:20px; font-weight:700;">
+                </div>
+                <button type="submit">Verify &amp; Sign In</button>
+                <div class="error-msg" id="otp-error-msg"></div>
+            </form>
+            <div class="helper-links">
+                <a href="javascript:void(0)" id="otp-resend-link">Resend Code</a>
+                <a href="javascript:void(0)" id="otp-back-link">Use a Different Account</a>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -247,6 +264,7 @@ pub(crate) const LOGIN_HTML: &str = r#"
 
         const form = document.getElementById('login-form');
         const errorMsg = document.getElementById('error-msg');
+        let pendingToken = null;
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -268,6 +286,13 @@ pub(crate) const LOGIN_HTML: &str = r#"
                     localStorage.setItem('vfs_token', data.token);
                     localStorage.setItem('vfs_user', JSON.stringify(data.user));
                     window.location.href = '/dashboard';
+                } else if (response.ok && data.mfa_required) {
+                    pendingToken = data.pending_token;
+                    document.getElementById('login-card').style.display = 'none';
+                    document.getElementById('otp-card').style.display = 'block';
+                    document.getElementById('otp-error-msg').style.display = 'none';
+                    document.getElementById('otp-code').value = '';
+                    document.getElementById('otp-code').focus();
                 } else {
                     errorMsg.textContent = data.message || 'Invalid email or password';
                     errorMsg.style.display = 'block';
@@ -276,6 +301,85 @@ pub(crate) const LOGIN_HTML: &str = r#"
                 errorMsg.textContent = 'Failed to connect to backend server';
                 errorMsg.style.display = 'block';
             }
+        });
+
+        const otpForm = document.getElementById('otp-form');
+        const otpErrorMsg = document.getElementById('otp-error-msg');
+        const otpCodeInput = document.getElementById('otp-code');
+
+        otpCodeInput.addEventListener('input', () => {
+            otpCodeInput.value = otpCodeInput.value.replace(/[^0-9]/g, '');
+        });
+
+        otpForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            otpErrorMsg.style.display = 'none';
+            const code = document.getElementById('otp-code').value.trim();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/mfa/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pending_token: pendingToken, code })
+                });
+                const data = await response.json();
+
+                if (response.ok && data.status === 'success') {
+                    localStorage.setItem('vfs_token', data.token);
+                    localStorage.setItem('vfs_user', JSON.stringify(data.user));
+                    window.location.href = '/dashboard';
+                } else {
+                    otpErrorMsg.textContent = data.message || 'Incorrect code. Please try again.';
+                    otpErrorMsg.style.display = 'block';
+                    if (!data.mfa_required) {
+                        // Challenge is fully dead (expired / too many attempts) — send
+                        // them back to start over rather than let them keep guessing
+                        // against a pending_token that can never succeed again.
+                        setTimeout(() => {
+                            document.getElementById('otp-card').style.display = 'none';
+                            document.getElementById('login-card').style.display = 'block';
+                            pendingToken = null;
+                        }, 2500);
+                    }
+                }
+            } catch (err) {
+                otpErrorMsg.textContent = 'Failed to connect to backend server';
+                otpErrorMsg.style.display = 'block';
+            }
+        });
+
+        document.getElementById('otp-resend-link').addEventListener('click', async (e) => {
+            e.preventDefault();
+            otpErrorMsg.style.display = 'none';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/mfa/resend`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pending_token: pendingToken })
+                });
+                const data = await response.json();
+                otpErrorMsg.style.display = 'block';
+                if (response.ok) {
+                    otpErrorMsg.style.background = '#DCFCE7';
+                    otpErrorMsg.style.color = '#166534';
+                    otpErrorMsg.textContent = data.message || 'A new code has been sent.';
+                } else {
+                    otpErrorMsg.style.background = '#FEE2E2';
+                    otpErrorMsg.style.color = '#EF4444';
+                    otpErrorMsg.textContent = data.message || 'Failed to resend code.';
+                }
+            } catch (err) {
+                otpErrorMsg.style.display = 'block';
+                otpErrorMsg.textContent = 'Failed to connect to backend server';
+            }
+        });
+
+        document.getElementById('otp-back-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            pendingToken = null;
+            document.getElementById('otp-card').style.display = 'none';
+            document.getElementById('login-card').style.display = 'block';
+            document.getElementById('password').value = '';
         });
     </script>
 </body>

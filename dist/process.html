@@ -184,6 +184,32 @@
             background-color: var(--primary);
             color: var(--background);
         }
+        .nav-group-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .nav-group-arrow {
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .nav-group.collapsed .nav-group-arrow {
+            transform: rotate(-90deg);
+        }
+        .nav-subgroup {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .nav-group.collapsed .nav-subgroup {
+            display: none;
+        }
+        .nav-subitem {
+            padding-left: 28px;
+            font-size: 0.8125rem;
+        }
         .back-btn {
             display: block;
             padding: 12px 16px;
@@ -1053,6 +1079,16 @@
             <h3 style="margin-top:0; margin-bottom:8px; font-size:18px;">Add Signers</h3>
             <p id="add-signers-intro" style="margin-top:0; margin-bottom:16px; color:var(--muted-foreground); font-size:13px;"></p>
 
+            <div id="add-signers-provider-panel" style="display:none; margin-bottom:16px; padding:12px; border:1px solid var(--border); border-radius:8px;">
+                <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Signing Method</div>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer; font-size:14px;">
+                    <input type="radio" name="add-signers-provider" value="manual" checked onchange="setAddSignersProvider('manual')"> Manual (upload a signed copy)
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:14px;">
+                    <input type="radio" name="add-signers-provider" value="signyu" onchange="setAddSignersProvider('signyu')"> SignYu (sends signers a link to sign electronically)
+                </label>
+            </div>
+
             <div id="add-signers-slots-panel" style="display:none;"></div>
 
             <div id="add-signers-freeform-panel" style="display:none; gap:16px; flex-wrap:wrap;">
@@ -1134,6 +1170,11 @@
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
 
+        function toggleProcessNavGroup(groupId) {
+            const group = document.getElementById(groupId);
+            if (group) group.classList.toggle('collapsed');
+        }
+
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
@@ -1192,42 +1233,68 @@
             const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
             if (showAdminBranding) {
                 const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
-                const residentsLink = (user && user.can_view_users)
-                    ? `<a href="/admin?tab=residents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>`
+                const canViewUsers = !!(user && user.can_view_users);
+                const canManageProcessTemplates = !!(user && user.can_manage_process_templates);
+                const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
+                const canManageSignerDirectory = !!(user && user.can_review_process);
+                const residentsLink = canViewUsers
+                    ? `<a href="/admin?tab=residents" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Residents</a>`
                     : '';
                 const documentsLink = (user && (user.can_manage_documents || user.can_manage_categories))
                     ? `<a href="/admin?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>`
                     : '';
                 const rolesLink = canManageRoles
-                    ? `<a href="/admin?tab=roles" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Roles</a>`
+                    ? `<a href="/admin?tab=roles" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Roles &amp; Designations</a>`
                     : '';
-                const templatesLink = (user && user.can_manage_process_templates)
-                    ? `<a href="/admin?tab=templates" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
+                const residentsGroup = (canViewUsers || canManageRoles)
+                    ? `<div class="nav-group collapsed" id="residents-nav-group">
+                        <button type="button" class="nav-item nav-group-toggle" onclick="toggleProcessNavGroup('residents-nav-group')">
+                            <span>Residents</span>
+                            <span class="nav-group-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup">
+                            ${residentsLink}
+                            ${rolesLink}
+                        </div>
+                    </div>`
                     : '';
-                const signaturesLink = (user && ((user.designations && user.designations.some(d => d !== 'super_admin')) || user.can_review_process))
-                    ? `<a href="/admin?tab=signatures" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
+                const templatesLink = canManageProcessTemplates
+                    ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
+                    : '';
+                const signaturesLink = (canSignDocuments || canManageSignerDirectory)
+                    ? `<a href="/admin?tab=signatures" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
                     : '';
                 const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
                     : '';
                 const processesLink = IS_ADMIN_PROCESS_PAGE
-                    ? `<a href="/admin-process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
-                    : `<a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
+                    ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
                 const otherProcessLink = !IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user)
-                    ? `<a href="/admin-process" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    : '';
+                const processesGroup = (IS_ADMIN_PROCESS_PAGE || canAccessAdminProcessPage(user) || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory)
+                    ? `<div class="nav-group" id="processes-nav-group">
+                        <button type="button" class="nav-item nav-group-toggle" onclick="toggleProcessNavGroup('processes-nav-group')">
+                            <span>Processes</span>
+                            <span class="nav-group-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup">
+                            ${processesLink}
+                            ${otherProcessLink}
+                            ${signaturesLink}
+                            ${templatesLink}
+                        </div>
+                    </div>`
                     : '';
                 sidebarBrandContainer.innerHTML = `
                     <h1>Admin</h1>
                     <p>Raheja Vistas Admin Room</p>
                     <nav class="nav-menu">
-                        ${residentsLink}
+                        ${residentsGroup}
                         ${documentsLink}
-                        ${rolesLink}
-                        ${templatesLink}
-                        ${signaturesLink}
-                        ${processesLink}
-                        ${otherProcessLink}
+                        ${processesGroup}
                         ${myFlatDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
@@ -2108,14 +2175,24 @@
         let addSignersSelectedOrder = [];
         let addSignersSlotSelections = [];
         let activeSignersCache = null;
+        let addSignersProvider = 'manual';
+
+        function setAddSignersProvider(value) {
+            addSignersProvider = value;
+        }
 
         async function openAddSignersModal(stepId, fieldId, documentId, requiredDesignations) {
             addSignersContext = { stepId, fieldId, documentId, requiredDesignations: requiredDesignations || [] };
             addSignersSelectedOrder = [];
             addSignersSlotSelections = (requiredDesignations || []).map(() => '');
+            addSignersProvider = 'manual';
             const feedback = document.getElementById('add-signers-feedback');
             feedback.style.display = 'none';
             feedback.textContent = '';
+
+            const providerPanel = document.getElementById('add-signers-provider-panel');
+            providerPanel.style.display = 'none';
+            document.querySelector('input[name="add-signers-provider"][value="manual"]').checked = true;
 
             const usingSlots = (requiredDesignations || []).length > 0;
             document.getElementById('add-signers-intro').textContent = usingSlots
@@ -2139,6 +2216,17 @@
                 activeSignersCache = [];
             }
             renderAddSignersList();
+
+            try {
+                const statusResp = await fetch(`${API_BASE}/api/v1/admin/documents/signatures/provider-status`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (statusResp.ok) {
+                    const status = await statusResp.json();
+                    providerPanel.style.display = status.signyu_available ? 'block' : 'none';
+                }
+            } catch (e) {}
         }
 
         function closeAddSignersModal() {
@@ -2258,7 +2346,8 @@
                         template_step_id: addSignersContext.stepId,
                         template_field_id: addSignersContext.fieldId,
                         document_id: addSignersContext.documentId,
-                        signer_ids: signerIds
+                        signer_ids: signerIds,
+                        provider: addSignersProvider
                     })
                 });
                 if (resp.ok) {
@@ -2437,10 +2526,13 @@
                 }
 
                 progressEl.textContent = 'Confirming...';
-                
+
                 const confirmEndpoint = isCurrentAdmin
-                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    ? `${API_BASE}/api/v1/admin/process/confirm-upload`
                     : `${API_BASE}/api/v1/documents/confirm-upload`;
+                const confirmBody = isCurrentAdmin
+                    ? { process_id: processId, document_id }
+                    : { document_id };
 
                 const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
@@ -2448,7 +2540,7 @@
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ document_id })
+                    body: JSON.stringify(confirmBody)
                 });
 
                 if (!confirmRes.ok) {
@@ -2874,10 +2966,13 @@
                 }
 
                 if(progressEl) progressEl.textContent = 'Confirming upload...';
-                
+
                 const confirmEndpoint = isCurrentAdmin
-                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    ? `${API_BASE}/api/v1/admin/process/confirm-upload`
                     : `${API_BASE}/api/v1/documents/confirm-upload`;
+                const confirmBody = isCurrentAdmin
+                    ? { process_id: currentProcessDetails.process_id, document_id: document_id }
+                    : { document_id: document_id };
 
                 const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
@@ -2885,7 +2980,7 @@
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ document_id: document_id })
+                    body: JSON.stringify(confirmBody)
                 });
 
                 if (!confirmRes.ok) {

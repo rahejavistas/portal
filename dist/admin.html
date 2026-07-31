@@ -195,6 +195,32 @@
             background-color: var(--primary);
             color: var(--background);
         }
+        .nav-group-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        .nav-group-arrow {
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        }
+        .nav-group.collapsed .nav-group-arrow {
+            transform: rotate(-90deg);
+        }
+        .nav-subgroup {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 6px;
+        }
+        .nav-group.collapsed .nav-subgroup {
+            display: none;
+        }
+        .nav-subitem {
+            padding-left: 28px;
+            font-size: 0.8125rem;
+        }
         .back-btn {
             display: block;
             padding: 12px 16px;
@@ -654,7 +680,7 @@
                 -webkit-overflow-scrolling: touch;
             }
             table {
-                min-width: 480px;
+                min-width: 320px;
             }
             .admin-col-hide-mobile { display: none; }
             h2 { font-size: 1.75rem; }
@@ -673,8 +699,18 @@
             width: 300px; min-width: 300px; border-right: 1px solid var(--border);
             overflow-y: auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 10px;
         }
-        .builder-detail { flex: 1; overflow-y: auto; padding: 32px 40px; }
+        .builder-detail { flex: 1; overflow-y: auto; padding: 32px 40px; min-width: 0; }
         .builder-detail-inner { max-width: 760px; margin: 0 auto; }
+        @media (max-width: 768px) {
+            .builder-topbar { padding: 12px 16px; }
+            .builder-body { flex-direction: column; }
+            .builder-sidebar {
+                width: 100%; min-width: 0; max-height: 35vh;
+                border-right: none; border-bottom: 1px solid var(--border);
+                padding: 16px;
+            }
+            .builder-detail { padding: 20px 16px; }
+        }
         .step-nav-item {
             background-color: var(--background); border: 1px solid var(--border);
             border-radius: var(--radius-lg); padding: 16px 20px; display: flex;
@@ -759,24 +795,40 @@
                 <p>Raheja Vistas Admin Room</p>
                 
                 <nav class="nav-menu">
-                    <button class="nav-item" id="suite-btn-residents" style="display:none;" onclick="switchSuite('residents'); closeSidebar()">
-                        Residents
-                    </button>
+                    <div class="nav-group collapsed" id="residents-nav-group" style="display:none;">
+                        <button class="nav-item nav-group-toggle" id="residents-nav-toggle" onclick="toggleResidentsNav()">
+                            <span>Residents</span>
+                            <span class="nav-group-arrow" id="residents-nav-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup" id="residents-nav-subgroup">
+                            <button class="nav-item nav-subitem" id="suite-btn-residents" style="display:none;" onclick="switchSuite('residents'); closeSidebar()">
+                                Residents
+                            </button>
+                            <button class="nav-item nav-subitem" id="suite-btn-roles" style="display:none;" onclick="switchSuite('roles'); closeSidebar()">
+                                Roles &amp; Designations
+                            </button>
+                        </div>
+                    </div>
                     <button class="nav-item" id="suite-btn-documents" style="display:none;" onclick="switchSuite('documents'); closeSidebar()">
                         Documents
                     </button>
-                    <button class="nav-item" id="suite-btn-roles" style="display:none;" onclick="switchSuite('roles'); closeSidebar()">
-                        Roles
-                    </button>
-                    <button class="nav-item" id="suite-btn-templates" style="display:none;" onclick="switchSuite('templates'); closeSidebar()">
-                        Process Templates
-                    </button>
-                    <button class="nav-item" id="suite-btn-signatures" style="display:none;" onclick="switchSuite('signatures'); closeSidebar()">
-                        Signatures
-                    </button>
-                    <a href="/process" class="nav-item" id="suite-btn-workflows" style="text-decoration: none;" onclick="closeSidebar()">
-                        Processes
-                    </a>
+                    <div class="nav-group collapsed" id="processes-nav-group" style="display:none;">
+                        <button class="nav-item nav-group-toggle" id="processes-nav-toggle" onclick="toggleProcessesNav()">
+                            <span>Processes</span>
+                            <span class="nav-group-arrow" id="processes-nav-arrow">&#9662;</span>
+                        </button>
+                        <div class="nav-subgroup" id="processes-nav-subgroup">
+                            <a href="/process" class="nav-item nav-subitem" id="suite-btn-workflows" style="display:none; text-decoration: none;" onclick="closeSidebar()">
+                                Processes
+                            </a>
+                            <button class="nav-item nav-subitem" id="suite-btn-signatures" style="display:none;" onclick="switchSuite('signatures'); closeSidebar()">
+                                Signatures
+                            </button>
+                            <button class="nav-item nav-subitem" id="suite-btn-templates" style="display:none;" onclick="switchSuite('templates'); closeSidebar()">
+                                Process Templates
+                            </button>
+                        </div>
+                    </div>
                     <a href="/dashboard" class="admin-btn" id="my-flat-dashboard-link" style="display:none;">
                         My Flat Dashboard &rarr;
                     </a>
@@ -1161,7 +1213,7 @@
     <div id="template-builder-modal" class="builder-overlay">
         <div class="builder-topbar">
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-                <input type="text" id="builder-template-name" placeholder="Template name (e.g. Resident Onboarding)" style="font-size:18px; font-weight:800; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); min-width:280px;">
+                <input type="text" id="builder-template-name" placeholder="Template name (e.g. Resident Onboarding)" style="font-size:18px; font-weight:800; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); flex:1; min-width:180px;">
                 <span id="builder-version-badge" style="font-size:12px; font-weight:700; color:var(--muted-foreground);"></span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -1571,6 +1623,16 @@
             workflowsBtn.href = '/admin-process';
             workflowsBtn.textContent = 'Process Review';
         }
+        const processesNavGroup = document.getElementById('processes-nav-group');
+        if (processesNavGroup) {
+            processesNavGroup.style.display =
+                (canViewAllProcesses || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory) ? 'block' : 'none';
+        }
+        const residentsNavGroup = document.getElementById('residents-nav-group');
+        if (residentsNavGroup) {
+            residentsNavGroup.style.display =
+                (canViewUsers || canManageRoles || canManageDesignations || canViewRoles) ? 'block' : 'none';
+        }
         const defaultSuite = canViewUsers ? 'residents' : ((canManageDocuments || canManageCategories) ? 'documents' : (canManageRoles || canManageDesignations || canViewRoles ? 'roles' : ((canSignDocuments || canManageSignerDirectory) ? 'signatures' : null)));
 
         if (!token || !user) {
@@ -1711,12 +1773,35 @@
             switchSuite(defaultSuite);
         }
 
+        function toggleProcessesNav() {
+            document.getElementById('processes-nav-group').classList.toggle('collapsed');
+        }
+        function toggleResidentsNav() {
+            document.getElementById('residents-nav-group').classList.toggle('collapsed');
+        }
+
         function switchSuite(suiteName) {
             document.documentElement.setAttribute('data-tab', suiteName);
+
+            // Keep the URL in sync with the active tab. refreshProfile() below reloads
+            // the page whenever the fetched user object differs at all from the cached
+            // one (e.g. any field drifted since login) — without this, that reload would
+            // land back on a tab-less URL and silently snap back to defaultSuite (usually
+            // "residents"), which looks exactly like the tab you just clicked closing on
+            // its own a moment later.
+            const newUrl = `${window.location.pathname}?tab=${suiteName}`;
+            if (window.location.pathname + window.location.search !== newUrl) {
+                history.replaceState(null, '', newUrl);
+            }
 
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
 
             document.getElementById(`suite-btn-${suiteName}`).classList.add('active');
+            if (suiteName === 'residents' || suiteName === 'roles') {
+                document.getElementById('residents-nav-group').classList.remove('collapsed');
+            } else if (suiteName === 'templates' || suiteName === 'signatures') {
+                document.getElementById('processes-nav-group').classList.remove('collapsed');
+            }
             
             document.getElementById('suite-residents').style.display = suiteName === 'residents' ? 'block' : 'none';
             document.getElementById('suite-documents').style.display = suiteName === 'documents' ? 'block' : 'none';
@@ -2109,9 +2194,11 @@
                 return `
                     <tr>
                         <td style="font-weight:700;">${escapeHtml(t.name)}</td>
-                        <td style="text-align:right; vertical-align:top; white-space:nowrap;">
-                            <button class="action-select" style="cursor:pointer;" onclick="openTemplateVersionsModal(${t.template_id})">Versions (${t.versions.length})</button>
-                            <button class="action-select" style="cursor:pointer;" onclick="openTemplateBuilder(${t.template_id}, ${sortedVersions[0].version_id})">Edit Latest</button>
+                        <td style="text-align:right; vertical-align:top;">
+                            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
+                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openTemplateVersionsModal(${t.template_id})">Versions (${t.versions.length})</button>
+                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openTemplateBuilder(${t.template_id}, ${sortedVersions[0].version_id})">Edit Latest</button>
+                            </div>
                         </td>
                     </tr>
                 `;
@@ -2185,7 +2272,7 @@
                     builderState = { template_id: templateId, name: tree.name, description: tree.description,
                         is_optional: tree.is_optional, is_review_required: tree.is_review_required,
                         fields: null, substeps: (tree.substeps || []).map(stageFromServer) };
-                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a NEW version`;
+                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a new version, which you'll need to activate before residents start using it`;
                 } catch (err) {
                     builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
                 }
@@ -3696,11 +3783,11 @@ function openDesignationPicker(field) {
 
                 tr.innerHTML = `
                     <td>
-                        <div style="display:flex; align-items:center; gap:8px; max-width:480px;">
+                        <div style="display:flex; align-items:center; gap:8px; max-width:min(480px, 70vw);">
                             <div class="truncate" style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" title="${truncTitle(doc.title)}" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(truncText(doc.title, 70))}</div>
                             ${badgeHtml}
                         </div>
-                        <div class="truncate-2-lines" style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: 480px; line-height: 1.45;" title="${truncTitle(doc.description)}">
+                        <div class="truncate-2-lines" style="font-size:13px; color:var(--muted-foreground); margin-top:4px; max-width: min(480px, 70vw); line-height: 1.45;" title="${truncTitle(doc.description)}">
                             ${escapeHtml(doc.description) || 'No description...'}
                         </div>
                         ${signatureLineageHtml}

@@ -13,6 +13,28 @@ pub enum AuthResult {
     AccountLocked,
 }
 
+pub enum MfaVerifyResult {
+    Success(User),
+    InvalidCode,
+    TooManyAttempts,
+    Expired,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct NotificationPrefs {
+    pub notify_process_updates: bool,
+    pub notify_signature_events: bool,
+}
+
+impl Default for NotificationPrefs {
+    fn default() -> Self {
+        Self {
+            notify_process_updates: true,
+            notify_signature_events: true,
+        }
+    }
+}
+
 /// All permission codes, compile-time checked instead of raw strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permission {
@@ -666,6 +688,189 @@ impl PermissionsManager {
 
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(true)
+    }
+
+    /// No row yet defaults to `false` (MFA off).
+    pub async fn get_mfa_enabled(&self, user_id: i32) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar("SELECT mfa_enabled FROM user_settings WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map(|v: Option<bool>| v.unwrap_or(false))
+    }
+
+    /// Ignores expiry — resend should still work after the code itself expired.
+    pub async fn get_user_id_for_pending_mfa(
+        &self,
+        pending_token: &str,
+    ) -> Result<Option<i32>, sqlx::Error> {
+        sqlx::query_scalar("SELECT user_id FROM user_credentials WHERE mfa_pending_token = $1")
+            .bind(pending_token)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
+    /// Turns email-OTP MFA on/off for `user_id`'s own account.
+    pub async fn set_mfa_enabled(&self, user_id: i32, enabled: bool) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO user_settings (user_id, mfa_enabled) VALUES ($1, $2) \
+             ON CONFLICT (user_id) DO UPDATE SET mfa_enabled = $2, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(enabled)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// No row yet defaults to both ON (opposite default from MFA).
+    pub async fn get_notification_prefs(
+        &self,
+        user_id: i32,
+    ) -> Result<NotificationPrefs, sqlx::Error> {
+        let row: Option<(bool, bool)> = sqlx::query_as(
+            "SELECT notify_process_updates, notify_signature_events FROM user_settings \
+             WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(match row {
+            Some((notify_process_updates, notify_signature_events)) => NotificationPrefs {
+                notify_process_updates,
+                notify_signature_events,
+            },
+            None => NotificationPrefs::default(),
+        })
+    }
+
+    /// Sets both notification preferences for `user_id` at once.
+    pub async fn set_notification_prefs(
+        &self,
+        user_id: i32,
+        prefs: NotificationPrefs,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO user_settings (user_id, notify_process_updates, notify_signature_events) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (user_id) DO UPDATE SET \
+                 notify_process_updates = $2, notify_signature_events = $3, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(prefs.notify_process_updates)
+        .bind(prefs.notify_signature_events)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Replaces any previous unfinished challenge for `user_id`.
+    pub async fn create_mfa_challenge(
+        &self,
+        user_id: i32,
+        otp_code: &str,
+        pending_token: &str,
+        expires_in_seconds: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE user_credentials SET mfa_otp_code = $1, mfa_pending_token = $2, \
+             mfa_otp_expires_at = NOW() + INTERVAL '1 second' * $3, mfa_otp_attempts = 0, \
+             mfa_otp_resends = 0 \
+             WHERE user_id = $4",
+        )
+        .bind(otp_code)
+        .bind(pending_token)
+        .bind(expires_in_seconds)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Capped at 3 resends (`Ok(false)` past that) so a leaked `pending_token` can't
+    /// grind through unlimited batches of 5 guesses.
+    pub async fn resend_mfa_challenge(
+        &self,
+        user_id: i32,
+        otp_code: &str,
+        expires_in_seconds: i64,
+    ) -> Result<bool, sqlx::Error> {
+        let resends: Option<i32> =
+            sqlx::query_scalar("SELECT mfa_otp_resends FROM user_credentials WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        if resends.unwrap_or(0) >= 3 {
+            return Ok(false);
+        }
+
+        sqlx::query(
+            "UPDATE user_credentials SET mfa_otp_code = $1, \
+             mfa_otp_expires_at = NOW() + INTERVAL '1 second' * $2, mfa_otp_attempts = 0, \
+             mfa_otp_resends = mfa_otp_resends + 1 \
+             WHERE user_id = $3",
+        )
+        .bind(otp_code)
+        .bind(expires_in_seconds)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
+    }
+
+    /// Row-locked; caps at 5 wrong codes, then the challenge is dead.
+    pub async fn verify_mfa_otp(
+        &self,
+        pending_token: &str,
+        code: &str,
+    ) -> Result<MfaVerifyResult, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let row: Option<(i32, Option<String>, i32)> = sqlx::query_as(
+            "SELECT user_id, mfa_otp_code, mfa_otp_attempts FROM user_credentials \
+             WHERE mfa_pending_token = $1 AND mfa_otp_expires_at > NOW() FOR UPDATE",
+        )
+        .bind(pending_token)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some((user_id, Some(stored_code), attempts)) = row else {
+            return Ok(MfaVerifyResult::Expired);
+        };
+
+        if attempts >= 5 {
+            return Ok(MfaVerifyResult::TooManyAttempts);
+        }
+
+        if stored_code != code {
+            sqlx::query(
+                "UPDATE user_credentials SET mfa_otp_attempts = mfa_otp_attempts + 1 \
+                 WHERE user_id = $1",
+            )
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(MfaVerifyResult::InvalidCode);
+        }
+
+        sqlx::query(
+            "UPDATE user_credentials SET mfa_otp_code = NULL, mfa_pending_token = NULL, \
+             mfa_otp_expires_at = NULL, mfa_otp_attempts = 0 WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+
+        let user = self.get_user_by_id(user_id).await?;
+        tx.commit().await?;
+
+        match user {
+            Some(user) if !user.is_orphaned() => Ok(MfaVerifyResult::Success(user)),
+            _ => Ok(MfaVerifyResult::InvalidCode),
+        }
     }
 
     /// Fetches all users from the users table, aggregating their active flat info, designations,

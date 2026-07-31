@@ -234,34 +234,42 @@ pub async fn admin_review_step(
     tx.commit().await.internal_err()?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
-    if let Some(ctx) = build_notification_ctx(
-        &state.pg_pool,
-        info.user_id,
-        &state.super_admin_email,
-        &template.name,
-    )
-    .await
-    {
-        // Resolve flagged step IDs to human-readable names for the email
-        let flagged_names: Vec<String> = payload
-            .flagged_step_ids
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|&id| find_step_name(&template, id))
-            .collect();
-
-        process::notification::notify_user_review(
-            &ctx,
-            process::notification::ReviewNotificationParams {
-                process_id: payload.process_id,
-                step_name: &step_name,
-                is_approved: payload.is_approved,
-                notes: payload.notes.as_deref(),
-                flagged_step_names: &flagged_names,
-            },
+    let wants_notification = state
+        .permissions_manager
+        .get_notification_prefs(info.user_id)
+        .await
+        .map(|p| p.notify_process_updates)
+        .unwrap_or(true);
+    if wants_notification {
+        if let Some(ctx) = build_notification_ctx(
+            &state.pg_pool,
+            info.user_id,
+            &state.super_admin_email,
+            &template.name,
         )
-        .await;
+        .await
+        {
+            // Resolve flagged step IDs to human-readable names for the email
+            let flagged_names: Vec<String> = payload
+                .flagged_step_ids
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|&id| find_step_name(&template, id))
+                .collect();
+
+            process::notification::notify_user_review(
+                &ctx,
+                process::notification::ReviewNotificationParams {
+                    process_id: payload.process_id,
+                    step_name: &step_name,
+                    is_approved: payload.is_approved,
+                    notes: payload.notes.as_deref(),
+                    flagged_step_names: &flagged_names,
+                },
+            )
+            .await;
+        }
     }
 
     Ok(Json(AdminReviewResponse {
@@ -295,21 +303,29 @@ pub async fn admin_revoke_step(
     tx.commit().await.internal_err()?;
 
     let step_name = find_step_name(&template, payload.template_step_id);
-    if let Some(ctx) = build_notification_ctx(
-        &state.pg_pool,
-        info.user_id,
-        &state.super_admin_email,
-        &template.name,
-    )
-    .await
-    {
-        process::notification::notify_user_revoke(
-            &ctx,
-            payload.process_id,
-            &step_name,
-            payload.notes.as_deref(),
+    let wants_notification = state
+        .permissions_manager
+        .get_notification_prefs(info.user_id)
+        .await
+        .map(|p| p.notify_process_updates)
+        .unwrap_or(true);
+    if wants_notification {
+        if let Some(ctx) = build_notification_ctx(
+            &state.pg_pool,
+            info.user_id,
+            &state.super_admin_email,
+            &template.name,
         )
-        .await;
+        .await
+        {
+            process::notification::notify_user_revoke(
+                &ctx,
+                payload.process_id,
+                &step_name,
+                payload.notes.as_deref(),
+            )
+            .await;
+        }
     }
 
     Ok(Json(AdminRevokeResponse {
@@ -400,11 +416,26 @@ pub async fn admin_add_document_signers(
         ));
     }
 
-    if payload.provider == "signyu" && state.signyu_client.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json("SignYu is not configured on this server".to_string()),
-        ));
+    if payload.provider == "signyu" {
+        if state.signyu_client.is_none() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json("SignYu is not configured on this server".to_string()),
+            ));
+        }
+        let content_type: Option<String> =
+            sqlx::query_scalar("SELECT content_type FROM documents WHERE document_id = $1")
+                .bind(payload.document_id)
+                .fetch_optional(&mut *conn)
+                .await
+                .internal_err()?
+                .flatten();
+        if content_type.as_deref() != Some("application/pdf") {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json("SignYu only supports PDF documents".to_string()),
+            ));
+        }
     }
 
     validate_signer_order_against_designations(&state, &template, &payload).await?;
@@ -448,14 +479,22 @@ pub async fn admin_add_document_signers(
             .unwrap_or_else(|| "Document".to_string());
 
         for req in &requirements {
-            process::notification::notify_signature_queue(
-                &req.signer_email,
-                &template.name,
-                &step_name,
-                &document_title,
-                payload.process_id,
-            )
-            .await;
+            let wants_notification = state
+                .permissions_manager
+                .get_notification_prefs(req.signer_user_id)
+                .await
+                .map(|p| p.notify_signature_events)
+                .unwrap_or(true);
+            if wants_notification {
+                process::notification::notify_signature_queue(
+                    &req.signer_email,
+                    &template.name,
+                    &step_name,
+                    &document_title,
+                    payload.process_id,
+                )
+                .await;
+            }
         }
     }
 

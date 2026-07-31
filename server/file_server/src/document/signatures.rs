@@ -363,6 +363,7 @@ impl DocumentManager {
             false,
             false,
             None,
+            Some("application/pdf"),
         )
         .await?;
 
@@ -446,6 +447,7 @@ impl DocumentManager {
             false, // is_user_uploaded
             false, // is_upload_confirmed: not until the client finishes the PUT
             Some(signer_user_id),
+            Some(content_type),
         )
         .await?;
 

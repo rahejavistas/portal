@@ -43,8 +43,24 @@ first place.
 ### POST `/api/v1/login`
 No auth required.
 * **Request:** `{ "email": "user@example.com", "password": "..." }`
-* **Response (200):** `{ "status": "success", "user": { ...User }, "token": "<jwt>", "message": null }`
+* **Response (200), MFA off:** `{ "status": "success", "user": { ...User }, "token": "<jwt>", "message": null }`
+* **Response (200), MFA on for this account:** `{ "status": "mfa_required", "user": null, "token": null, "mfa_required": true, "pending_token": "<opaque>" }` — a 6-digit code has been emailed; no session token is issued yet. Finish via `/api/v1/mfa/verify` below.
 * **403** if the account is locked (too many failed attempts); **401** on invalid credentials.
+
+### Email OTP MFA
+MFA is fully **opt-in per account** (see [Account Settings](#account-settings-mfa--notification-preferences) below) — there is currently no forced-MFA rule for any designation, including `super_admin`. All three endpoints below are unauthenticated (no `Authorization` header) since the caller doesn't have a session token yet — they're keyed entirely off the opaque `pending_token` issued by `/login`.
+
+### POST `/api/v1/mfa/verify`
+No auth required.
+* **Request:** `{ "pending_token": "<opaque>", "code": "123456" }`
+* **Response (200):** `{ "status": "success", "user": { ...User }, "token": "<jwt>", "message": null }` — same shape as a normal successful login.
+* **400** `{ "mfa_required": false, "message": "..." }` if the code is wrong, expired, or the challenge was already used/replaced by a newer login — the client should fall back to the login form. Wrong-code attempts are capped at 5 before the whole challenge is dead (`TooManyAttempts`); a fresh login is then required to get a new code.
+
+### POST `/api/v1/mfa/resend`
+No auth required.
+* **Request:** `{ "pending_token": "<opaque>" }`
+* **Response (200):** `{ "status": "success", "message": "A new code has been sent." }` — issues a fresh 6-digit code against the same `pending_token`, resets the wrong-attempt counter.
+* **403** once a single login's challenge has been resent 3 times — this cap exists specifically so a leaked `pending_token` can't be used to indefinitely reset the 5-wrong-attempt counter and grind through unlimited guesses. A fresh login is required past that point.
 
 ### POST `/api/v1/forgot-password`
 No auth required.
@@ -88,6 +104,30 @@ Returned by `/api/v1/login`, `/api/v1/profile`, and `/api/v1/admin/users/list`:
 
 ---
 
+## Account Settings: MFA & notification preferences
+
+Both live in a single `user_settings` row per user (auto-created on first write, defaults apply if the row doesn't exist yet): `mfa_enabled` defaults **off**, `notify_process_updates`/`notify_signature_events` default **on**. Every notification email that targets a specific known recipient (process approve/reject/revoke, "your turn to sign"/"document fully signed") checks the recipient's own preference before sending — an unreadable/missing row is treated as "send" (fail open), never as silent suppression of a real error. The one exception is the admin-pending-review email, which goes to a single fixed `super_admin_email` config value with no per-user row to check against, so it's unconditional.
+
+### POST `/api/v1/profile/mfa`
+Any authenticated user. Returns the caller's own MFA setting.
+* **Response (200):** `{ "mfa_enabled": false, "forced": false }` — `forced` is currently always `false` (no designation is ever forced into MFA; see the login section above).
+
+### POST `/api/v1/profile/mfa/toggle`
+Any authenticated user. Self-service only — always the session user's own setting.
+* **Request:** `{ "enabled": true }`
+* **Response (200):** `{ "mfa_enabled": true, "forced": false }`
+
+### POST `/api/v1/profile/notifications`
+Any authenticated user. Returns the caller's own notification preferences.
+* **Response (200):** `{ "notify_process_updates": true, "notify_signature_events": true }`
+
+### POST `/api/v1/profile/notifications/toggle`
+Any authenticated user. Self-service only.
+* **Request:** `{ "notify_process_updates": true, "notify_signature_events": false }` — both fields required, always sets both together.
+* **Response (200):** `{ "notify_process_updates": true, "notify_signature_events": false }`
+
+---
+
 ## Resident Document APIs
 
 See [Document Upload Flow](DOCUMENT_UPLOAD.md) for the presigned-URL upload mechanism and access rules.
@@ -127,7 +167,8 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
     "is_deleted": false,
     "is_user_uploaded": true,
     "is_upload_confirmed": true,
-    "uploaded_by": 12
+    "uploaded_by": 12,
+    "content_type": "application/pdf"
   },
   "metadata": {
     "document_id": "uuid",
@@ -143,7 +184,7 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
   "download_url": "https://..."
 }
 ```
-`metadata` and `flat` are `null` when not applicable. `subcategory_*` fields inside `metadata` are `null` when the document has no subcategory tag (subcategories are always optional).
+`metadata` and `flat` are `null` when not applicable. `subcategory_*` fields inside `metadata` are `null` when the document has no subcategory tag (subcategories are always optional). `content_type` is captured once at upload time from the file extension and never changes afterward — editing a document's title/description/category never touches it, and a document is never overwritten in place (every "replacement", e.g. a new signature-chain copy, is a brand-new row with its own `content_type`). Documents uploaded before this field existed have `content_type: null`.
 
 ---
 
@@ -178,7 +219,7 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
     "next_actions": [ { "template_step_id": 3, "name": "Upload ID Proof", "assigned_to": "user" } ],
     "reviews": [ { "review_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "is_approved": true, "notes": "Looks good", "created_at": "...", "flagged_step_ids": [] } ],
     "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "..." } ],
-    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
+    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf", "document_content_type": "application/pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
   }
   ```
   `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` is only populated for callers with `process.reviewer`/`process.view`. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
@@ -202,7 +243,7 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
 ### POST `/api/v1/process/download-url`
 * **Request:** `{ "process_id": "uuid", "document_id": "uuid" }`
 * **Response (200):** `{ "download_url": "https://..." }`
-* Holders of `process.reviewer`/`process.view` can download any process's attached documents; access is evaluated as the process owner would see it. **403/404** otherwise.
+* Holders of `process.reviewer`/`process.view` can download a process's attached documents — but only documents actually attached to *that* process, verified via its field history, not a blanket category grant. No document-category permission is required for this. **403/404** otherwise.
 
 ---
 
@@ -217,6 +258,12 @@ Requires `users.manage`.
 * **Request:** `{ "email": "new@example.com", "wing": "A", "flat_number": "301" }`
 * **Response (201):** `User`.
 * **400** on invalid email/flat.
+
+### POST `/api/v1/admin/users/create-staff`
+Requires `users.manage`. Creates an account with no flat ownership, auto-assigned the `staff` designation.
+* **Request:** `{ "email": "staff@example.com" }`
+* **Response (201):** `User`.
+* **400** if `email` is empty.
 
 ### POST `/api/v1/admin/users/revoke-flat`
 Requires `users.manage`.
@@ -308,6 +355,11 @@ Reopens an already-completed/pending step for resident re-submission.
 Uploads a document as a reviewer, attached to a process. The backend derives the flat mapping from the process's ownership and forces category `RESIDENT_SPECIFIC`.
 * **Request:** `{ "process_id": "uuid", "title": "Reviewer note attachment", "filename": "note.pdf", "content_type": "application/pdf" }`
 * **Response (201):** `{ "document_id": "uuid", "upload_url": "https://..." }`
+
+### POST `/api/v1/admin/process/confirm-upload`
+Confirms an upload started via the endpoint above. **Deliberately separate from** [`/admin/documents/confirm-upload`](#post-apiv1admindocumentsconfirm-upload) — that one requires `documents.all.manage` or a category-level `can_manage` grant, which a plain `process.reviewer` won't have. This endpoint only re-checks that the caller can review the given `process_id` (same as starting the upload) — **no document-category grant is required or checked at all.** This is intentional: a reviewer's ability to upload/confirm/download documents through the process-review flow is scoped to the specific process they're authorized to review, never to a whole document category. Granting a role broad `RESIDENT_SPECIFIC` category access (via Roles → Category Access) is a *separate*, wider capability — it only matters for the general [Admin Document APIs](#admin-document-apis) library, not for anything in this section.
+* **Request:** `{ "process_id": "uuid", "document_id": "uuid" }`
+* **Response (200):** `{ "status": "confirmed" }`
 
 ### POST `/api/v1/admin/process/add-note`
 Adds a standalone internal-only comment on a process step — never shown to the resident.
@@ -483,7 +535,7 @@ Requires `process.reviewer`. Attaches one or more signers (by `signer_id`, from 
     "provider": "manual"
   }
   ```
-  `provider` defaults to `"manual"`. `"signyu"` sends the document out via SignYu instead (see below) — rejected with **400** if no `SIGNYU_API_KEY` is configured.
+  `provider` defaults to `"manual"`. `"signyu"` sends the document out via SignYu instead (see below) — rejected with **400** if no `SIGNYU_API_KEY` is configured, or if the document's `content_type` isn't `application/pdf` (SignYu only accepts PDFs; the UI hides the SignYu option for non-PDF documents, but this is enforced server-side regardless of what the client sends).
 
   If the target field declares `required_signs_from_designations`, `signer_ids` is validated
   against it (**400** on failure): every signer must currently hold one of the listed
@@ -500,6 +552,15 @@ Any authenticated user — no permission gate; the response is self-scoped, so n
 Requires `process.reviewer`, `process.view`, or `documents.all.manage`. The request body is optional:
 * **Request:** `{}` (or no body) — every requirement regardless of status, used to build the document-list signature lineage (original ↔ signed copy). `{ "document_id": "<uuid>" }` — scoped to just that document's requirements, in `sign_order`.
 * **Response (200):** `Vec<SignatureRequirement>`.
+
+### POST `/api/v1/admin/documents/signatures/provider-status`
+Any authenticated user — no permission gate.
+* **Response (200):** `{ "signyu_available": true }` — whether `SIGNYU_API_KEY` is configured. Lets the "Add Signers" UI hide the SignYu option entirely rather than offering a choice that will 400; the UI additionally only shows it when the target document's `content_type` is `application/pdf` (see above).
+
+### POST `/api/v1/admin/documents/signatures/document-download-url`
+No permission gate — the caller must BE the requirement's own signer, and only while it's still `PENDING` (**403** otherwise). Lets the signer view what they're about to sign before doing so: the original document for the first signer in the chain, otherwise the previous signer's already-signed copy.
+* **Request:** `{ "requirement_id": 4 }`
+* **Response (200):** `DocumentWithMetadata` (includes a presigned `download_url`).
 
 ### POST `/api/v1/admin/documents/signatures/replace-upload-url`
 No permission gate — the caller must BE the requirement's own signer (**403** otherwise, checked in the handler). Nobody else, not even `process.reviewer` or super_admin, can act on someone else's requirement — signing is a legal act tied to a specific person. Generates a presigned S3 PUT URL for the signed replacement file. **400** if it isn't this signer's turn yet. **403** if the field declares `required_signs_from_designations` and the signer no longer currently holds one of them (re-checked live, not just at attach time — a designation revoked after attach invalidates the pending requirement).
