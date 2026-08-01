@@ -1212,7 +1212,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         }
 
         if (!token || !user) {
-            window.location.href = '/login';
+            window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         } else if (IS_ADMIN_PROCESS_PAGE && !canAccessAdminProcessPage(user)) {
             window.location.href = '/process';
         }

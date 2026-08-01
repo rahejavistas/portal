@@ -42,14 +42,16 @@ fn generate_pending_token() -> String {
 }
 
 async fn send_mfa_otp_email(to: &str, code: &str) {
-    let payload = email::Email::Generic {
+    let payload = email::EmailMessage {
         to: to.to_string(),
-        subject: "Raheja Vistas Portal: Your Login Code".to_string(),
-        body: format!(
-            "Your login verification code is: {}\n\nThis code expires in 10 minutes. \
-             If you didn't try to log in, you can ignore this email.",
-            code
-        ),
+        subject: format!("{} is your Raheja Vistas login code", code),
+        heading: "Your Login Code".to_string(),
+        paragraphs: vec![
+            "Enter this code to finish signing in. It expires in 10 minutes.".to_string(),
+            "If you didn't try to log in, you can ignore this email.".to_string(),
+        ],
+        code: Some(code.to_string()),
+        cta: None,
     };
     if let Err(e) = email::send_email(&payload).await {
         eprintln!("MFA OTP email send error: {}", e);
@@ -463,15 +465,25 @@ pub async fn forgot_password(
         }
     }
 
-    let reset_link = format!("http://localhost:4000/reset-password?token={}", token);
+    let reset_link = format!(
+        "{}/reset-password?token={}",
+        email::config::portal_base_url(),
+        token
+    );
 
-    let email_payload = email::Email::ForgotPassword {
+    let email_payload = email::EmailMessage {
         to: email.clone(),
         subject: "Raheja Vistas Documents Portal: Password Setup / Reset".to_string(),
-        body: format!(
-            "Dear User,\n\nPlease use the following link to setup/reset your password: {}",
-            reset_link
-        ),
+        heading: "Set Up / Reset Your Password".to_string(),
+        paragraphs: vec![
+            "Click the button below to set up or reset your password.".to_string(),
+            "If you didn't request this, you can ignore this email.".to_string(),
+        ],
+        code: None,
+        cta: Some(email::Cta {
+            label: "Set Password".to_string(),
+            url: reset_link,
+        }),
     };
 
     // Fire-and-forget: an email delivery failure shouldn't fail the request.

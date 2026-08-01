@@ -258,8 +258,18 @@ pub(crate) const LOGIN_HTML: &str = r#"
     <script>
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
 
+        // Only trust a same-origin relative path (must start with a single '/') — never
+        // an absolute/protocol-relative URL, which would make this an open redirect.
+        function postLoginRedirectUrl() {
+            const target = new URLSearchParams(window.location.search).get('redirect');
+            if (target && target.startsWith('/') && !target.startsWith('//')) {
+                return target;
+            }
+            return '/dashboard';
+        }
+
         if (localStorage.getItem('vfs_token')) {
-            window.location.href = '/dashboard';
+            window.location.href = postLoginRedirectUrl();
         }
 
         const form = document.getElementById('login-form');
@@ -285,7 +295,7 @@ pub(crate) const LOGIN_HTML: &str = r#"
                 if (response.ok && data.status === 'success') {
                     localStorage.setItem('vfs_token', data.token);
                     localStorage.setItem('vfs_user', JSON.stringify(data.user));
-                    window.location.href = '/dashboard';
+                    window.location.href = postLoginRedirectUrl();
                 } else if (response.ok && data.mfa_required) {
                     pendingToken = data.pending_token;
                     document.getElementById('login-card').style.display = 'none';
@@ -327,7 +337,7 @@ pub(crate) const LOGIN_HTML: &str = r#"
                 if (response.ok && data.status === 'success') {
                     localStorage.setItem('vfs_token', data.token);
                     localStorage.setItem('vfs_user', JSON.stringify(data.user));
-                    window.location.href = '/dashboard';
+                    window.location.href = postLoginRedirectUrl();
                 } else {
                     otpErrorMsg.textContent = data.message || 'Incorrect code. Please try again.';
                     otpErrorMsg.style.display = 'block';

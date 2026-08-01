@@ -18,14 +18,19 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> axum::respo
 /// failure, never allowed to fail the assign/revoke action itself.
 async fn notify_designation_change(user_email: &str, designation_code: &str, granted: bool) {
     let verb = if granted { "granted" } else { "revoked" };
-    let payload = email::Email::Generic {
+    let payload = email::EmailMessage {
         to: user_email.to_string(),
         subject: "Your Raheja Vistas role has changed".to_string(),
-        body: format!(
-            "Hello,\n\nThe '{}' role has been {} on your account.\n\n\
-             Please log in to the Raheja Vistas portal to see what this changes for you.\n",
+        heading: "Your Role Has Changed".to_string(),
+        paragraphs: vec![format!(
+            "The '{}' role has been {} on your account.",
             designation_code, verb
-        ),
+        )],
+        code: None,
+        cta: Some(email::Cta {
+            label: "Open Portal".to_string(),
+            url: format!("{}/dashboard", email::config::portal_base_url()),
+        }),
     };
     if let Err(e) = email::send_email(&payload).await {
         eprintln!(

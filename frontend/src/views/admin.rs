@@ -1637,7 +1637,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
         if (!token || !user) {
             localStorage.clear();
-            window.location.href = '/login';
+            window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         } else {
             if (!isAdminUser(user)) {
                 window.location.href = '/dashboard';

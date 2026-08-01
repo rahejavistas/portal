@@ -73,6 +73,7 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_SENDER_EMAIL=${SMTP_SENDER_EMAIL}
+      - PORTAL_BASE_URL=${PORTAL_BASE_URL}
     ports:
       - "3000:3000"
     restart: always
