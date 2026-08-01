@@ -1019,7 +1019,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
         if (!token || !userStr) {
             localStorage.clear();
-            window.location.href = '/login';
+            window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         } else {
             const user = JSON.parse(userStr);
             renderProfile(user);

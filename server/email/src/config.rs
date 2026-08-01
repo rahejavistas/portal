@@ -31,3 +31,13 @@ impl EmailConfig {
         })
     }
 }
+
+/// Base URL emailed links point at (e.g. `https://portal.example.com`). Separate from
+/// `EmailConfig` since it's not part of the SMTP on/off gate — falls back to the local
+/// dev server rather than disabling email entirely when unset.
+pub fn portal_base_url() -> String {
+    env::var("PORTAL_BASE_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "http://localhost:4000".to_string())
+}

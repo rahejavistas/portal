@@ -43,7 +43,12 @@ fn record_response_metric(operation: &str, status_code: Option<i32>) {
 impl SignYuClient {
     pub fn new(base_url: String, api_key: String, pg_pool: sqlx::PgPool) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // reqwest::Client::new() has NO default timeout — an unresponsive SignYu
+            // would otherwise hang the calling request (and burn Lambda time) forever.
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build SignYu HTTP client"),
             base_url,
             api_key,
             pg_pool,

@@ -11,17 +11,31 @@ pub struct NotificationContext {
     pub process_name: String,
 }
 
+const PROCESS_UPDATE_SUBJECT: &str = "Update to a process";
+
 // ---------------------------------------------------------------------------
 // Internal dispatch helper — every public function delegates here.
 // Failures are logged but never propagated, so callers never gate business
 // logic on notification delivery.
 // ---------------------------------------------------------------------------
 
-async fn dispatch(to: &str, subject: String, body: String, process_id: Uuid) {
-    let payload = email::Email::Generic {
+async fn dispatch(
+    to: &str,
+    heading: &str,
+    paragraphs: Vec<String>,
+    cta_url: String,
+    process_id: Uuid,
+) {
+    let payload = email::EmailMessage {
         to: to.to_string(),
-        subject,
-        body,
+        subject: PROCESS_UPDATE_SUBJECT.to_string(),
+        heading: heading.to_string(),
+        paragraphs,
+        code: None,
+        cta: Some(email::Cta {
+            label: "Open Portal".to_string(),
+            url: cta_url,
+        }),
     };
 
     if let Err(e) = email::send_email(&payload).await {
@@ -30,6 +44,32 @@ async fn dispatch(to: &str, subject: String, body: String, process_id: Uuid) {
             process_id, e
         );
     }
+}
+
+/// Deep-links straight into the resident's own process detail (the resident-facing
+/// `/process` page reads `?process_id=` on load and opens that process directly).
+fn portal_process_url(process_id: Uuid) -> String {
+    format!(
+        "{}/process?process_id={}",
+        email::config::portal_base_url(),
+        process_id
+    )
+}
+
+/// Deep-links a reviewer straight into the process needing review (the `/admin-process`
+/// page shares the same `?process_id=` deep-link support as the resident-facing one).
+fn portal_admin_process_url(process_id: Uuid) -> String {
+    format!(
+        "{}/admin-process?process_id={}",
+        email::config::portal_base_url(),
+        process_id
+    )
+}
+
+/// Deep-links a signer straight into their signing queue (the `/admin` page reads
+/// `?tab=` on load — `signatures` is open to any designation holder, not just admins).
+fn portal_signature_queue_url() -> String {
+    format!("{}/admin?tab=signatures", email::config::portal_base_url())
 }
 
 // ---------------------------------------------------------------------------
@@ -53,19 +93,17 @@ pub async fn notify_signature_queue(
     document_title: &str,
     process_id: Uuid,
 ) {
-    let subject = format!("[{}] Document Awaiting Your Signature", process_name);
-    let body = format!(
-        "Hello,\n\n\
-         A document requires your signature.\n\n\
-         Document: {}\n\
-         Step: {}\n\
-         Process: {}\n\
-         Process ID: {}\n\n\
-         Please log in to the Raheja Vistas portal to review and sign.\n",
-        document_title, step_name, process_name, process_id,
-    );
-
-    dispatch(signer_email, subject, body, process_id).await;
+    dispatch(
+        signer_email,
+        "Document Awaiting Your Signature",
+        vec![
+            format!("\"{}\" requires your signature.", document_title),
+            format!("Step: {} — Process: {}", step_name, process_name),
+        ],
+        portal_signature_queue_url(),
+        process_id,
+    )
+    .await;
 }
 
 /// Notify a signer that it's now their turn — an earlier signer in the chain just
@@ -78,19 +116,20 @@ pub async fn notify_signature_turn(
     document_title: &str,
     process_id: Uuid,
 ) {
-    let subject = format!("[{}] It's Your Turn to Sign", process_name);
-    let body = format!(
-        "Hello,\n\n\
-         The signer(s) ahead of you have finished, and it's now your turn to sign.\n\n\
-         Document: {}\n\
-         Step: {}\n\
-         Process: {}\n\
-         Process ID: {}\n\n\
-         Please log in to the Raheja Vistas portal to review and sign.\n",
-        document_title, step_name, process_name, process_id,
-    );
-
-    dispatch(signer_email, subject, body, process_id).await;
+    dispatch(
+        signer_email,
+        "It's Your Turn to Sign",
+        vec![
+            format!(
+                "The signer(s) ahead of you on \"{}\" have finished — it's now your turn.",
+                document_title
+            ),
+            format!("Step: {} — Process: {}", step_name, process_name),
+        ],
+        portal_signature_queue_url(),
+        process_id,
+    )
+    .await;
 }
 
 /// Notify the resident that a step just completed as a direct result of its last
@@ -103,17 +142,17 @@ pub async fn notify_signature_step_complete(
     process_id: Uuid,
     step_name: &str,
 ) {
-    let subject = format!("[{}] Step Completed", ctx.process_name);
-    let body = format!(
-        "Hello,\n\n\
-         The last outstanding signature on \"{}\" has been completed, and the step is now done.\n\n\
-         Process: {}\n\
-         Process ID: {}\n\n\
-         Please log in to the Raheja Vistas portal for details.\n",
-        step_name, ctx.process_name, process_id,
-    );
-
-    dispatch(&ctx.user_email, subject, body, process_id).await;
+    dispatch(
+        &ctx.user_email,
+        "Step Completed",
+        vec![format!(
+            "The last outstanding signature on \"{}\" has been completed, and the step is now done.",
+            step_name
+        ), format!("Process: {}", ctx.process_name)],
+        portal_process_url(process_id),
+        process_id,
+    )
+    .await;
 }
 
 /// Notify admin that a step has been submitted and is pending review.
@@ -124,15 +163,15 @@ pub async fn notify_admin_pending_review(
 ) {
     dispatch(
         &ctx.admin_email,
-        format!("[{}] Review Required – {}", ctx.process_name, step_name),
-        format!(
-            "Hello,\n\n\
-             Step \"{}\" in process \"{}\" has been submitted for review.\n\n\
-             Resident: {}\n\
-             Process ID: {}\n\n\
-             Please log in to the Raheja Vistas portal to review.\n",
-            step_name, ctx.process_name, ctx.user_email, process_id,
-        ),
+        "Review Required",
+        vec![
+            format!(
+                "Step \"{}\" in process \"{}\" has been submitted for review.",
+                step_name, ctx.process_name
+            ),
+            format!("Resident: {}", ctx.user_email),
+        ],
+        portal_admin_process_url(process_id),
         process_id,
     )
     .await;
@@ -148,56 +187,41 @@ pub struct ReviewNotificationParams<'a> {
 
 /// Notify the user about an admin review decision (approval or rejection).
 pub async fn notify_user_review(ctx: &NotificationContext, params: ReviewNotificationParams<'_>) {
-    let (verdict, subject) = if params.is_approved {
-        (
-            "APPROVED",
-            format!(
-                "[{}] ✓ Step Approved – {}",
-                ctx.process_name, params.step_name
-            ),
-        )
+    let heading = if params.is_approved {
+        "Step Approved"
     } else {
-        (
-            "REVISION REQUIRED",
-            format!(
-                "[{}] ↩ Revision Required – {}",
-                ctx.process_name, params.step_name
-            ),
-        )
+        "Revision Required"
     };
 
-    let notes_section = match params.notes {
-        Some(n) if !n.trim().is_empty() => format!(
-            "\nAdmin Comments:\n──────────────────────────────\n{}\n──────────────────────────────\n",
-            n
-        ),
-        _ => String::new(),
-    };
+    let mut paragraphs = vec![format!(
+        "Your submission for step \"{}\" in \"{}\" has been reviewed: {}.",
+        params.step_name,
+        ctx.process_name,
+        if params.is_approved {
+            "APPROVED"
+        } else {
+            "REVISION REQUIRED"
+        }
+    )];
 
-    let flagged_section = if !params.flagged_step_names.is_empty() {
-        let items: Vec<String> = params
-            .flagged_step_names
-            .iter()
-            .enumerate()
-            .map(|(i, name)| format!("  {}. {}", i + 1, name))
-            .collect();
-        format!("\nFlagged sub-steps:\n{}\n", items.join("\n"))
-    } else {
-        String::new()
-    };
+    if let Some(n) = params.notes {
+        if !n.trim().is_empty() {
+            paragraphs.push(format!("Admin comments: {}", n));
+        }
+    }
+
+    if !params.flagged_step_names.is_empty() {
+        paragraphs.push(format!(
+            "Flagged sub-steps: {}",
+            params.flagged_step_names.join(", ")
+        ));
+    }
 
     dispatch(
         &ctx.user_email,
-        subject,
-        format!(
-            "Dear Resident,\n\n\
-             Your submission for step \"{}\" has been reviewed: {verdict}\n\n\
-             Process: {}\n\
-             Process ID: {}\n\
-             {}{}\n\
-             Please log in to the Raheja Vistas portal to view your process.\n",
-            params.step_name, ctx.process_name, params.process_id, notes_section, flagged_section,
-        ),
+        heading,
+        paragraphs,
+        portal_process_url(params.process_id),
         params.process_id,
     )
     .await;
@@ -210,25 +234,22 @@ pub async fn notify_user_revoke(
     step_name: &str,
     notes: Option<&str>,
 ) {
-    let notes_section = match notes {
-        Some(n) if !n.trim().is_empty() => format!(
-            "\n\nAdmin Comments:\n──────────────────────────────\n{}\n──────────────────────────────",
-            n
-        ),
-        _ => String::new(),
-    };
+    let mut paragraphs = vec![format!(
+        "Step \"{}\" in process \"{}\" has been reopened by an administrator. Additional action may be required.",
+        step_name, ctx.process_name
+    )];
+
+    if let Some(n) = notes {
+        if !n.trim().is_empty() {
+            paragraphs.push(format!("Admin comments: {}", n));
+        }
+    }
 
     dispatch(
         &ctx.user_email,
-        format!("[{}] Step Reopened – {}", ctx.process_name, step_name),
-        format!(
-            "Dear Resident,\n\n\
-             Step \"{}\" in process \"{}\" has been reopened by an administrator. \
-             Additional action may be required.{}\n\n\
-             Process ID: {}\n\n\
-             Please log in to the Raheja Vistas portal to continue.\n",
-            step_name, ctx.process_name, notes_section, process_id,
-        ),
+        "Step Reopened",
+        paragraphs,
+        portal_process_url(process_id),
         process_id,
     )
     .await;
