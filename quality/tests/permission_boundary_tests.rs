@@ -53,7 +53,7 @@ async fn seed_scoped_designation(env: &TestEnv, code: &str, permission_code: &st
 /// the new /roles/* group.
 #[tokio::test]
 async fn test_resident_gets_403_on_all_admin_routes() {
-    let env = setup_api_test_env(3140).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let rid = quick_create_user(&env, &admin_jwt, "plain_res@test.com", "A", "101");
@@ -103,7 +103,7 @@ async fn test_resident_gets_403_on_all_admin_routes() {
 /// treatment anywhere; it still gets 403 on every admin route.
 #[tokio::test]
 async fn test_committee_gets_403_on_all_admin_routes() {
-    let env = setup_api_test_env(3141).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let rid = quick_create_user(&env, &admin_jwt, "committee_res@test.com", "A", "102");
@@ -128,7 +128,7 @@ async fn test_committee_gets_403_on_all_admin_routes() {
 /// gating is genuinely per-permission, not a single coarse admin/non-admin split.
 #[tokio::test]
 async fn test_scoped_permission_grants_only_matching_routes() {
-    let env = setup_api_test_env(3142).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     seed_scoped_designation(&env, "roles_only_tester", "users.roles.manage").await;
@@ -173,7 +173,7 @@ async fn test_scoped_permission_grants_only_matching_routes() {
 /// still reachable after replacing the blanket admin_guard with per-permission gates.
 #[tokio::test]
 async fn test_super_admin_can_access_all_admin_route_groups() {
-    let env = setup_api_test_env(3143).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -196,7 +196,7 @@ async fn test_super_admin_can_access_all_admin_route_groups() {
 /// `document_category_designations` at request time (not cached).
 #[tokio::test]
 async fn test_assign_revoke_designation_changes_document_visibility() {
-    let env = setup_api_test_env(3144).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -235,7 +235,7 @@ async fn test_assign_revoke_designation_changes_document_visibility() {
 /// old hardcoded "committee is the only valid target" check with a schema-driven one.
 #[tokio::test]
 async fn test_cannot_assign_or_revoke_system_designation() {
-    let env = setup_api_test_env(3145).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -265,7 +265,7 @@ async fn test_cannot_assign_or_revoke_system_designation() {
 /// generalized to any designation rather than just "committee".
 #[tokio::test]
 async fn test_cannot_modify_own_designations() {
-    let env = setup_api_test_env(3146).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -289,7 +289,7 @@ async fn test_cannot_modify_own_designations() {
 /// visibility for a user holding the matching designation.
 #[tokio::test]
 async fn test_category_matrix_toggle_reflects_in_visibility() {
-    let env = setup_api_test_env(3147).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -335,7 +335,7 @@ async fn test_category_matrix_toggle_reflects_in_visibility() {
 /// the user gains visibility only after the grant, not before.
 #[tokio::test]
 async fn test_full_dynamic_designation_and_category_flow() {
-    let env = setup_api_test_env(3148).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -394,7 +394,7 @@ async fn test_full_dynamic_designation_and_category_flow() {
 /// merged or duplicated.
 #[tokio::test]
 async fn test_duplicate_designation_code_rejected() {
-    let env = setup_api_test_env(3149).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -425,7 +425,7 @@ async fn test_duplicate_designation_code_rejected() {
 /// Same for document categories: duplicate code is rejected.
 #[tokio::test]
 async fn test_duplicate_category_code_rejected() {
-    let env = setup_api_test_env(3150).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -445,7 +445,7 @@ async fn test_duplicate_category_code_rejected() {
 /// not silently accepted or turned into an FK-violation 500.
 #[tokio::test]
 async fn test_assign_unknown_designation_fails() {
-    let env = setup_api_test_env(3151).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -464,7 +464,7 @@ async fn test_assign_unknown_designation_fails() {
 /// Revoking a designation from a user who never had it is a graceful no-op, not an error.
 #[tokio::test]
 async fn test_revoke_designation_user_never_had_is_noop() {
-    let env = setup_api_test_env(3152).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -486,7 +486,7 @@ async fn test_revoke_designation_user_never_had_is_noop() {
 /// never shows up through the resident-facing read endpoints, which only check `can_read`.
 #[tokio::test]
 async fn test_manage_without_read_can_write_but_not_view() {
-    let env = setup_api_test_env(3153).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -524,7 +524,7 @@ async fn test_manage_without_read_can_write_but_not_view() {
 /// A category still containing documents cannot be deleted.
 #[tokio::test]
 async fn test_cannot_delete_category_with_existing_documents() {
-    let env = setup_api_test_env(3154).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -544,7 +544,7 @@ async fn test_cannot_delete_category_with_existing_documents() {
 /// An empty (unused) category can be deleted.
 #[tokio::test]
 async fn test_delete_empty_category_succeeds() {
-    let env = setup_api_test_env(3155).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -572,7 +572,7 @@ async fn test_delete_empty_category_succeeds() {
 /// PUBLIC/RESIDENT_SPECIFIC are protected system categories and can never be deleted.
 #[tokio::test]
 async fn test_cannot_delete_system_category() {
-    let env = setup_api_test_env(3156).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -592,7 +592,7 @@ async fn test_cannot_delete_system_category() {
 /// through the generic designation-permission endpoint is rejected.
 #[tokio::test]
 async fn test_cannot_toggle_permissions_for_system_designation() {
-    let env = setup_api_test_env(3157).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -613,7 +613,7 @@ async fn test_cannot_toggle_permissions_for_system_designation() {
 /// permissions, proving the block is scoped to "held by the caller", not a blanket denial.
 #[tokio::test]
 async fn test_cannot_edit_permissions_of_own_designation() {
-    let env = setup_api_test_env(3176).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -654,7 +654,7 @@ async fn test_cannot_edit_permissions_of_own_designation() {
 /// visually-different inputs can't create near-duplicate codes.
 #[tokio::test]
 async fn test_designation_code_is_normalized() {
-    let env = setup_api_test_env(3158).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -675,7 +675,7 @@ async fn test_designation_code_is_normalized() {
 /// bypasses per-category checks entirely, same as super_admin.
 #[tokio::test]
 async fn test_documents_all_manage_bypasses_per_category_checks() {
-    let env = setup_api_test_env(3159).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 

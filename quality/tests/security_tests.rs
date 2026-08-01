@@ -6,7 +6,7 @@ use quality::{
 /// Tests that API endpoints properly reject requests with missing or invalid tokens.
 #[tokio::test]
 async fn test_unauthorized_access() {
-    let env = setup_api_test_env(3101).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     // 1. Missing Authorization header
@@ -44,7 +44,7 @@ async fn test_unauthorized_access() {
 /// Tests that a resident cannot access admin endpoints or private documents of other flats.
 #[tokio::test]
 async fn test_malicious_user_access() {
-    let env = setup_api_test_env(3102).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -88,7 +88,7 @@ async fn test_malicious_user_access() {
 /// Tests that an account is locked after 5 failed login attempts and requires a password reset.
 #[tokio::test]
 async fn test_account_lockout() {
-    let env = setup_api_test_env(3103).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);

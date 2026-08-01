@@ -120,7 +120,13 @@ async fn recompute_gating_only(
             })
             .min_by_key(|r| r.sign_order)
         {
-            if next.provider == "manual" {
+            let wants_notification = state
+                .permissions_manager
+                .get_notification_prefs(next.signer_user_id)
+                .await
+                .map(|p| p.notify_signature_events)
+                .unwrap_or(true);
+            if next.provider == "manual" && wants_notification {
                 let step_name = crate::handlers::process::find_step_name(
                     &template,
                     requirement.template_step_id,
@@ -202,24 +208,32 @@ async fn attach_replacement_and_recompute_gating(
             if let Ok(Some(info)) =
                 process::db::get_process_info(&mut conn, requirement.process_id).await
             {
-                if let Some(ctx) = crate::handlers::process::build_notification_ctx(
-                    &state.pg_pool,
-                    info.user_id,
-                    &state.super_admin_email,
-                    &template.name,
-                )
-                .await
-                {
-                    let step_name = crate::handlers::process::find_step_name(
-                        &template,
-                        requirement.template_step_id,
-                    );
-                    process::notification::notify_signature_step_complete(
-                        &ctx,
-                        requirement.process_id,
-                        &step_name,
+                let wants_notification = state
+                    .permissions_manager
+                    .get_notification_prefs(info.user_id)
+                    .await
+                    .map(|p| p.notify_signature_events)
+                    .unwrap_or(true);
+                if wants_notification {
+                    if let Some(ctx) = crate::handlers::process::build_notification_ctx(
+                        &state.pg_pool,
+                        info.user_id,
+                        &state.super_admin_email,
+                        &template.name,
                     )
-                    .await;
+                    .await
+                    {
+                        let step_name = crate::handlers::process::find_step_name(
+                            &template,
+                            requirement.template_step_id,
+                        );
+                        process::notification::notify_signature_step_complete(
+                            &ctx,
+                            requirement.process_id,
+                            &step_name,
+                        )
+                        .await;
+                    }
                 }
             }
         }

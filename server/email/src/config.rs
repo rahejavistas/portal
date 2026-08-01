@@ -13,11 +13,14 @@ impl EmailConfig {
     /// Loads the EmailConfig from environment variables.
     /// Returns None if any required configuration is missing, ensuring no weak fallback defaults.
     pub fn from_env() -> Option<Self> {
-        let smtp_server = env::var("SMTP_SERVER").ok()?;
-        let smtp_port = env::var("SMTP_PORT").ok()?.parse::<u16>().ok()?;
-        let smtp_username = env::var("SMTP_USERNAME").ok()?;
-        let smtp_password = env::var("SMTP_PASSWORD").ok()?;
-        let sender_email = env::var("SMTP_SENDER_EMAIL").ok()?;
+        // A set-but-empty var (e.g. unresolved `${SMTP_SERVER}` in compose) must not count as configured.
+        let non_empty = |key: &str| env::var(key).ok().filter(|v| !v.is_empty());
+
+        let smtp_server = non_empty("SMTP_SERVER")?;
+        let smtp_port = non_empty("SMTP_PORT")?.parse::<u16>().ok()?;
+        let smtp_username = non_empty("SMTP_USERNAME")?;
+        let smtp_password = non_empty("SMTP_PASSWORD")?;
+        let sender_email = non_empty("SMTP_SENDER_EMAIL")?;
 
         Some(Self {
             smtp_server,

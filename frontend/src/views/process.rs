@@ -1881,7 +1881,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 let addSignersHtml = '';
                 if (isCurrentAdmin && type === 'document' && val.document_id && f.requires_signature && stepIsOpen) {
                     if (signatureStatuses.length === 0) {
-                        addSignersHtml = `<button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:6px 12px; margin-left:8px;" onclick="openAddSignersModal(${stepId}, ${fieldId}, '${escapeHtml(val.document_id)}', ${escapeHtml(JSON.stringify(f.required_signs_from_designations || []))})">Add Signers</button>`;
+                        addSignersHtml = `<button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:6px 12px; margin-left:8px;" onclick="openAddSignersModal(${stepId}, ${fieldId}, '${escapeHtml(val.document_id)}', ${escapeHtml(JSON.stringify(f.required_signs_from_designations || []))}, '${escapeHtml(val.document_content_type || '')}')">Add Signers</button>`;
                     } else {
                         addSignersHtml = `<button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:6px 12px; margin-left:8px;" onclick="refreshSignatureStatus('${escapeHtml(val.document_id)}')">Refresh Status</button>`;
                     }
@@ -2181,7 +2181,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             addSignersProvider = value;
         }
 
-        async function openAddSignersModal(stepId, fieldId, documentId, requiredDesignations) {
+        async function openAddSignersModal(stepId, fieldId, documentId, requiredDesignations, documentContentType) {
             addSignersContext = { stepId, fieldId, documentId, requiredDesignations: requiredDesignations || [] };
             addSignersSelectedOrder = [];
             addSignersSlotSelections = (requiredDesignations || []).map(() => '');
@@ -2224,7 +2224,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 });
                 if (statusResp.ok) {
                     const status = await statusResp.json();
-                    providerPanel.style.display = status.signyu_available ? 'block' : 'none';
+                    const isPdf = documentContentType === 'application/pdf';
+                    providerPanel.style.display = (status.signyu_available && isPdf) ? 'block' : 'none';
                 }
             } catch (e) {}
         }
@@ -2526,10 +2527,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 }
 
                 progressEl.textContent = 'Confirming...';
-                
+
                 const confirmEndpoint = isCurrentAdmin
-                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    ? `${API_BASE}/api/v1/admin/process/confirm-upload`
                     : `${API_BASE}/api/v1/documents/confirm-upload`;
+                const confirmBody = isCurrentAdmin
+                    ? { process_id: processId, document_id }
+                    : { document_id };
 
                 const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
@@ -2537,7 +2541,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ document_id })
+                    body: JSON.stringify(confirmBody)
                 });
 
                 if (!confirmRes.ok) {
@@ -2963,10 +2967,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 }
 
                 if(progressEl) progressEl.textContent = 'Confirming upload...';
-                
+
                 const confirmEndpoint = isCurrentAdmin
-                    ? `${API_BASE}/api/v1/admin/documents/confirm-upload`
+                    ? `${API_BASE}/api/v1/admin/process/confirm-upload`
                     : `${API_BASE}/api/v1/documents/confirm-upload`;
+                const confirmBody = isCurrentAdmin
+                    ? { process_id: currentProcessDetails.process_id, document_id: document_id }
+                    : { document_id: document_id };
 
                 const confirmRes = await fetch(confirmEndpoint, {
                     method: 'POST',
@@ -2974,7 +2981,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ document_id: document_id })
+                    body: JSON.stringify(confirmBody)
                 });
 
                 if (!confirmRes.ok) {

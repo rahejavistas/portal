@@ -49,7 +49,7 @@ fn self_upload_document(url: &str, res_auth: &str, title: &str) -> String {
 /// reports both flats aggregated (wing/flat_number as comma-joined lists).
 #[tokio::test]
 async fn test_owning_two_flats_is_a_single_account() {
-    let env = setup_api_test_env(3160).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -77,7 +77,7 @@ async fn test_owning_two_flats_is_a_single_account() {
 /// single flat is revoked, since the other ownership still grants access.
 #[tokio::test]
 async fn test_self_uploaded_document_survives_revoking_one_of_two_flats() {
-    let env = setup_api_test_env(3161).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -126,7 +126,7 @@ async fn test_self_uploaded_document_survives_revoking_one_of_two_flats() {
 /// while a second document targeted at the still-owned flat remains visible throughout.
 #[tokio::test]
 async fn test_admin_flat_targeted_documents_respect_each_flat_independently() {
-    let env = setup_api_test_env(3162).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -185,7 +185,7 @@ async fn test_admin_flat_targeted_documents_respect_each_flat_independently() {
 /// both owned flats.
 #[tokio::test]
 async fn test_multi_flat_user_gets_independent_process_per_flat() {
-    let env = setup_api_test_env(3163).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -255,7 +255,7 @@ async fn test_multi_flat_user_gets_independent_process_per_flat() {
 /// (and that flat itself) remain listed.
 #[tokio::test]
 async fn test_revoking_one_flat_hides_only_that_flats_process() {
-    let env = setup_api_test_env(3164).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 

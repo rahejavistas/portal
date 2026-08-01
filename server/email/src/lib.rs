@@ -82,8 +82,9 @@ pub async fn send_email(email_payload: &Email) -> Result<(), String> {
 
     let creds = Credentials::new(config.smtp_username, config.smtp_password);
 
+    // starttls_relay, not relay — relay() defaults to implicit TLS (port 465), but we run on 587.
     let mailer: AsyncSmtpTransport<Tokio1Executor> =
-        AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_server)
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_server)
             .map_err(|e| format!("Invalid SMTP server: {}", e))?
             .port(config.smtp_port)
             .credentials(creds)

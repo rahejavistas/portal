@@ -3,7 +3,7 @@ use quality::{quick_create_user, quick_setup_admin, setup_api_test_env};
 /// Tests that creating a user with invalid inputs fails gracefully.
 #[tokio::test]
 async fn test_invalid_inputs() {
-    let env = setup_api_test_env(3103).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -49,7 +49,7 @@ async fn test_invalid_inputs() {
 /// Tests that creating a duplicate user fails.
 #[tokio::test]
 async fn test_duplicate_user_registration() {
-    let env = setup_api_test_env(3104).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -83,7 +83,7 @@ async fn test_duplicate_user_registration() {
 /// Tests self-demotion prevention
 #[tokio::test]
 async fn test_self_demotion_prevention() {
-    let env = setup_api_test_env(3105).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);

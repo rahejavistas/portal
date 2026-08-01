@@ -408,7 +408,7 @@ async fn is_step_completed(env: &TestEnv, process_id: &str, template_step_id: i3
 
 #[tokio::test]
 async fn test_add_signers_creates_ordered_requirements_and_blocks_step() {
-    let env = setup_api_test_env(3300).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -455,7 +455,7 @@ async fn test_add_signers_creates_ordered_requirements_and_blocks_step() {
 
 #[tokio::test]
 async fn test_signers_must_sign_in_order() {
-    let env = setup_api_test_env(3301).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -504,7 +504,7 @@ async fn test_signers_must_sign_in_order() {
 
 #[tokio::test]
 async fn test_queue_only_shows_current_turn() {
-    let env = setup_api_test_env(3302).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -561,7 +561,7 @@ async fn test_queue_only_shows_current_turn() {
 
 #[tokio::test]
 async fn test_cannot_sign_someone_elses_requirement() {
-    let env = setup_api_test_env(3304).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -594,6 +594,121 @@ async fn test_cannot_sign_someone_elses_requirement() {
     );
 }
 
+/// A signer's document access is scoped per-requirement, not per-flat or per-category —
+/// two entirely separate flats/processes/signers, and a signer attached to one must get
+/// 403 trying to view, upload-to, or confirm-upload the other flat's document via every
+/// signature endpoint, using the other flat's real requirement_id (not a guess). Also
+/// confirms the signing queue never leaks the other flat's item.
+#[tokio::test]
+async fn test_signer_has_no_access_to_a_different_flats_document() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+    let (template_id, step_id, field_id) = save_template(&url, &admin_jwt);
+
+    // Flat A: its own resident, document, and signer.
+    quick_create_user(
+        &env,
+        &admin_jwt,
+        "flat_a_resident@sigtest.test",
+        "SG",
+        "301",
+    );
+    let res_a_jwt = quick_onboard_user(&env, "flat_a_resident@sigtest.test", "password123");
+    let pid_a = start_process(&url, &res_a_jwt, template_id);
+    let doc_a = upload_doc_as_admin(&url, &admin_auth, &pid_a, "flat_a.pdf");
+    save_step(&url, &admin_auth, &pid_a, step_id, field_id, &doc_a);
+    let (_jwt_a, signer_a, ..) = make_signer(&env, &admin_jwt, "flatasign", "302");
+    let reqs_a = add_signers(
+        &url,
+        &admin_auth,
+        &pid_a,
+        step_id,
+        field_id,
+        &doc_a,
+        &[signer_a],
+    )
+    .unwrap();
+    let req_a = requirement_id_for_signer(&reqs_a, signer_a);
+
+    // Flat B: a completely separate resident, document, and signer.
+    quick_create_user(
+        &env,
+        &admin_jwt,
+        "flat_b_resident@sigtest.test",
+        "SG",
+        "303",
+    );
+    let res_b_jwt = quick_onboard_user(&env, "flat_b_resident@sigtest.test", "password123");
+    let pid_b = start_process(&url, &res_b_jwt, template_id);
+    let doc_b = upload_doc_as_admin(&url, &admin_auth, &pid_b, "flat_b.pdf");
+    save_step(&url, &admin_auth, &pid_b, step_id, field_id, &doc_b);
+    let (jwt_b, signer_b, ..) = make_signer(&env, &admin_jwt, "flatbsign", "304");
+    let reqs_b = add_signers(
+        &url,
+        &admin_auth,
+        &pid_b,
+        step_id,
+        field_id,
+        &doc_b,
+        &[signer_b],
+    )
+    .unwrap();
+    let req_b = requirement_id_for_signer(&reqs_b, signer_b);
+
+    // Flat B's signer must not be able to view Flat A's document to sign.
+    let view_other_flat = ureq::post(&format!(
+        "{}/api/v1/admin/documents/signatures/document-download-url",
+        url
+    ))
+    .set("Authorization", &auth(&jwt_b))
+    .send_json(serde_json::json!({ "requirement_id": req_a }));
+    assert!(
+        view_other_flat.is_err(),
+        "a signer must not be able to view another flat's document to sign, even with its real requirement_id"
+    );
+
+    // Nor start an upload against it.
+    let upload_other_flat = ureq::post(&format!(
+        "{}/api/v1/admin/documents/signatures/replace-upload-url",
+        url
+    ))
+    .set("Authorization", &auth(&jwt_b))
+    .send_json(serde_json::json!({ "requirement_id": req_a, "content_type": "application/pdf" }));
+    assert!(
+        upload_other_flat.is_err(),
+        "a signer must not be able to start a signed-replacement upload for another flat's requirement"
+    );
+
+    // Nor confirm one, even with a document_id they don't actually control.
+    let confirm_other_flat = ureq::post(&format!(
+        "{}/api/v1/admin/documents/signatures/replace-confirm-upload",
+        url
+    ))
+    .set("Authorization", &auth(&jwt_b))
+    .send_json(serde_json::json!({ "requirement_id": req_a, "new_document_id": doc_a }));
+    assert!(
+        confirm_other_flat.is_err(),
+        "a signer must not be able to confirm a signed-replacement upload for another flat's requirement"
+    );
+
+    // Flat B signer's own queue must show only Flat B's item, never Flat A's.
+    let queue: Vec<serde_json::Value> =
+        ureq::post(&format!("{}/api/v1/admin/documents/signatures/queue", url))
+            .set("Authorization", &auth(&jwt_b))
+            .send_json(serde_json::json!({}))
+            .unwrap()
+            .into_json()
+            .unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0]["requirement_id"], req_b);
+    assert!(
+        queue.iter().all(|r| r["requirement_id"] != req_a),
+        "a signer's queue must never include another flat's requirement"
+    );
+}
+
 /// There is no delete for a signer — only deactivate, which is reversible and never
 /// touches anything already in progress. Deactivating a signer with a PENDING
 /// requirement must leave that requirement (and the signer row itself) completely
@@ -601,7 +716,7 @@ async fn test_cannot_sign_someone_elses_requirement() {
 /// for NEW attachments.
 #[tokio::test]
 async fn test_deactivating_signer_does_not_affect_pending_requirement() {
-    let env = setup_api_test_env(3314).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -654,7 +769,7 @@ async fn test_deactivating_signer_does_not_affect_pending_requirement() {
 
 #[tokio::test]
 async fn test_self_service_signer_info_requires_any_designation() {
-    let env = setup_api_test_env(3305).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -677,7 +792,7 @@ async fn test_self_service_signer_info_requires_any_designation() {
 /// never actually use.
 #[tokio::test]
 async fn test_super_admin_alone_is_not_sign_eligible() {
-    let env = setup_api_test_env(3318).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -694,7 +809,7 @@ async fn test_super_admin_alone_is_not_sign_eligible() {
 /// zero permissions of its own) is enough to self-register.
 #[tokio::test]
 async fn test_self_service_signer_info_allowed_for_any_designation_holder() {
-    let env = setup_api_test_env(3316).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -721,7 +836,7 @@ async fn test_self_service_signer_info_allowed_for_any_designation_holder() {
 
 #[tokio::test]
 async fn test_add_signers_rejects_signer_without_required_designation() {
-    let env = setup_api_test_env(3306).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -773,7 +888,7 @@ async fn test_add_signers_rejects_signer_without_required_designation() {
 
 #[tokio::test]
 async fn test_add_signers_rejects_out_of_order_designations() {
-    let env = setup_api_test_env(3307).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -813,7 +928,7 @@ async fn test_add_signers_rejects_out_of_order_designations() {
 
 #[tokio::test]
 async fn test_add_signers_accepts_correct_designation_order() {
-    let env = setup_api_test_env(3308).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -858,7 +973,7 @@ async fn test_add_signers_accepts_correct_designation_order() {
 
 #[tokio::test]
 async fn test_add_signers_allows_any_order_when_designations_tie() {
-    let env = setup_api_test_env(3309).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -898,7 +1013,7 @@ async fn test_add_signers_allows_any_order_when_designations_tie() {
 
 #[tokio::test]
 async fn test_add_signers_rejects_signer_whose_designation_was_already_revoked() {
-    let env = setup_api_test_env(3310).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -946,7 +1061,7 @@ async fn requirement_status(env: &TestEnv, requirement_id: i64) -> String {
 
 #[tokio::test]
 async fn test_revoking_designation_after_attach_blocks_signing() {
-    let env = setup_api_test_env(3311).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -999,7 +1114,7 @@ async fn test_revoking_designation_after_attach_blocks_signing() {
 
 #[tokio::test]
 async fn test_revoking_designation_mid_sequence_blocks_later_signer() {
-    let env = setup_api_test_env(3312).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1052,7 +1167,7 @@ async fn test_revoking_designation_mid_sequence_blocks_later_signer() {
 /// they're actually attached — not before.
 #[tokio::test]
 async fn test_signer_can_view_process_they_are_attached_to() {
-    let env = setup_api_test_env(3315).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1096,7 +1211,7 @@ async fn test_signer_can_view_process_they_are_attached_to() {
 /// signer themselves can see those (via `/profile/signer-info`).
 #[tokio::test]
 async fn test_signer_directory_list_excludes_contact_info() {
-    let env = setup_api_test_env(3317).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1141,7 +1256,7 @@ async fn test_signer_directory_list_excludes_contact_info() {
 /// no designation restriction.
 #[tokio::test]
 async fn test_requires_signature_blocks_step_with_no_designation_restriction() {
-    let env = setup_api_test_env(3330).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1198,7 +1313,7 @@ async fn test_requires_signature_blocks_step_with_no_designation_restriction() {
 /// gates completion.
 #[tokio::test]
 async fn test_field_without_requires_signature_completes_without_any_signer() {
-    let env = setup_api_test_env(3331).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1242,7 +1357,7 @@ async fn test_field_without_requires_signature_completes_without_any_signer() {
 /// designation requirement has been attached and has signed.
 #[tokio::test]
 async fn test_requires_signature_combined_with_designation_restriction() {
-    let env = setup_api_test_env(3332).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1325,7 +1440,7 @@ async fn test_requires_signature_combined_with_designation_restriction() {
 /// intermediate one.
 #[tokio::test]
 async fn test_field_only_repoints_to_final_document_after_full_signer_chain() {
-    let env = setup_api_test_env(3333).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1391,7 +1506,7 @@ async fn test_field_only_repoints_to_final_document_after_full_signer_chain() {
 /// accumulates signatures, it's just N independent signings of the same input.
 #[tokio::test]
 async fn test_second_signer_input_document_is_first_signers_output() {
-    let env = setup_api_test_env(3336).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1463,7 +1578,7 @@ async fn test_second_signer_input_document_is_first_signers_output() {
 /// checks `is_current_field_value` before attaching for exactly this reason.
 #[tokio::test]
 async fn test_stale_signature_requirement_does_not_repoint_field_after_resave() {
-    let env = setup_api_test_env(3334).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -1520,7 +1635,7 @@ async fn test_stale_signature_requirement_does_not_repoint_field_after_resave() 
 /// `signature_status` must still resolve after the field repoints to the signed copy.
 #[tokio::test]
 async fn test_signature_status_still_resolves_after_field_repoints_to_signed_copy() {
-    let env = setup_api_test_env(3335).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);

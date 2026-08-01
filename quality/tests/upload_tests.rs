@@ -3,7 +3,7 @@ use quality::{quick_setup_admin, setup_api_test_env};
 /// Tests the document upload workflow via multipart/form-data.
 #[tokio::test]
 async fn test_multipart_document_upload() {
-    let env = setup_api_test_env(3106).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);

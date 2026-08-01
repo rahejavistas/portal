@@ -53,6 +53,7 @@ pub struct FieldValue {
     pub text_value: Option<String>,
     pub document_id: Option<Uuid>,
     pub document_title: Option<String>,
+    pub document_content_type: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -219,7 +220,7 @@ fn map_step_template(
     statuses: &HashMap<i32, process::state_machine::StepStatus>,
     field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
     latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
-    doc_title_map: &HashMap<Uuid, String>,
+    doc_title_map: &HashMap<Uuid, (String, Option<String>)>,
     signature_map: &HashMap<Uuid, Vec<FieldSignatureStatus>>,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
@@ -239,11 +240,17 @@ fn map_step_template(
                 .unwrap_or_default();
 
             let value = latest.map(|l| {
-                let title = l.document_id.and_then(|id| doc_title_map.get(&id)).cloned();
+                let (title, content_type) = l
+                    .document_id
+                    .and_then(|id| doc_title_map.get(&id))
+                    .cloned()
+                    .map(|(t, c)| (Some(t), c))
+                    .unwrap_or((None, None));
                 FieldValue {
                     text_value: l.text_value.clone(),
                     document_id: l.document_id,
                     document_title: title,
+                    document_content_type: content_type,
                 }
             });
 
@@ -417,9 +424,9 @@ pub async fn get_process_state(
         .await
         .unwrap_or_default();
 
-    let doc_title_map: HashMap<Uuid, String> = docs
+    let doc_title_map: HashMap<Uuid, (String, Option<String>)> = docs
         .into_iter()
-        .map(|doc| (doc.document_id, doc.title))
+        .map(|doc| (doc.document_id, (doc.title, doc.content_type)))
         .collect();
 
     let reviews = get_process_reviews(&mut tx, process_id)
@@ -435,7 +442,7 @@ pub async fn get_process_state(
         let title = row
             .document_id
             .and_then(|id| doc_title_map.get(&id))
-            .cloned();
+            .map(|(t, _)| t.clone());
 
         field_history_map
             .entry(row.template_field_id)

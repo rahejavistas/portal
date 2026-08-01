@@ -8,7 +8,7 @@ use quality::{
 /// new user registrations with flat mapping verification.
 #[tokio::test]
 async fn test_admin_auth_and_user_creation() {
-    let env = setup_api_test_env(3091).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -56,7 +56,7 @@ async fn test_admin_auth_and_user_creation() {
 /// authentication, login, and `/api/v1/profile` retrieval.
 #[tokio::test]
 async fn test_resident_onboarding_and_profile_retrieval() {
-    let env = setup_api_test_env(3092).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -83,7 +83,7 @@ async fn test_resident_onboarding_and_profile_retrieval() {
 /// dynamic promotion visibility upgrades, and soft-delete hidden states.
 #[tokio::test]
 async fn test_document_permissions_and_soft_delete() {
-    let env = setup_api_test_env(3093).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);
@@ -205,7 +205,7 @@ async fn test_document_permissions_and_soft_delete() {
 /// Tests rate limiting middleware for IP, User, and Admin limits.
 #[tokio::test]
 async fn test_rate_limiting() {
-    let env = setup_api_test_env(3094).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let admin_jwt = quick_setup_admin(&env);

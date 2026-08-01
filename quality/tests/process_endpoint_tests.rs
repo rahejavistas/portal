@@ -68,7 +68,7 @@ fn setup_process(url: &str, env: &quality::TestEnv) -> (String, String, String) 
 
 #[tokio::test]
 async fn test_state_auto_init_returns_valid_process() {
-    let env = setup_api_test_env(3110).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, _) = setup_process(&url, &env);
 
@@ -89,7 +89,7 @@ async fn test_state_auto_init_returns_valid_process() {
 
 #[tokio::test]
 async fn test_state_creates_new_process_each_time() {
-    let env = setup_api_test_env(3111).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid1, res_auth, _) = setup_process(&url, &env);
 
@@ -106,7 +106,7 @@ async fn test_state_creates_new_process_each_time() {
 async fn test_state_admin_can_start_own_process_without_process_id() {
     // A user holding process.reviewer (e.g. super_admin) can still start their own
     // process by template_id — reviewing others' steps doesn't preclude having one's own.
-    let env = setup_api_test_env(3112).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -118,7 +118,7 @@ async fn test_state_admin_can_start_own_process_without_process_id() {
 
 #[tokio::test]
 async fn test_state_invalid_process_id_returns_404() {
-    let env = setup_api_test_env(3113).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -134,7 +134,7 @@ async fn test_state_invalid_process_id_returns_404() {
 
 #[tokio::test]
 async fn test_upload_creates_document_for_process() {
-    let env = setup_api_test_env(3114).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
@@ -144,7 +144,7 @@ async fn test_upload_creates_document_for_process() {
 
 #[tokio::test]
 async fn test_upload_rejects_empty_file() {
-    let env = setup_api_test_env(3115).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, _, admin_auth) = setup_process(&url, &env);
 
@@ -179,7 +179,7 @@ async fn test_upload_rejects_empty_file() {
 
 #[tokio::test]
 async fn test_save_step_missing_required_document_fails() {
-    let env = setup_api_test_env(3116).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, _) = setup_process(&url, &env);
 
@@ -196,7 +196,7 @@ async fn test_save_step_missing_required_document_fails() {
 
 #[tokio::test]
 async fn test_save_step_invalid_document_id_fails() {
-    let env = setup_api_test_env(3117).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, _) = setup_process(&url, &env);
 
@@ -215,7 +215,7 @@ async fn test_save_step_invalid_document_id_fails() {
 /// it passes the ownership/visibility check in `get_document`.
 #[tokio::test]
 async fn test_save_step_rejects_non_resident_specific_document() {
-    let env = setup_api_test_env(3125).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -267,7 +267,7 @@ async fn test_save_step_rejects_non_resident_specific_document() {
 
 #[tokio::test]
 async fn test_save_step_locked_step_fails() {
-    let env = setup_api_test_env(3118).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, _, admin_auth) = setup_process(&url, &env);
 
@@ -284,7 +284,7 @@ async fn test_save_step_locked_step_fails() {
 
 #[tokio::test]
 async fn test_save_step_completes_substep() {
-    let env = setup_api_test_env(3119).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, _admin_auth) = setup_process(&url, &env);
 
@@ -317,7 +317,7 @@ async fn test_save_step_completes_substep() {
 
 #[tokio::test]
 async fn test_review_approve_completes_step() {
-    let env = setup_api_test_env(3120).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -393,7 +393,7 @@ async fn test_review_approve_completes_step() {
 
 #[tokio::test]
 async fn test_review_reject_reopens_step() {
-    let env = setup_api_test_env(3121).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -450,7 +450,7 @@ async fn test_review_reject_reopens_step() {
 
 #[tokio::test]
 async fn test_download_url_returns_presigned_url() {
-    let env = setup_api_test_env(3122).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -476,7 +476,7 @@ async fn test_download_url_returns_presigned_url() {
 
 #[tokio::test]
 async fn test_download_url_wrong_process_returns_404() {
-    let env = setup_api_test_env(3123).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -499,7 +499,7 @@ async fn test_download_url_wrong_process_returns_404() {
 /// RESIDENT_SPECIFIC upload scoped to a flat the reviewer doesn't own).
 #[tokio::test]
 async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
-    let env = setup_api_test_env(3177).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -564,7 +564,7 @@ async fn test_reviewer_can_download_document_attached_to_reviewable_process() {
 /// A reviewer must not be able to download a document that was never attached to the process.
 #[tokio::test]
 async fn test_reviewer_cannot_download_document_not_attached_to_process() {
-    let env = setup_api_test_env(3178).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -617,7 +617,7 @@ async fn test_reviewer_cannot_download_document_not_attached_to_process() {
 
 #[tokio::test]
 async fn test_user_cannot_access_other_users_process() {
-    let env = setup_api_test_env(3124).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -650,7 +650,7 @@ async fn test_user_cannot_access_other_users_process() {
 
 #[tokio::test]
 async fn test_admin_process_upload_creates_downloadable_document() {
-    let env = setup_api_test_env(3133).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 
@@ -723,9 +723,102 @@ async fn test_admin_process_upload_creates_downloadable_document() {
     assert_eq!(flat_number, "0101", "Mapped to wrong flat number");
 }
 
+/// A `process.reviewer` holder with NO `documents.all.manage` and no document-category
+/// "manage" grant must still be able to confirm an upload they started via
+/// `/admin/process/upload-url` — regression test for a bug where confirming had to go
+/// through the general `admin_confirm_upload` (which requires those unrelated
+/// permissions), so a plain reviewer could start an upload but never confirm it, and
+/// `save-step` would then reject the document as "not been uploaded yet" forever.
+#[tokio::test]
+async fn test_process_reviewer_can_confirm_own_process_upload_without_document_permissions() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = format!("Bearer {}", admin_jwt);
+
+    quick_create_user(&env, &admin_jwt, "reviewee3@test.com", "A", "101");
+    let res_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewee3@test.com", "password123")
+    );
+    let resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({"template_id": 1}))
+        .unwrap();
+    let pid = resp.into_json::<serde_json::Value>().unwrap()["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // A scoped designation holding exactly `process.reviewer` — nothing else.
+    quick_create_designation(&env, &admin_jwt, "upload_reviewer", "Upload Reviewer");
+    quick_toggle_designation_permission(
+        &env,
+        &admin_jwt,
+        "upload_reviewer",
+        "process.reviewer",
+        true,
+    );
+    let reviewer_id = quick_create_user(&env, &admin_jwt, "reviewer3@test.com", "B", "202");
+    let reviewer_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "reviewer3@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, reviewer_id, "upload_reviewer");
+
+    let url_resp = ureq::post(&format!("{}/api/v1/admin/process/upload-url", url))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "title": "Reviewer Upload",
+            "filename": "reviewer_upload.pdf",
+            "content_type": "application/pdf"
+        }))
+        .expect("scoped reviewer should be able to start the upload");
+    let url_val: serde_json::Value = url_resp.into_json().unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    let upload_url = url_val["upload_url"].as_str().unwrap().to_string();
+
+    ureq::put(&upload_url)
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"reviewer pdf content bytes")
+        .expect("S3 PUT upload failed");
+
+    // Sanity: the general admin document confirm-upload endpoint is NOT usable by this
+    // reviewer — proves the permission mismatch this endpoint exists to route around.
+    let general_confirm = ureq::post(&format!("{}/api/v1/admin/documents/confirm-upload", url))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({ "document_id": document_id }));
+    assert!(
+        general_confirm.is_err(),
+        "a plain process.reviewer must NOT be able to use the document-category-gated confirm endpoint"
+    );
+
+    // The process-scoped confirm endpoint must succeed for the same reviewer.
+    let confirm_resp = ureq::post(&format!("{}/api/v1/admin/process/confirm-upload", url))
+        .set("Authorization", &reviewer_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "document_id": document_id
+        }))
+        .expect("process-scoped confirm-upload should succeed for the reviewer who started it");
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    assert_eq!(confirm_val["status"].as_str().unwrap(), "confirmed");
+
+    // And the now-confirmed document must actually be usable in save-step.
+    ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 3,
+            "fields": [{"template_field_id": 101, "text_value": null, "document_id": document_id}]
+        }))
+        .expect("save-step should accept the now-confirmed document");
+}
+
 #[tokio::test]
 async fn test_admin_add_note_standalone() {
-    let env = setup_api_test_env(3134).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let (pid, res_auth, admin_auth) = setup_process(&url, &env);
 

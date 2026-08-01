@@ -18,7 +18,7 @@ fn assert_error(resp: Result<ureq::Response, ureq::Error>, context: &str) {
 /// Editing title/description updates them and bumps updated_at, leaving category untouched.
 #[tokio::test]
 async fn test_edit_title_and_description_updates_fields_and_timestamp() {
-    let env = setup_api_test_env(3191).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -62,7 +62,7 @@ async fn test_edit_title_and_description_updates_fields_and_timestamp() {
 /// Editing category to another manageable category succeeds and is reflected on refetch.
 #[tokio::test]
 async fn test_edit_category_moves_document() {
-    let env = setup_api_test_env(3192).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -108,7 +108,7 @@ fn get_document(url: &str, auth_header: &str, document_id: &str) -> serde_json::
 /// request must fail AND leave the category untouched, not silently succeed or half-apply.
 #[tokio::test]
 async fn test_cannot_change_category_of_resident_specific_document() {
-    let env = setup_api_test_env(3193).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -147,7 +147,7 @@ async fn test_cannot_change_category_of_resident_specific_document() {
 /// of the above. Same rule, same verification that the category truly didn't change.
 #[tokio::test]
 async fn test_cannot_convert_other_category_to_resident_specific() {
-    let env = setup_api_test_env(3197).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -180,7 +180,7 @@ async fn test_cannot_convert_other_category_to_resident_specific() {
 /// category in the payload matches the document's current (unchanged) category.
 #[tokio::test]
 async fn test_resident_specific_document_other_metadata_edit_succeeds() {
-    let env = setup_api_test_env(3198).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -247,7 +247,7 @@ async fn test_resident_specific_document_other_metadata_edit_succeeds() {
 /// Editing a document's subcategory (and clearing it) updates the returned metadata.
 #[tokio::test]
 async fn test_edit_subcategory_set_and_clear() {
-    let env = setup_api_test_env(3194).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);
@@ -290,7 +290,7 @@ async fn test_edit_subcategory_set_and_clear() {
 /// Editing a document into a category the caller can't manage is rejected.
 #[tokio::test]
 async fn test_edit_category_requires_manage_access_on_target() {
-    let env = setup_api_test_env(3195).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -337,7 +337,7 @@ async fn test_edit_category_requires_manage_access_on_target() {
 /// the admin is still typing.
 #[tokio::test]
 async fn test_flat_owner_lookup() {
-    let env = setup_api_test_env(3196).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let admin_auth = auth(&admin_jwt);

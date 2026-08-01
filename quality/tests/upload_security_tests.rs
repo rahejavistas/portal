@@ -8,7 +8,7 @@ use uuid::Uuid;
 /// Tests that unauthenticated requests to upload-url are rejected.
 #[tokio::test]
 async fn test_upload_url_requires_authentication() {
-    let env = setup_api_test_env(3130).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let err =
@@ -24,7 +24,7 @@ async fn test_upload_url_requires_authentication() {
 /// Tests that unauthenticated requests to confirm-upload are rejected.
 #[tokio::test]
 async fn test_confirm_upload_requires_authentication() {
-    let env = setup_api_test_env(3131).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
 
     let err = ureq::post(&format!("{}/api/v1/documents/confirm-upload", url)).send_json(
@@ -40,7 +40,7 @@ async fn test_confirm_upload_requires_authentication() {
 /// Tests that invalid file extensions are rejected at the upload-url stage.
 #[tokio::test]
 async fn test_upload_url_rejects_invalid_extension() {
-    let env = setup_api_test_env(3133).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -82,7 +82,7 @@ async fn test_upload_url_rejects_invalid_extension() {
 /// Tests that save-step rejects an unconfirmed document.
 #[tokio::test]
 async fn test_save_step_rejects_unconfirmed_document() {
-    let env = setup_api_test_env(3134).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -128,7 +128,7 @@ async fn test_save_step_rejects_unconfirmed_document() {
 /// Tests that confirm-upload fails if the file was never actually uploaded to S3.
 #[tokio::test]
 async fn test_confirm_upload_fails_without_s3_file() {
-    let env = setup_api_test_env(3135).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 
@@ -172,7 +172,7 @@ async fn test_confirm_upload_fails_without_s3_file() {
 /// Tests that title sanitization works (empty and overly long titles rejected).
 #[tokio::test]
 async fn test_upload_url_rejects_bad_titles() {
-    let env = setup_api_test_env(3136).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
 

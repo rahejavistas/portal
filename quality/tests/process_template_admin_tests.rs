@@ -132,7 +132,7 @@ fn seeded_manager(env: &TestEnv, admin_jwt: &str, tag: &str, flat_number: &str) 
 /// so it must not show up in the resident-facing "available" list yet.
 #[tokio::test]
 async fn test_create_new_template_is_draft_not_active() {
-    let env = setup_api_test_env(3200).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "create", "901");
@@ -172,7 +172,7 @@ async fn test_create_new_template_is_draft_not_active() {
 /// process to exactly that version_id.
 #[tokio::test]
 async fn test_activate_makes_template_startable_and_pins_process() {
-    let env = setup_api_test_env(3201).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "activate", "902");
@@ -223,7 +223,7 @@ async fn test_activate_makes_template_startable_and_pins_process() {
 /// `active_version_id`, and the previous version's content is left untouched.
 #[tokio::test]
 async fn test_edit_appends_new_version_without_auto_activating() {
-    let env = setup_api_test_env(3202).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "edit", "904");
@@ -282,7 +282,7 @@ async fn test_edit_appends_new_version_without_auto_activating() {
 /// a newer version of the same template is created and activated.
 #[tokio::test]
 async fn test_in_progress_process_stays_pinned_after_new_version_activated() {
-    let env = setup_api_test_env(3203).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "pin", "905");
@@ -363,7 +363,7 @@ async fn test_in_progress_process_stays_pinned_after_new_version_activated() {
 /// is only ever read together with the process_id that pins it to one exact version.
 #[tokio::test]
 async fn test_ids_unique_within_a_version_but_reused_freely_elsewhere() {
-    let env = setup_api_test_env(3204).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "idalloc", "908");
@@ -437,7 +437,7 @@ async fn test_ids_unique_within_a_version_but_reused_freely_elsewhere() {
 /// rejected, not silently activate the wrong template.
 #[tokio::test]
 async fn test_activate_rejects_version_from_different_template() {
-    let env = setup_api_test_env(3206).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "mismatch", "910");
@@ -484,7 +484,7 @@ async fn test_activate_rejects_version_from_different_template() {
 /// any authenticated user can see which templates they're allowed to start.
 #[tokio::test]
 async fn test_permission_gating_for_template_routes() {
-    let env = setup_api_test_env(3207).await;
+    let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
     let manager_jwt = seeded_manager(&env, &admin_jwt, "gate_ok", "911");

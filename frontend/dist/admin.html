@@ -1178,7 +1178,7 @@
                 </div>
                 <div class="card" id="signer-directory-card" style="display:none;">
                     <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Signer Directory</h3>
-                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Users eligible to be attached as a signer. <button type="button" class="perm-info-btn" onclick="showSignerActionsInfo()" aria-label="What do Deactivate and Delete do?">i</button></p>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Users eligible to be attached as a signer.</p>
                     <div class="table-container">
                         <table>
                             <tbody id="signer-directory-rows-target">
@@ -1376,7 +1376,7 @@
 
     <div id="confirm-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10010; justify-content:center; align-items:center;" onclick="if (event.target === this) closeConfirmModal(false)">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-            <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5;"></p>
+            <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.5; white-space:pre-line;"></p>
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
                 <button onclick="closeConfirmModal(false)" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
                 <button id="confirm-modal-ok-btn" onclick="closeConfirmModal(true)" class="del-action-btn">Confirm</button>
@@ -2112,7 +2112,7 @@
             'documents.categories.manage': { title: 'Manage Document Categories', desc: 'Add new document categories.' },
             'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
             'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
-            'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions.' },
+            'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions. Also allows changing which designations are required to sign a document field.' },
         };
 
         function sortPermissionsForDisplay(permissions) {
@@ -2121,16 +2121,6 @@
                 return i === -1 ? PERMISSION_ORDER.length : i;
             };
             return [...permissions].sort((a, b) => rank(a.code) - rank(b.code));
-        }
-
-        function showSignerActionsInfo() {
-            document.getElementById('perm-info-title').textContent = 'Deactivate';
-            document.getElementById('perm-info-desc').innerHTML =
-                'Deactivate only stops this person from being offered in "Add Signers" going forward. ' +
-                'It does not touch anything already in progress — any signature requirement already waiting on ' +
-                'them stays exactly as-is, and they can still complete it.' +
-                '<br><br>Reversible any time via Activate.';
-            document.getElementById('perm-info-modal').style.display = 'flex';
         }
 
         function showPermInfo(code) {
@@ -2643,7 +2633,7 @@ function openDesignationPicker(field) {
                             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
                                 <a href="/process?process_id=${escapeHtml(r.process_id)}" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">View Process</a>
                                 ${r.sign_url ? `<a href="${escapeHtml(r.sign_url)}" target="_blank" rel="noopener" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">Open Signing Page</a>` : ''}
-                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${escapeHtml(r.document_title).replace(/'/g, "\\'")}', '${escapeHtml(r.signer_name)}')">Sign</button>
+                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${escapeHtml(r.document_title).replace(/'/g, "\\'")}', '${escapeHtml(r.signer_name)}')">Sign manually</button>
                             </div>
                         </td>
                     </tr>
@@ -2800,6 +2790,13 @@ function openDesignationPicker(field) {
         }
 
         async function toggleSignerActive(signerId, newActive) {
+            if (!newActive) {
+                const confirmed = await showConfirm(
+                    'Stops them from being offered in future Add Signers picks.\nAnything already waiting on them is unaffected — reversible via Activate.',
+                    'Confirm Deactivate'
+                );
+                if (!confirmed) return;
+            }
             try {
                 await fetch(`${API_BASE}/api/v1/admin/signers/set-active`, {
                     method: 'POST',
