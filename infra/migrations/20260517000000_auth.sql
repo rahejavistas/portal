@@ -36,6 +36,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_active_flat_ownership
 ON flat_ownerships (flat_id)
 WHERE (is_active = TRUE);
 
+CREATE INDEX IF NOT EXISTS idx_flat_ownerships_user ON flat_ownerships(user_id) WHERE is_active = TRUE;
+
 CREATE TABLE IF NOT EXISTS designations (
     designation_id SERIAL PRIMARY KEY,
     code VARCHAR(64) NOT NULL UNIQUE,

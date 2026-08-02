@@ -259,6 +259,49 @@ async fn fetch_can_manage_documents<'e, E: sqlx::Executor<'e, Database = sqlx::P
     .await
 }
 
+/// Find-or-reactivate a user by email. A new row also gets its user_credentials row
+/// created (password_hash, or NULL for a passwordless account). Reactivating an
+/// existing row never touches its password.
+async fn upsert_user_by_email(
+    conn: &mut sqlx::PgConnection,
+    email: &str,
+    password_hash: Option<&str>,
+    created_by: Option<i32>,
+) -> Result<i32, String> {
+    let existing_user_row: Option<(i32,)> =
+        sqlx::query_as("SELECT user_id FROM users WHERE email = $1")
+            .bind(email)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    if let Some((id,)) = existing_user_row {
+        sqlx::query("UPDATE users SET is_active = TRUE, updated_at = NOW() WHERE user_id = $1")
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(id);
+    }
+
+    let (new_user_id,): (i32,) =
+        sqlx::query_as("INSERT INTO users (email, created_by) VALUES ($1, $2) RETURNING user_id")
+            .bind(email)
+            .bind(created_by)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(new_user_id)
+        .bind(password_hash)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(new_user_id)
+}
+
 /// Appends one row to the permission-change audit log. Shared across crates (document
 /// category access lives in `file_server`, not here) since both write to the same DB.
 pub async fn log_permission_change(
@@ -344,42 +387,17 @@ impl PermissionsManager {
         }
     }
 
-    /// The per-request hot path (every authenticated request re-resolves its session
-    /// user from a bare user_id). One query, one round trip, one consistent snapshot —
-    /// not a transaction juggling five separate statements.
+    /// Resolves a session user from a bare user_id. Called on every authenticated request.
     pub async fn get_user_by_id(&self, user_id: i32) -> Result<Option<User>, sqlx::Error> {
         let row: Option<RawUser> = sqlx::query_as(
-            "WITH ud AS ( \
-                 SELECT designation_id FROM user_designations \
-                 WHERE user_id = $1 AND is_active = TRUE \
-             ), \
-             desigs AS ( \
-                 SELECT ARRAY_AGG(d.code) AS codes FROM designations d \
-                 WHERE d.designation_id IN (SELECT designation_id FROM ud) \
-             ), \
-             perms AS ( \
-                 SELECT ARRAY_AGG(DISTINCT p.code::TEXT) AS codes FROM permissions p \
-                 JOIN designation_permissions dp ON dp.permission_id = p.permission_id \
-                 WHERE dp.designation_id IN (SELECT designation_id FROM ud) \
-             ), \
-             flat AS ( \
-                 SELECT string_agg(f.wing, ', ') AS wing, string_agg(f.flat_number, ', ') AS flat_number \
-                 FROM flat_ownerships fo JOIN flats f ON f.flat_id = fo.flat_id \
-                 WHERE fo.user_id = $1 AND fo.is_active = TRUE \
-             ), \
-             doc_manage AS ( \
-                 SELECT 1 FROM document_category_designations dcd \
-                 WHERE dcd.can_manage = TRUE AND dcd.designation_id IN (SELECT designation_id FROM ud) \
-                 LIMIT 1 \
-             ) \
-             SELECT u.user_id, u.email, u.is_active, \
-                    COALESCE(desigs.codes, ARRAY[]::TEXT[]) AS designations, \
-                    COALESCE(perms.codes, ARRAY[]::TEXT[]) AS permissions, \
-                    (COALESCE(perms.codes, ARRAY[]::TEXT[]) && ARRAY['documents.all.manage']::TEXT[] \
-                        OR EXISTS(SELECT 1 FROM doc_manage)) AS can_manage_documents, \
-                    COALESCE(flat.wing, 'TBD') AS wing, \
-                    COALESCE(flat.flat_number, 'TBD') AS flat_number \
-             FROM users u, desigs, perms, flat \
+            "SELECT u.user_id, u.email, u.is_active, \
+                    COALESCE(uea.designations, ARRAY[]::TEXT[]) AS designations, \
+                    COALESCE(uea.permissions, ARRAY[]::TEXT[]) AS permissions, \
+                    COALESCE(uea.can_manage_documents, FALSE) AS can_manage_documents, \
+                    COALESCE(uea.wing, 'TBD') AS wing, \
+                    COALESCE(uea.flat_number, 'TBD') AS flat_number \
+             FROM users u \
+             LEFT JOIN user_effective_access uea ON uea.user_id = u.user_id \
              WHERE u.user_id = $1",
         )
         .bind(user_id)
@@ -407,39 +425,8 @@ impl PermissionsManager {
 
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
-        let existing_user_row: Option<(i32,)> =
-            sqlx::query_as("SELECT user_id FROM users WHERE email = $1")
-                .bind(email)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-
-        let user_id = if let Some((id,)) = existing_user_row {
-            sqlx::query("UPDATE users SET is_active = TRUE, updated_at = NOW() WHERE user_id = $1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            id
-        } else {
-            let (new_user_id,): (i32,) = sqlx::query_as(
-                "INSERT INTO users (email, created_by) VALUES ($1, $2) RETURNING user_id",
-            )
-            .bind(email)
-            .bind(created_by)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-
-            sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
-                .bind(new_user_id)
-                .bind(&password_hash)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            new_user_id
-        };
+        let user_id =
+            upsert_user_by_email(&mut tx, email, password_hash.as_deref(), created_by).await?;
 
         // Upsert the flat unit, then map ownership — fails if another user already
         // actively owns it.
@@ -502,38 +489,7 @@ impl PermissionsManager {
     ) -> Result<User, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
-        let existing_user_row: Option<(i32,)> =
-            sqlx::query_as("SELECT user_id FROM users WHERE email = $1")
-                .bind(email)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-
-        let user_id = if let Some((id,)) = existing_user_row {
-            sqlx::query("UPDATE users SET is_active = TRUE, updated_at = NOW() WHERE user_id = $1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            id
-        } else {
-            let (new_user_id,): (i32,) = sqlx::query_as(
-                "INSERT INTO users (email, created_by) VALUES ($1, $2) RETURNING user_id",
-            )
-            .bind(email)
-            .bind(created_by)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-
-            sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, NULL)")
-                .bind(new_user_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            new_user_id
-        };
+        let user_id = upsert_user_by_email(&mut tx, email, None, created_by).await?;
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -873,54 +829,14 @@ impl PermissionsManager {
         }
     }
 
-    /// Fetches all users from the users table, aggregating their active flat info, designations,
-    /// and resolved permissions.
+    /// All users with an active flat mapping or designation — a bare row with neither
+    /// (mid-onboarding) isn't shown.
     pub async fn get_all_users(&self) -> Result<Vec<User>, sqlx::Error> {
         sqlx::query_as(
-            "WITH user_active_designations AS ( \
-                 SELECT ud.user_id, ARRAY_AGG(d.code) as designations \
-                 FROM user_designations ud \
-                 JOIN designations d ON d.designation_id = ud.designation_id \
-                 WHERE ud.is_active = TRUE \
-                 GROUP BY ud.user_id \
-             ), \
-             user_permissions AS ( \
-                 SELECT ud.user_id, ARRAY_AGG(DISTINCT p.code::TEXT) as permissions \
-                 FROM user_designations ud \
-                 JOIN designation_permissions dp ON dp.designation_id = ud.designation_id \
-                 JOIN permissions p ON p.permission_id = dp.permission_id \
-                 WHERE ud.is_active = TRUE \
-                 GROUP BY ud.user_id \
-             ), \
-             user_flats AS ( \
-                 SELECT fo.user_id, \
-                        string_agg(f.wing, ', ') as wing, \
-                        string_agg(f.flat_number, ', ') as flat_number \
-                 FROM flat_ownerships fo \
-                 JOIN flats f ON fo.flat_id = f.flat_id \
-                 WHERE fo.is_active = TRUE \
-                 GROUP BY fo.user_id \
-             ), \
-             user_document_manage_access AS ( \
-                 SELECT DISTINCT ud.user_id \
-                 FROM user_designations ud \
-                 JOIN document_category_designations dcd ON dcd.designation_id = ud.designation_id \
-                 WHERE ud.is_active = TRUE AND dcd.can_manage = TRUE \
-             ) \
-             SELECT u.user_id, u.email, u.is_active, \
-                    COALESCE(r.designations, ARRAY[]::TEXT[]) AS designations, \
-                    COALESCE(perm.permissions, ARRAY[]::TEXT[]) AS permissions, \
-                    (COALESCE(perm.permissions, ARRAY[]::TEXT[]) && ARRAY['documents.all.manage']::TEXT[] \
-                        OR dma.user_id IS NOT NULL) AS can_manage_documents, \
-                    COALESCE(f.wing, 'TBD') AS wing, \
-                    COALESCE(f.flat_number, 'TBD') AS flat_number \
-             FROM users u \
-             LEFT JOIN user_active_designations r ON u.user_id = r.user_id \
-             LEFT JOIN user_permissions perm ON u.user_id = perm.user_id \
-             LEFT JOIN user_flats f ON u.user_id = f.user_id \
-             LEFT JOIN user_document_manage_access dma ON u.user_id = dma.user_id \
-             WHERE f.wing IS NOT NULL OR r.designations IS NOT NULL \
-             ORDER BY u.user_id DESC",
+            "SELECT user_id, email, is_active, designations, permissions, can_manage_documents, wing, flat_number \
+             FROM user_capabilities \
+             WHERE wing != 'TBD' OR array_length(designations, 1) IS NOT NULL \
+             ORDER BY user_id DESC",
         )
         .fetch_all(&self.pool)
         .await

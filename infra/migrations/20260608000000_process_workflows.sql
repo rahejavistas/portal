@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS processes (
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     template_version_id INT NOT NULL REFERENCES process_template_versions(version_id),
     ownership_id INT REFERENCES flat_ownerships(ownership_id) ON DELETE CASCADE,
+    current_turn VARCHAR(10),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );

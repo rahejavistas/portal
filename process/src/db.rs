@@ -96,14 +96,9 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Re-derive completion from a FRESH load, not `result.steps_to_update`. A field
-    // that just introduced a new `requires_signature` document couldn't have been seen
-    // as blocking by the `load_state` call above — that ran before this document
-    // existed in the DB, so its `require_sig_doc_ids` query (needs the document to
-    // already be persisted) couldn't have flagged it. Reloading after the persist picks
-    // it up correctly, so a step can never complete on the same save that introduces an
-    // unattached signature-required document.
-    let post_save_state = load_state(&mut *conn, process_id, template)
+    // Fresh load, not result.steps_to_update — a newly-introduced requires_signature
+    // document can't be seen as blocking until it's actually persisted.
+    let mut post_save_state = load_state(&mut *conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
     let steps_to_update =
@@ -132,7 +127,14 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    sync_start_times(&mut *conn, process_id, template)
+    // Patch in-memory instead of reloading — persist_step_completions above just wrote
+    // exactly these values, so post_save_state.steps is otherwise still fresh.
+    for &(sid, completed) in &steps_to_update {
+        if let Some(s) = post_save_state.steps.get_mut(&sid) {
+            s.is_completed = completed;
+        }
+    }
+    persist_start_times_and_turn(&mut *conn, process_id, template, &post_save_state)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -146,9 +148,7 @@ pub struct ReviewStepParams<'a> {
     pub reviewer_user_id: Option<i32>,
     pub is_approved: bool,
     pub notes: Option<&'a str>,
-    /// Template step IDs (= `process_steps.template_step_id`) the admin flagged
-    /// as needing resident attention. Purely informational — does not affect the
-    /// state machine. See the migration comment for full details.
+    /// Steps the admin flagged for resident attention. Informational only.
     pub flagged_step_ids: &'a [i32],
 }
 
@@ -194,7 +194,7 @@ pub async fn reopen_step(
     reviewer_user_id: i32, // users.user_id of the reviewer performing the reopen
     custom_note: Option<&str>,
 ) -> Result<(), String> {
-    let state = load_state(conn, process_id, template)
+    let mut state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
     let steps_to_reset = state_machine::compute_reopen_updates(template, &state, step_id)?;
@@ -228,6 +228,21 @@ pub async fn reopen_step(
     persist_step_completions(&mut *conn, process_id, &updates)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Patch the already-loaded state with the resets above instead of reloading it,
+    // to derive the new current_turn.
+    for &sid in &steps_to_reset {
+        if let Some(s) = state.steps.get_mut(&sid) {
+            s.is_completed = false;
+        }
+    }
+    persist_current_turn(
+        &mut *conn,
+        process_id,
+        state_machine::determine_turn(template, &state),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -360,6 +375,8 @@ pub struct ProcessListItem {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub steps_total: i64,
     pub steps_completed: i64,
+    /// NULL for a process that predates this column.
+    pub current_turn: Option<String>,
     #[sqlx(default)]
     pub status: Option<String>,
 }
@@ -371,6 +388,7 @@ const PROCESS_LIST_QUERY_BASE: &str =
                  ELSE NULL END AS flat_label, \
             u.email AS user_email, \
             p.created_at, \
+            p.current_turn, \
             COUNT(ps.step_instance_id) FILTER (WHERE ps.parent_step_instance_id IS NOT NULL) AS steps_total, \
             COUNT(ps.step_instance_id) FILTER (WHERE ps.parent_step_instance_id IS NOT NULL AND ps.is_completed = TRUE) AS steps_completed \
      FROM processes p \
@@ -387,7 +405,7 @@ pub async fn list_processes_for_user(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} WHERE p.user_id = $1 AND (fo.ownership_id IS NULL OR fo.is_active = TRUE) \
-         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
+         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.current_turn \
          ORDER BY p.created_at DESC",
         PROCESS_LIST_QUERY_BASE
     );
@@ -399,7 +417,7 @@ pub async fn list_all_processes(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} \
-         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at \
+         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.current_turn \
          ORDER BY p.created_at DESC",
         PROCESS_LIST_QUERY_BASE
     );
@@ -471,10 +489,7 @@ pub async fn get_user_active_flats(
 // Private DB helpers
 // ==========================================
 
-/// Load per-step completion state (is_completed, started_at) for a process.
-/// Split out from `load_state` so callers that already fetch full field/review
-/// history elsewhere (e.g. the process-state read endpoint) can derive the rest
-/// of `ProcessStateInput` from data they have instead of re-querying it.
+/// Per-step completion state (is_completed, started_at) for a process.
 pub async fn load_steps(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -565,10 +580,7 @@ pub async fn load_state(
         .collect()
     };
 
-    // Fields marked `requires_signature`: the reviewer must attach at least one
-    // signature requirement before the step can complete, even before any requirement
-    // has actually gone PENDING/COMPLETED — otherwise a reviewer could just skip
-    // attaching signers altogether.
+    // requires_signature fields block completion until a reviewer attaches a signer.
     let step_info_map = state_machine::build_step_info_map(template);
     let require_sig_doc_ids: Vec<Uuid> = step_info_map
         .values()
@@ -577,11 +589,8 @@ pub async fn load_state(
         .filter_map(|f| fields.get(&f.field_id).and_then(|fs| fs.document_id))
         .collect();
     if !require_sig_doc_ids.is_empty() {
-        // A document with no requirement of its own is "unattached" UNLESS it's
-        // itself the signed output of a completed requirement on some other (now
-        // historical) document — once a field is repointed at the signed copy after
-        // everyone has signed, that copy must not be treated as needing a fresh round
-        // of signers attached to it.
+        // A document counts as attached if it either has its own requirement, or is
+        // itself the signed output of one (a field repointed at a signed copy).
         let unattached: Vec<Uuid> = sqlx::query_scalar(
             "SELECT d.document_id FROM UNNEST($1::uuid[]) AS d(document_id) \
              WHERE NOT EXISTS ( \
@@ -607,14 +616,24 @@ pub async fn load_state(
     })
 }
 
-/// Set started_at for any step that is non-Locked but hasn't been started yet.
+/// Sets started_at for newly-unlocked steps and refreshes processes.current_turn.
 async fn sync_start_times(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template: &crate::ProcessTemplate,
 ) -> Result<(), sqlx::Error> {
     let state = load_state(&mut *conn, process_id, template).await?;
-    let statuses = state_machine::compute_statuses(template, &state);
+    persist_start_times_and_turn(conn, process_id, template, &state).await
+}
+
+/// Same as `sync_start_times` but skips the reload for callers that already have state.
+async fn persist_start_times_and_turn(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+) -> Result<(), sqlx::Error> {
+    let statuses = state_machine::compute_statuses(template, state);
     let now = chrono::Utc::now();
 
     for (&step_id, &status) in &statuses {
@@ -637,13 +656,32 @@ async fn sync_start_times(
             }
         }
     }
+
+    persist_current_turn(
+        &mut *conn,
+        process_id,
+        state_machine::determine_turn(template, state),
+    )
+    .await?;
+
     Ok(())
 }
 
-/// Whether `document_id` is still the current value of a field (latest `process_fields`
-/// row for that `template_field_id`). A signed requirement can be completed after its
-/// document has already been superseded by a later save — in that case the field must
-/// NOT be repointed.
+async fn persist_current_turn(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    turn: state_machine::ProcessTurn,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE processes SET current_turn = $1 WHERE process_id = $2")
+        .bind(turn.as_db_str())
+        .bind(process_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Whether `document_id` is still the field's latest value (it may have been
+/// superseded by a later save before its signature completed).
 pub async fn is_current_field_value(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -668,11 +706,8 @@ pub async fn is_current_field_value(
     .await
 }
 
-/// Repoint a field at a signed replacement document. Deliberately bypasses
-/// `save_step`/`validate_save` (and therefore auto-provisioning) — this is a
-/// system-driven update following a completed signature, not a user submission, and
-/// re-entering the normal save path would try to flag the new document as requiring
-/// signature all over again.
+/// Repoint a field at a signed replacement document. Bypasses save_step/validate_save
+/// since this is a system update, not a user submission.
 pub async fn attach_signed_replacement(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -689,10 +724,8 @@ pub async fn attach_signed_replacement(
     .await
 }
 
-/// Re-run step completion for the step a document currently belongs to, and persist
-/// it. Call this whenever a signature requirement is completed outside of
-/// `save_step`/`review_step` — the affected step's completion must be recomputed at
-/// that exact moment, not just on the next unrelated save.
+/// Re-run and persist step completion. Call after a signature requirement completes
+/// outside save_step/review_step.
 pub async fn recompute_gating_for_step(
     conn: &mut sqlx::PgConnection,
     template: &crate::ProcessTemplate,
@@ -729,20 +762,26 @@ async fn persist_fields(
     template_step_id: i32,
     fields: &[(i32, Option<String>, Option<Uuid>)], // (template_field_id, text_value, document_id)
 ) -> Result<(), sqlx::Error> {
+    if fields.is_empty() {
+        return Ok(());
+    }
     let step_instance_id = step_instance_id_for(&mut *conn, process_id, template_step_id).await?;
 
-    for &(template_field_id, ref text_value, document_id) in fields {
-        sqlx::query(
-            "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_at) \
-             VALUES ($1, $2, $3, $4, NOW())",
-        )
-        .bind(step_instance_id)
-        .bind(template_field_id)
-        .bind(text_value)
-        .bind(document_id)
-        .execute(&mut *conn)
-        .await?;
-    }
+    let template_field_ids: Vec<i32> = fields.iter().map(|f| f.0).collect();
+    let text_values: Vec<Option<String>> = fields.iter().map(|f| f.1.clone()).collect();
+    let document_ids: Vec<Option<Uuid>> = fields.iter().map(|f| f.2).collect();
+
+    sqlx::query(
+        "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_at) \
+         SELECT $1, f.template_field_id, f.text_value, f.document_id, NOW() \
+         FROM UNNEST($2::int[], $3::text[], $4::uuid[]) AS f(template_field_id, text_value, document_id)",
+    )
+    .bind(step_instance_id)
+    .bind(&template_field_ids)
+    .bind(&text_values)
+    .bind(&document_ids)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -751,18 +790,25 @@ async fn persist_step_completions(
     process_id: Uuid,
     steps: &[(i32, bool)], // (template_step_id, is_completed)
 ) -> Result<(), sqlx::Error> {
-    for &(template_step_id, is_completed) in steps {
-        sqlx::query(
-            "UPDATE process_steps \
-             SET is_completed = $1, completed_at = CASE WHEN $1 = TRUE THEN NOW() ELSE NULL END, updated_at = NOW() \
-             WHERE process_id = $2 AND template_step_id = $3",
-        )
-        .bind(is_completed)
-        .bind(process_id)
-        .bind(template_step_id)
-        .execute(&mut *conn)
-        .await?;
+    if steps.is_empty() {
+        return Ok(());
     }
+    let template_step_ids: Vec<i32> = steps.iter().map(|s| s.0).collect();
+    let completed_flags: Vec<bool> = steps.iter().map(|s| s.1).collect();
+
+    sqlx::query(
+        "UPDATE process_steps ps \
+         SET is_completed = v.completed, \
+             completed_at = CASE WHEN v.completed THEN NOW() ELSE NULL END, \
+             updated_at = NOW() \
+         FROM UNNEST($1::int[], $2::bool[]) AS v(template_step_id, completed) \
+         WHERE ps.process_id = $3 AND ps.template_step_id = v.template_step_id",
+    )
+    .bind(&template_step_ids)
+    .bind(&completed_flags)
+    .bind(process_id)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 

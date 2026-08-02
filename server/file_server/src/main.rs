@@ -271,11 +271,7 @@ async fn main() {
                         Permission::UsersRolesManage,
                         Permission::DesignationsManage,
                         Permission::DocumentsCategoriesManage,
-                        // The template builder's "Eligible Signer Designations" picker
-                        // needs a plain read-only list of designation codes/labels —
-                        // without this, anyone who can manage templates but not
-                        // roles/designations gets a silent 403 here and sees an empty
-                        // picker with nothing to choose from.
+                        // Needed by the template builder's designation picker.
                         Permission::ProcessTemplatesManage,
                     ]),
                 ));
@@ -302,12 +298,7 @@ async fn main() {
                     middleware::require_any_of(&[Permission::ProcessTemplatesManage]),
                 ));
 
-            // No signatures-specific permission gates these — signing eligibility is
-            // "holds any designation" (see `User::has_any_designation`), and each
-            // handler is self-scoped anyway: `queue` only ever returns the caller's own
-            // requirements, and `replace-upload-url`/`replace-confirm-upload` require the
-            // caller to actually BE the requirement's signer. Authentication alone (the
-            // `SessionUser` extractor) is enough at the router level.
+            // No permission gate — each handler is self-scoped to the caller's own signer.
             let document_signatures_sign_routes = Router::new()
                 .route(
                     "/documents/signatures/queue",
@@ -341,10 +332,8 @@ async fn main() {
                     ]),
                 ));
 
-            // Signer directory oversight (set-active/full list) belongs to whoever
-            // attaches signers in the first place — process.reviewer — there is no
-            // separate signatures-management permission. Deliberately no delete route:
-            // a signer is never hard-removed, only deactivated (reversible).
+            // Gated on process.reviewer, same as attaching signers. No delete route —
+            // a signer is only ever deactivated, never removed.
             let signer_directory_manage_routes = Router::new()
                 .route("/signers/set-active", post(handlers::signers::set_active))
                 .layer(axum_middleware::from_fn_with_state(

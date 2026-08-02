@@ -1,11 +1,7 @@
-//! DB-backed, versioned process templates. A `process_templates` row is a logical
-//! template ("process type", e.g. tenant onboarding); every save appends a new
-//! `process_template_versions` row (its own plain integer PK, `version_id`) rather
-//! than mutating one in place. A process instance is permanently pinned to ONE
-//! `version_id` for its whole lifetime — `process_templates` itself is only ever
-//! consulted by the admin builder and when starting a brand-new resident process.
-//! step_id/field_id only need to be unique WITHIN one version_id — different
-//! versions (even of the same template) may reuse numbers freely.
+//! DB-backed, versioned process templates. Every save appends a new
+//! process_template_versions row rather than mutating one in place; a process
+//! instance is permanently pinned to one version_id for its whole lifetime.
+//! step_id/field_id only need to be unique within one version_id.
 
 use serde::Deserialize;
 use sqlx::Connection;
@@ -123,9 +119,7 @@ fn assign_step_ids(draft: StepDraft, next_id: &mut i32) -> crate::ProcessStepTem
     }
 }
 
-/// Loads one pinned version by its `version_id` — the replacement for the old
-/// compile-time `ProcessTemplate::load_by_version`. Used by every production code
-/// path that resolves an EXISTING process's already-pinned template.
+/// Loads one pinned version by its version_id.
 pub async fn load_template_version(
     conn: &mut sqlx::PgConnection,
     version_id: i32,
@@ -213,11 +207,8 @@ pub async fn list_templates(conn: &mut sqlx::PgConnection) -> Result<Vec<Templat
     Ok(out)
 }
 
-/// Upsert: creates a new template, or appends a new draft version to an existing
-/// one (never auto-activates). step_id/field_id are assigned fresh starting at 1
-/// every single save — they only need to be unique within this one version's
-/// `definition`, so there's nothing to track across versions or templates.
-/// Returns the new `version_id`.
+/// Upsert: creates a new template, or appends a new draft version (never
+/// auto-activates). Returns the new version_id.
 pub async fn save_template_version(
     conn: &mut sqlx::PgConnection,
     draft: TemplateDraft,

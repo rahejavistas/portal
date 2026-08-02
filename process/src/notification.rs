@@ -1,7 +1,6 @@
 use uuid::Uuid;
 
-/// Context passed into notification functions so they can dispatch both
-/// log entries and email notifications without needing database access.
+/// Context for dispatching a notification without needing DB access.
 pub struct NotificationContext {
     /// Email address of the resident who owns the process.
     pub user_email: String,
@@ -13,12 +12,7 @@ pub struct NotificationContext {
 
 const PROCESS_UPDATE_SUBJECT: &str = "Update to a process";
 
-// ---------------------------------------------------------------------------
-// Internal dispatch helper — every public function delegates here.
-// Failures are logged but never propagated, so callers never gate business
-// logic on notification delivery.
-// ---------------------------------------------------------------------------
-
+// Every public function below delegates here. Failures are logged, never propagated.
 async fn dispatch(
     to: &str,
     heading: &str,
@@ -46,8 +40,7 @@ async fn dispatch(
     }
 }
 
-/// Deep-links straight into the resident's own process detail (the resident-facing
-/// `/process` page reads `?process_id=` on load and opens that process directly).
+/// Deep-links into the resident's own process detail.
 fn portal_process_url(process_id: Uuid) -> String {
     format!(
         "{}/process?process_id={}",
@@ -56,8 +49,7 @@ fn portal_process_url(process_id: Uuid) -> String {
     )
 }
 
-/// Deep-links a reviewer straight into the process needing review (the `/admin-process`
-/// page shares the same `?process_id=` deep-link support as the resident-facing one).
+/// Deep-links a reviewer into the process needing review.
 fn portal_admin_process_url(process_id: Uuid) -> String {
     format!(
         "{}/admin-process?process_id={}",
@@ -66,26 +58,14 @@ fn portal_admin_process_url(process_id: Uuid) -> String {
     )
 }
 
-/// Deep-links a signer straight into their signing queue (the `/admin` page reads
-/// `?tab=` on load — `signatures` is open to any designation holder, not just admins).
+/// Deep-links a signer into their signing queue.
 fn portal_signature_queue_url() -> String {
     format!("{}/admin?tab=signatures", email::config::portal_base_url())
 }
 
-// ---------------------------------------------------------------------------
-// Public notification functions — only meaningful state transitions.
-//
-// We deliberately do NOT email users on partial saves or self-triggered
-// completions. Emails are reserved for cross-role transitions:
-//   1. User submits → admin needs to review
-//   2. Admin approves/rejects → user needs to know
-//   3. Admin revokes/reopens → user needs to act
-// ---------------------------------------------------------------------------
+// Only cross-role transitions get an email: submit->review, approve/reject, revoke.
 
-/// Notify a signer that a document was just attached to them for signature. Unlike the
-/// other functions here, the recipient is a specific signer (not derived from
-/// `NotificationContext`), so it's passed in directly — this function stays DB-free
-/// like the rest of this module.
+/// Notify a signer a document was attached to them for signature.
 pub async fn notify_signature_queue(
     signer_email: &str,
     process_name: &str,
@@ -106,9 +86,7 @@ pub async fn notify_signature_queue(
     .await;
 }
 
-/// Notify a signer that it's now their turn — an earlier signer in the chain just
-/// completed, unblocking them. Manual-flow only, same as `notify_signature_queue`
-/// (SignYu manages its own signer-to-signer notifications).
+/// Notify a signer it's now their turn. Manual-flow only (SignYu notifies its own).
 pub async fn notify_signature_turn(
     signer_email: &str,
     process_name: &str,
@@ -132,11 +110,8 @@ pub async fn notify_signature_turn(
     .await;
 }
 
-/// Notify the resident that a step just completed as a direct result of its last
-/// outstanding signature finishing — NOT sent merely because a signature chain
-/// finished (that's an internal sub-state of the step, not a cross-role transition on
-/// its own). Only call this once the step's status has actually transitioned to
-/// Completed.
+/// Notify the resident a step completed via its last outstanding signature. Only call
+/// once the step has actually transitioned to Completed.
 pub async fn notify_signature_step_complete(
     ctx: &NotificationContext,
     process_id: Uuid,

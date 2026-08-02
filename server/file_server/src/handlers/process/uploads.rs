@@ -34,8 +34,8 @@ pub struct ProcessAdminUploadUrlResponse {
 }
 
 /// POST /api/v1/admin/process/upload-url
-/// Creates an upload intent for a process document uploaded by an admin.
-/// The backend securely derives the flat and forces RESIDENT_SPECIFIC (private) semantics.
+/// Creates an upload intent for an admin-uploaded process document. The backend
+/// derives the flat and forces RESIDENT_SPECIFIC.
 pub async fn process_admin_upload_url(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,

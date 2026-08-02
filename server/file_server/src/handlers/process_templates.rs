@@ -1,23 +1,12 @@
-//! Admin authoring API for versioned process templates (the builder UI). Separate
-//! from `handlers::process`, which only ever deals with already-pinned process
-//! instances — this is the only place `process_templates`/`process_template_versions`
-//! get written to.
+//! Admin authoring API for versioned process templates. The only place
+//! process_templates/process_template_versions get written to.
 
 use crate::extractors::SessionUser;
+use crate::handlers::error::{bad_request, internal_err, ApiError};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::template_store::TemplateDraft;
 use serde::{Deserialize, Serialize};
-
-type ApiError = (StatusCode, Json<String>);
-
-fn internal_err(e: impl std::fmt::Display) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string()))
-}
-
-fn bad_request(e: impl std::fmt::Display) -> ApiError {
-    (StatusCode::BAD_REQUEST, Json(e.to_string()))
-}
 
 /// POST /api/v1/admin/process-templates/list
 pub async fn list(
@@ -96,8 +85,7 @@ pub async fn activate(
 }
 
 /// POST /api/v1/process-templates/available
-/// Resident-facing: which templates can currently be started (have an active version).
-/// No admin permission required — this is what populates the "Start Process" picker.
+/// Resident-facing: templates with an active version, for the "Start Process" picker.
 pub async fn available(
     State(state): State<AppState>,
     _user: SessionUser,

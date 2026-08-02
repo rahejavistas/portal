@@ -3,12 +3,8 @@ pub mod db {
     use std::str::FromStr;
     use std::time::Duration;
 
-    /// Runs all pending migrations in the `migrations` directory.
-    /// This uses the `sqlx::migrate!` macro to embed the SQL files in the binary
-    /// and ensures a `_sqlx_migrations` table is automatically maintained in the DB.
+    /// Runs all pending migrations from the `migrations` directory, embedded at compile time.
     pub async fn run_migrations(pool: &Pool<Postgres>) -> Result<(), sqlx::migrate::MigrateError> {
-        // This macro looks for a `migrations` directory in the root of the crate.
-        // It will embed the migration files into the final executable.
         sqlx::migrate!("./migrations").run(pool).await
     }
 

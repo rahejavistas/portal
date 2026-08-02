@@ -92,7 +92,7 @@ where
         };
 
         let user = match app_state.permissions_manager.get_user_by_id(user_id).await {
-            Ok(Some(u)) => u,
+            Ok(Some(u)) if !u.is_orphaned() => u,
             _ => return Err(StatusCode::UNAUTHORIZED),
         };
 

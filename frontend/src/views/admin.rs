@@ -1783,12 +1783,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
         function switchSuite(suiteName) {
             document.documentElement.setAttribute('data-tab', suiteName);
 
-            // Keep the URL in sync with the active tab. refreshProfile() below reloads
-            // the page whenever the fetched user object differs at all from the cached
-            // one (e.g. any field drifted since login) — without this, that reload would
-            // land back on a tab-less URL and silently snap back to defaultSuite (usually
-            // "residents"), which looks exactly like the tab you just clicked closing on
-            // its own a moment later.
             const newUrl = `${window.location.pathname}?tab=${suiteName}`;
             if (window.location.pathname + window.location.search !== newUrl) {
                 history.replaceState(null, '', newUrl);
@@ -2882,6 +2876,7 @@ function openDesignationPicker(field) {
                     await loadNonSystemCategories();
                     renderCategoriesList();
                     await loadCategoryMatrix();
+                    await loadUploadCategories();
                 } else {
                     feedback.className = 'feedback-box error';
                     feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(data.message || 'Failed to create category.')}`;
@@ -3430,6 +3425,7 @@ function openDesignationPicker(field) {
                     populateSubcategoryParentSelect();
                     renderSubcategoriesList();
                     await loadCategoryMatrix();
+                    await loadUploadCategories();
                     return true;
                 } else {
                     showAlert(data.message || 'Failed to delete category.');

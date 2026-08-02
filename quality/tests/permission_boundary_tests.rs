@@ -284,6 +284,63 @@ async fn test_cannot_modify_own_designations() {
     assert_forbidden(resp, "assigning a designation to yourself");
 }
 
+/// A caller holding only `users.roles.manage` cannot assign a designation that carries
+/// a permission they don't hold themselves (e.g. `designations.manage`) — otherwise
+/// they could create/target any account, hand it a more powerful designation, and
+/// escalate in two hops. Assigning a designation with zero permissions still works,
+/// proving the fix is scoped to the actual permission gap, not a blanket block.
+#[tokio::test]
+async fn test_scoped_roles_manage_cannot_grant_a_more_powerful_designation() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    seed_scoped_designation(&env, "roles_only_escalator", "users.roles.manage").await;
+    quick_create_designation(&env, &admin_jwt, "power_des", "Power Designation");
+    quick_toggle_designation_permission(&env, &admin_jwt, "power_des", "designations.manage", true);
+
+    let caller_id = quick_create_user(&env, &admin_jwt, "escalator@test.com", "A", "201");
+    let caller_jwt = quick_onboard_user(&env, "escalator@test.com", "password123");
+    quick_assign_designation(&env, &admin_jwt, caller_id, "roles_only_escalator");
+    let caller_auth = auth(&caller_jwt);
+
+    let target_id = quick_create_user(&env, &admin_jwt, "escalation_target@test.com", "A", "202");
+    let _target_jwt = quick_onboard_user(&env, "escalation_target@test.com", "password123");
+
+    let escalate_resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/assign", url))
+        .set("Authorization", &caller_auth)
+        .send_json(serde_json::json!({"user_id": target_id, "designation_code": "power_des"}));
+    assert_forbidden(
+        escalate_resp,
+        "assigning a designation carrying a permission the caller doesn't hold",
+    );
+
+    // Sanity: assigning a designation with no permissions of its own still works.
+    quick_create_designation(&env, &admin_jwt, "harmless_des", "Harmless Designation");
+    let harmless_resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/assign", url))
+        .set("Authorization", &caller_auth)
+        .send_json(serde_json::json!({"user_id": target_id, "designation_code": "harmless_des"}));
+    assert!(
+        harmless_resp.is_ok(),
+        "assigning a permission-less designation should still succeed"
+    );
+
+    // The revoke direction is guarded the same way: the caller can't strip a
+    // designation carrying permissions they don't hold either.
+    let admin_auth = auth(&admin_jwt);
+    ureq::post(&format!("{}/api/v1/admin/roles/designations/assign", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({"user_id": target_id, "designation_code": "power_des"}))
+        .expect("admin can assign power_des directly");
+    let revoke_resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/revoke", url))
+        .set("Authorization", &caller_auth)
+        .send_json(serde_json::json!({"user_id": target_id, "designation_code": "power_des"}));
+    assert_forbidden(
+        revoke_resp,
+        "revoking a designation carrying a permission the caller doesn't hold",
+    );
+}
+
 /// Toggling a `document_category_designations` cell via
 /// /roles/document-category-designations/toggle is reflected in real document
 /// visibility for a user holding the matching designation.

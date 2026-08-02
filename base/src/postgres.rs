@@ -27,9 +27,7 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<Pool<Postgres>, sqlx
         .await
 }
 
-/// Begins a new database transaction from the connection pool.
-/// The returned transaction will automatically rollback on drop if `.commit()` is not called,
-/// ensuring atomicity: either all writes succeed, or none persist.
+/// Rolls back on drop if `.commit()` isn't called.
 pub async fn begin_transaction(
     pool: &Pool<Postgres>,
 ) -> Result<sqlx::Transaction<'_, Postgres>, sqlx::Error> {

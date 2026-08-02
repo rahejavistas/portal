@@ -23,6 +23,17 @@ pub enum ProcessTurn {
     None,
 }
 
+impl ProcessTurn {
+    /// Value stored in `processes.current_turn`.
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            ProcessTurn::User => "user",
+            ProcessTurn::Admin => "admin",
+            ProcessTurn::None => "none",
+        }
+    }
+}
+
 // ==========================================
 // DB state (loaded from database, fed into pure functions)
 // ==========================================
@@ -50,10 +61,7 @@ pub struct ProcessStateInput {
     pub steps: HashMap<i32, StepStateDb>,
     pub fields: HashMap<i32, FieldState>,
     pub reviews: HashMap<i32, Vec<ReviewState>>,
-    /// document_ids with at least one PENDING signature requirement (any required
-    /// designation not yet signed) — a document field whose current document_id is in
-    /// this set is treated as not-filled by `check_step_completed`, on top of the
-    /// existing `is_field_filled` check.
+    /// document_ids with a PENDING signature requirement — treated as not-filled.
     pub blocking_document_ids: HashSet<Uuid>,
 }
 
@@ -199,13 +207,8 @@ pub fn check_step_completed(
     true
 }
 
-/// Compute the status of every step based on DB state and reviews.
-///
-/// Rules:
-/// - `Locked` if the preceding top-level step is not `Completed`.
-/// - `Completed` if completed in DB and approved (or no review required).
-/// - `PendingReview` if completed in DB but not yet approved.
-/// - `Open` if unlocked but not yet completed.
+/// Locked if the preceding top-level step isn't Completed; Completed if done+approved
+/// (or no review required); PendingReview if done but not yet approved; else Open.
 pub fn compute_statuses(
     template: &crate::ProcessTemplate,
     state_input: &ProcessStateInput,
@@ -311,13 +314,8 @@ pub fn compute_statuses(
     statuses
 }
 
-/// Determine whose turn it is to act on the process.
-///
-/// Simple rules:
-/// 1. If root is Completed → None
-/// 2. If any step is PendingReview → Admin
-/// 3. If any Open step has admin fields → Admin
-/// 4. Otherwise → User
+/// None if root is Completed; Admin if any step is PendingReview or an Open step has
+/// admin fields; else User.
 pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInput) -> ProcessTurn {
     let statuses = compute_statuses(template, state);
     let info_map = build_step_info_map(template);
@@ -345,9 +343,7 @@ pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInp
     ProcessTurn::User
 }
 
-/// Validate fields and compute what DB updates are needed to save a step.
-///
-/// Does NOT touch the database — returns a `SaveResult` for the caller to persist.
+/// Validates fields and computes DB updates for a step save. Does not touch the DB.
 pub fn validate_save(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
@@ -453,44 +449,34 @@ pub fn validate_save(
     })
 }
 
-/// Given a step's freshly-computed completion and the rest of process state, returns
-/// the (template_step_id, is_completed) pairs to persist for that step and (if
-/// applicable) its parent. Shared by `validate_save` and by callers reacting to
-/// out-of-band completion changes.
-pub fn compute_completion_updates(
+/// Marks `step_id` completed and, if all its siblings are also complete, marks the
+/// immediate parent too. Never walks past one level.
+fn cascade_completion_one_level(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
+    info_map: &HashMap<i32, StepInfo>,
     step_id: i32,
+    target_completed: bool,
 ) -> Vec<(i32, bool)> {
-    let info_map = build_step_info_map(template);
-    let info = match info_map.get(&step_id) {
-        Some(i) => i,
-        None => return vec![],
-    };
-
-    let target_completed = check_step_completed(
-        step_id,
-        &info_map,
-        &state.fields,
-        &state.blocking_document_ids,
-    );
     let mut steps_to_update = vec![(step_id, target_completed)];
 
-    if let Some(parent_id) = info.parent_id {
-        if parent_id != template.step_id {
-            if let Some(parent_info) = info_map.get(&parent_id) {
-                let all_siblings_completed = parent_info.substep_ids.iter().all(|&sub_id| {
-                    if sub_id == step_id {
-                        target_completed
-                    } else {
-                        state
-                            .steps
-                            .get(&sub_id)
-                            .map(|s| s.is_completed)
-                            .unwrap_or(false)
-                    }
-                });
-                steps_to_update.push((parent_id, all_siblings_completed));
+    if let Some(info) = info_map.get(&step_id) {
+        if let Some(parent_id) = info.parent_id {
+            if parent_id != template.step_id {
+                if let Some(parent_info) = info_map.get(&parent_id) {
+                    let all_siblings_completed = parent_info.substep_ids.iter().all(|&sub_id| {
+                        if sub_id == step_id {
+                            target_completed
+                        } else {
+                            state
+                                .steps
+                                .get(&sub_id)
+                                .map(|s| s.is_completed)
+                                .unwrap_or(false)
+                        }
+                    });
+                    steps_to_update.push((parent_id, all_siblings_completed));
+                }
             }
         }
     }
@@ -498,10 +484,51 @@ pub fn compute_completion_updates(
     steps_to_update
 }
 
-/// Compute step updates for an admin review (approve or reject).
-///
-/// Returns `(steps_to_update, is_step_completed)` where each update is
-/// `(template_step_id, is_completed)`.
+/// Resets `step_id` and every ancestor up to the template root to incomplete.
+fn cascade_incomplete_to_root(
+    template: &crate::ProcessTemplate,
+    info_map: &HashMap<i32, StepInfo>,
+    step_id: i32,
+) -> Vec<i32> {
+    let mut steps = vec![step_id];
+    let Some(mut curr) = info_map.get(&step_id) else {
+        return steps;
+    };
+    while let Some(parent_id) = curr.parent_id {
+        if parent_id == template.step_id {
+            break;
+        }
+        steps.push(parent_id);
+        match info_map.get(&parent_id) {
+            Some(p) => curr = p,
+            None => break,
+        }
+    }
+    steps
+}
+
+/// (template_step_id, is_completed) pairs to persist for a step and its parent.
+pub fn compute_completion_updates(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    step_id: i32,
+) -> Vec<(i32, bool)> {
+    let info_map = build_step_info_map(template);
+    if !info_map.contains_key(&step_id) {
+        return vec![];
+    }
+
+    let target_completed = check_step_completed(
+        step_id,
+        &info_map,
+        &state.fields,
+        &state.blocking_document_ids,
+    );
+
+    cascade_completion_one_level(template, state, &info_map, step_id, target_completed)
+}
+
+/// Step updates for an admin review. Returns (steps_to_update, is_step_completed).
 pub fn compute_review_updates(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
@@ -515,66 +542,31 @@ pub fn compute_review_updates(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not found", step_id))?;
 
-    // Allow admin to review steps that are PENDING_REVIEW or OPEN
-    // (e.g., admin can approve an OPEN step directly without requiring user re-submission)
+    // Admin can approve an OPEN step directly, without a user re-submission.
     match status {
         StepStatus::PendingReview | StepStatus::Open => {}
         _ => return Err("Step must be open or pending review for admin action".to_string()),
     }
 
-    let mut steps_to_update = Vec::new();
-
     if is_approved {
-        // Mark step (and parent chain) as completed
-        steps_to_update.push((step_id, true));
-
-        // If the step was OPEN (not yet completed), propagate completion to parent
-        if *status == StepStatus::Open {
-            if let Some(info) = info_map.get(&step_id) {
-                if let Some(parent_id) = info.parent_id {
-                    if parent_id != template.step_id {
-                        if let Some(parent_info) = info_map.get(&parent_id) {
-                            let all_siblings_completed =
-                                parent_info.substep_ids.iter().all(|&sub_id| {
-                                    if sub_id == step_id {
-                                        true
-                                    } else {
-                                        state
-                                            .steps
-                                            .get(&sub_id)
-                                            .map(|s| s.is_completed)
-                                            .unwrap_or(false)
-                                    }
-                                });
-                            steps_to_update.push((parent_id, all_siblings_completed));
-                        }
-                    }
-                }
-            }
-        }
+        // Only propagate to the parent if the step was OPEN (not yet completed) —
+        // if it was already PENDING_REVIEW, the parent was handled at submit time.
+        let steps_to_update = if *status == StepStatus::Open {
+            cascade_completion_one_level(template, state, &info_map, step_id, true)
+        } else {
+            vec![(step_id, true)]
+        };
         Ok((steps_to_update, true))
     } else {
-        steps_to_update.push((step_id, false));
-        // Walk up parent chain to reset completion
-        let mut curr = info_map.get(&step_id).unwrap();
-        while let Some(parent_id) = curr.parent_id {
-            if parent_id == template.step_id {
-                break;
-            }
-            steps_to_update.push((parent_id, false));
-            match info_map.get(&parent_id) {
-                Some(p) => curr = p,
-                None => break,
-            }
-        }
+        let steps_to_update = cascade_incomplete_to_root(template, &info_map, step_id)
+            .into_iter()
+            .map(|id| (id, false))
+            .collect();
         Ok((steps_to_update, false))
     }
 }
 
-/// Compute which steps need to be reset when reopening a completed/pending step.
-///
-/// Returns the list of step IDs to reset (set is_completed = false).
-/// Also returns which of those are currently closed (need rejection reviews).
+/// Step IDs to reset to is_completed = false when reopening a completed/pending step.
 pub fn compute_reopen_updates(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
@@ -597,20 +589,7 @@ pub fn compute_reopen_updates(
         }
     }
 
-    let mut steps_to_reset = vec![step_id];
-    let mut curr = info_map.get(&step_id).unwrap();
-    while let Some(parent_id) = curr.parent_id {
-        if parent_id == template.step_id {
-            break;
-        }
-        steps_to_reset.push(parent_id);
-        match info_map.get(&parent_id) {
-            Some(p) => curr = p,
-            None => break,
-        }
-    }
-
-    Ok(steps_to_reset)
+    Ok(cascade_incomplete_to_root(template, &info_map, step_id))
 }
 
 // ==========================================

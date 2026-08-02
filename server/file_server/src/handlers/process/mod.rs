@@ -1,7 +1,5 @@
-//! Process-instance endpoints, split by concern: `state` (read the process tree),
-//! `actions` (save/review/revoke/note write-transitions), `uploads` (document
-//! upload/download URLs for a process). Template AUTHORING (the versioned builder
-//! API) is a separate concern entirely — see `handlers::process_templates`.
+//! Process-instance endpoints: `state` (read), `actions` (write-transitions),
+//! `uploads` (document URLs). Template authoring lives in `handlers::process_templates`.
 
 mod actions;
 mod state;
@@ -13,20 +11,7 @@ pub use uploads::*;
 
 use axum::{http::StatusCode, Json};
 
-pub(super) type ApiError = (StatusCode, Json<String>);
-
-/// Shorthand for the extremely common "DB/internal error -> 500" mapping,
-/// cutting the repeated `.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))`
-/// closure down to a single call.
-pub(super) trait ResultExt<T> {
-    fn internal_err(self) -> Result<T, ApiError>;
-}
-
-impl<T, E: ToString> ResultExt<T> for Result<T, E> {
-    fn internal_err(self) -> Result<T, ApiError> {
-        self.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))
-    }
-}
+pub(super) use crate::handlers::error::{ApiError, ResultExt};
 
 /// Load a process by ID, verify user authorization, and load its pinned template
 /// version.
@@ -67,9 +52,7 @@ pub(super) fn find_step_name(template: &process::ProcessTemplate, step_id: i32) 
         .unwrap_or_else(|| format!("Step {}", step_id))
 }
 
-/// Build a `NotificationContext` for email dispatch.
-/// Looks up the process owner's email from the DB. Returns `None` if
-/// the lookup fails (notification will be skipped gracefully).
+/// Builds a NotificationContext, looking up the owner's email. None if the lookup fails.
 pub(super) async fn build_notification_ctx(
     pool: &sqlx::PgPool,
     owner_user_id: i32,

@@ -17,10 +17,8 @@ use uuid::Uuid;
 pub const PUBLIC_CATEGORY: &str = "PUBLIC";
 pub const RESIDENT_SPECIFIC_CATEGORY: &str = "RESIDENT_SPECIFIC";
 
-/// A row of the `document_categories` table. Categories are fully dynamic/admin-created
-/// except for the two protected system rows (`is_system = true`): PUBLIC (`is_public_read`,
-/// visible to everyone) and RESIDENT_SPECIFIC (`is_flat_scoped`, scoped by flat ownership).
-/// Every other category's access is governed entirely by `document_category_designations`.
+/// A row of `document_categories`. PUBLIC and RESIDENT_SPECIFIC are protected system
+/// rows; every other category's access is governed by document_category_designations.
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct DocumentCategoryDef {
     pub code: String,
@@ -106,9 +104,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
         use sqlx::Row;
         let document = Document::from_row(row)?;
 
-        // When using LEFT JOIN on generic_document_metadata, a non-matching row
-        // leaves document_date as NULL. Since the column is NOT NULL in the schema,
-        // a NULL value reliably indicates that no metadata row exists.
+        // document_date is NOT NULL in the schema, so NULL here means no metadata row.
         let has_metadata = row.try_get::<NaiveDate, _>("document_date").is_ok();
 
         let metadata = if has_metadata {

@@ -18,19 +18,13 @@ pub struct Signer {
     pub updated_by: Option<i32>,
     // Joined display fields, not present on the raw table.
     pub user_email: String,
-    /// Codes of the designations this user currently holds — lets the "Add Signers"
-    /// picker filter to only the designation(s) a `required_signs_from_designations`
-    /// field asks for, and lets the server re-validate that same requirement when a
-    /// reviewer submits `add-signers` — see
-    /// `handlers::process::actions::validate_signer_order_against_designations`.
+    /// Designations this user currently holds, for filtering/validating against a
+    /// field's required_signs_from_designations.
     pub designation_codes: Vec<String>,
 }
 
-/// What a process reviewer sees in the "Add Signers" picker / signer directory
-/// oversight view — deliberately excludes `phone`/`email` (the signer's own private
-/// contact info, entered for the signing provider's use, not for a reviewer to browse).
-/// Only the signer themselves ever sees their own phone/email, via
-/// `GET /api/v1/profile/signer-info`.
+/// The Add Signers picker / directory view — excludes phone/email (private, only the
+/// signer themselves sees those via GET /api/v1/profile/signer-info).
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct SignerDirectoryEntry {
     pub signer_id: i32,
@@ -83,14 +77,9 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// Self-service: a user eligible to sign (holds `documents.signatures.sign`) fills
-    /// in their own contact info from their Profile page. Upserts their one-and-only
-    /// `document_signers` row (never creates one on behalf of another user).
-    ///
-    /// `name` is only used on first registration — it's what appears on signed
-    /// documents, so it's fixed once set (not casually self-editable). Only `phone`
-    /// and `email` can be updated afterward; if `name` is provided on an update it's
-    /// silently ignored rather than erroring, so the caller doesn't need to branch.
+    /// Self-service upsert of the caller's own signer contact info. `name` is fixed
+    /// after first registration (it appears on signed documents); only phone/email can
+    /// be updated afterward — a later `name` is silently ignored, not an error.
     pub async fn upsert_own_signer_info(
         &self,
         user_id: i32,

@@ -1,15 +1,9 @@
-//! SignYu (https://signyu.com/docs) — pay-per-use Aadhaar eSign. Every request and
-//! response is logged to `signature_provider_requests` for audit purposes, success or
-//! failure, before the result is returned to the caller, and every response status
-//! (or transport-level failure) is recorded as a `signyu_provider_responses_total`
-//! metric, labeled by `operation` and `status_code` — this is a pay-per-use API, so a
-//! spike in non-2xx responses should be visible on a dashboard, not just in logs.
+//! SignYu (https://signyu.com/docs) — pay-per-use Aadhaar eSign. Every request/response
+//! is logged to `signature_provider_requests` and recorded as a metric.
 //!
-//! NOTE: the exact webhook payload shape wasn't available when this client was written
-//! (only Authentication/Quickstart/Documents were reviewed, not the Webhooks reference)
-//! — `handlers::signatures::signyu_webhook` therefore treats ANY webhook hit for a
-//! known document as "go re-poll `get_document`" rather than trusting webhook body
-//! fields directly. Tighten that once the real webhook contract is confirmed.
+//! The webhook contract wasn't fully available when this was written, so
+//! `handlers::signatures::signyu_webhook` treats any webhook hit as "go re-poll
+//! get_document" rather than trusting the payload body directly.
 
 use super::{DocumentStatusResult, SendDocumentResult, SignerContact, SignerProgress};
 use opentelemetry::{global, KeyValue};
@@ -21,10 +15,8 @@ pub struct SignYuClient {
     pg_pool: sqlx::PgPool,
 }
 
-/// Records one SignYu call outcome as a counter, so a spike in non-2xx responses (or
-/// network errors) from this paid external API is visible on a dashboard, not just
-/// buried in `signature_provider_requests` rows. `status_code` is `None` for a
-/// transport-level failure (no response at all — timeout, DNS, connection refused).
+/// Records one SignYu call outcome. `status_code` is None for a transport-level
+/// failure (timeout, DNS, connection refused).
 fn record_response_metric(operation: &str, status_code: Option<i32>) {
     let meter = global::meter("file_server_signyu");
     let counter = meter.u64_counter("signyu_provider_responses_total").init();
@@ -84,11 +76,8 @@ impl SignYuClient {
         .await;
     }
 
-    /// Sends a prebuilt request, then — regardless of outcome — logs it to
-    /// `signature_provider_requests` and records the `signyu_provider_responses_total`
-    /// metric. Returns `(status, body)` on anything that got an HTTP response at all
-    /// (even a 4xx/5xx — callers decide what counts as success); only a transport-level
-    /// failure (no response) becomes `Err`.
+    /// Sends a request, logs it, and returns (status, body) for any HTTP response —
+    /// callers decide what counts as success. Only a transport-level failure is Err.
     #[allow(clippy::too_many_arguments)]
     async fn send_logged(
         &self,
@@ -224,10 +213,8 @@ impl SignYuClient {
         Ok(signer_ids)
     }
 
-    /// POST /documents/{id}/send — deducts credits, emails every signer their link, and
-    /// returns that same link per signer (`signerId` -> `signUrl`) so we can also show
-    /// "open signing page" directly in our own UI instead of relying on the signer
-    /// finding SignYu's email.
+    /// POST /documents/{id}/send — deducts credits, emails signers, returns each
+    /// signUrl so we can also offer "open signing page" in our own UI.
     pub async fn send(
         &self,
         document_id: &str,
@@ -264,8 +251,7 @@ impl SignYuClient {
         Ok(sign_urls)
     }
 
-    /// Runs create_document -> add_signers -> send as one pipeline (the normal path
-    /// used when a reviewer attaches signers with provider = "signyu").
+    /// Runs create_document -> add_signers -> send as one pipeline.
     pub async fn create_and_send(
         &self,
         pdf_bytes: Vec<u8>,
@@ -341,10 +327,8 @@ impl SignYuClient {
         })
     }
 
-    /// Downloads the fully signed PDF from a (presigned, temporary) `downloadUrl` —
-    /// this is a plain S3 link, not a SignYu API call, so no bearer auth is sent, and it
-    /// is intentionally NOT run through `send_logged`/the metric: it isn't a SignYu API
-    /// call, it's a plain file fetch against a temporary S3 URL.
+    /// Downloads the signed PDF from a presigned S3 URL — not a SignYu API call, so no
+    /// bearer auth and not run through send_logged.
     pub async fn download_signed_pdf(&self, download_url: &str) -> Result<Vec<u8>, String> {
         let resp = self
             .http

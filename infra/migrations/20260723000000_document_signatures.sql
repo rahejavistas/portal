@@ -64,6 +64,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_doc_sig_req_one_per_document_signer
 
 CREATE INDEX IF NOT EXISTS idx_doc_sig_req_status ON document_signature_requirements(status);
 
+CREATE INDEX IF NOT EXISTS idx_doc_sig_req_document_sign_order ON document_signature_requirements(document_id, sign_order);
+
 -- No separate "requirement history" table — `document_signature_requirements` itself
 -- always holds the current (and only) state a requirement can be in, and every
 -- external provider interaction is already fully logged in `signature_provider_requests`
