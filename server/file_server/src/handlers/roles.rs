@@ -1,6 +1,7 @@
 use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // Utility
@@ -40,14 +41,18 @@ async fn notify_designation_change(user_email: &str, designation_code: &str, gra
     }
 }
 
-/// Blocks self-edits and touching system designations (e.g. super_admin).
+/// Blocks self-edits, touching system designations, and assigning/revoking a
+/// designation that carries a permission the caller doesn't already hold themselves —
+/// otherwise a UsersRolesManage holder could grant another account (e.g. a fresh staff
+/// account they also control) a designation with DesignationsManage/UsersManage/etc.
+/// that they don't have, escalating privilege in two hops.
 async fn guard_designation_change(
     state: &AppState,
-    caller_user_id: i32,
+    caller: &authentication::User,
     target_user_id: i32,
     designation_code: &str,
 ) -> Result<(), axum::response::Response> {
-    if target_user_id == caller_user_id {
+    if target_user_id == caller.user_id {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             "You cannot modify your own designations. Another admin must make this change.",
@@ -72,6 +77,28 @@ async fn guard_designation_change(
             format!(
                 "'{}' is a system designation and cannot be assigned or revoked.",
                 designation_code
+            ),
+        ));
+    }
+
+    let designation_permissions = state
+        .permissions_manager
+        .get_designation_permissions(designation_code)
+        .await
+        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let caller_permissions: HashSet<&str> = caller.permissions.iter().map(String::as_str).collect();
+    let missing: Vec<&str> = designation_permissions
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !caller_permissions.contains(p))
+        .collect();
+    if !missing.is_empty() {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            format!(
+                "You cannot assign or revoke '{}' — it grants permissions you don't hold yourself ({}).",
+                designation_code,
+                missing.join(", ")
             ),
         ));
     }
@@ -107,13 +134,8 @@ pub async fn assign_designation(
     SessionUser(caller): SessionUser,
     Json(payload): Json<DesignationChangePayload>,
 ) -> impl IntoResponse {
-    if let Err(resp) = guard_designation_change(
-        &state,
-        caller.user_id,
-        payload.user_id,
-        &payload.designation_code,
-    )
-    .await
+    if let Err(resp) =
+        guard_designation_change(&state, &caller, payload.user_id, &payload.designation_code).await
     {
         return resp;
     }
@@ -153,13 +175,8 @@ pub async fn revoke_designation(
     SessionUser(caller): SessionUser,
     Json(payload): Json<DesignationChangePayload>,
 ) -> impl IntoResponse {
-    if let Err(resp) = guard_designation_change(
-        &state,
-        caller.user_id,
-        payload.user_id,
-        &payload.designation_code,
-    )
-    .await
+    if let Err(resp) =
+        guard_designation_change(&state, &caller, payload.user_id, &payload.designation_code).await
     {
         return resp;
     }
@@ -325,10 +342,7 @@ pub async fn toggle_designation_permission(
         Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
 
-    // A designation.manage holder must never be able to grant/revoke permissions on a
-    // designation they themselves currently hold — otherwise they could hand their own
-    // designation any permission at all (self-escalation), bypassing the assign/revoke
-    // self-edit guard entirely.
+    // Self-escalation guard: can't grant/revoke permissions on a designation you hold.
     if caller.has_designation(&payload.designation_code) {
         return error_response(
             StatusCode::FORBIDDEN,

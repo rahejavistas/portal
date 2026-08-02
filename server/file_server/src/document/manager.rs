@@ -101,6 +101,38 @@ impl DocumentManager {
         Ok(allowed_ids)
     }
 
+    /// Same visibility rules as `get_allowed_document_ids`, checked for one document.
+    async fn document_visible_to_user(
+        &self,
+        document_id: Uuid,
+        user: &authentication::User,
+    ) -> Result<bool, String> {
+        if user.has_permission(authentication::Permission::DocumentsAllManage) {
+            return Ok(true);
+        }
+        sqlx::query_scalar(
+            "SELECT EXISTS ( \
+                SELECT 1 FROM documents d \
+                JOIN document_categories dc ON dc.code = d.category \
+                WHERE d.document_id = $1 AND dc.is_public_read = TRUE \
+                UNION ALL \
+                SELECT 1 FROM documents d \
+                JOIN document_category_designations dcd ON dcd.category = d.category \
+                JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                WHERE d.document_id = $1 AND ud.user_id = $2 AND ud.is_active = TRUE AND dcd.can_read = TRUE \
+                UNION ALL \
+                SELECT 1 FROM document_flats df \
+                JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
+                WHERE df.document_id = $1 AND fo.user_id = $2 AND fo.is_active = TRUE \
+             )",
+        )
+        .bind(document_id)
+        .bind(user.user_id)
+        .fetch_one(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Fetches a non-deleted document by its ID and validates if the user has authorization to view it.
     /// Returns `Err("FORBIDDEN")` if access control evaluation fails.
     pub async fn get_document(
@@ -108,23 +140,6 @@ impl DocumentManager {
         document_id: Uuid,
         user: &authentication::User,
     ) -> Result<Option<DocumentWithMetadata>, String> {
-        let exists: Option<(Uuid,)> = sqlx::query_as(
-            "SELECT document_id FROM documents WHERE document_id = $1 AND NOT is_deleted",
-        )
-        .bind(document_id)
-        .fetch_optional(&self.pg_pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-        if exists.is_none() {
-            return Ok(None);
-        }
-
-        let allowed_ids = self.get_allowed_document_ids(user).await?;
-        if !allowed_ids.contains(&document_id) {
-            return Err("FORBIDDEN".to_string());
-        }
-
         let mut doc: Option<DocumentWithMetadata> = sqlx::query_as(
             "SELECT \
                 d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
@@ -139,6 +154,14 @@ impl DocumentManager {
         .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
+
+        if doc.is_none() {
+            return Ok(None);
+        }
+
+        if !self.document_visible_to_user(document_id, user).await? {
+            return Err("FORBIDDEN".to_string());
+        }
 
         if let Some(ref mut d) = doc {
             let url = self.generate_presigned_url(&d.document).await?;
@@ -630,10 +653,8 @@ impl DocumentManager {
     // PRESIGNED UPLOAD FLOW
     // ==========================================
 
-    /// Creates an unconfirmed document record in the DB and generates a presigned PUT URL
-    /// for direct client-to-S3 upload. The document is linked to the user's flat.
-    ///
-    /// Returns (DocumentWithMetadata, upload_url, s3_key).
+    /// Creates an unconfirmed document linked to the user's flat, with a presigned PUT
+    /// URL for direct client-to-S3 upload.
     pub async fn create_upload_intent(
         &self,
         user: &authentication::User,
@@ -695,9 +716,7 @@ impl DocumentManager {
         ))
     }
 
-    /// Confirms that a previously created upload intent was completed by checking
-    /// that the file actually exists on S3 via a HEAD request, then sets
-    /// `is_upload_confirmed = true` in the DB.
+    /// Confirms an upload intent via an S3 HEAD request, then marks it confirmed.
     pub async fn confirm_upload(&self, document_id: Uuid) -> Result<(), String> {
         let row: Option<(bool,)> = sqlx::query_as(
             "SELECT is_upload_confirmed FROM documents WHERE document_id = $1 AND NOT is_deleted",

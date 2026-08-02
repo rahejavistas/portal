@@ -258,8 +258,6 @@ pub(crate) const LOGIN_HTML: &str = r#"
     <script>
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
 
-        // Only trust a same-origin relative path (must start with a single '/') — never
-        // an absolute/protocol-relative URL, which would make this an open redirect.
         function postLoginRedirectUrl() {
             const target = new URLSearchParams(window.location.search).get('redirect');
             if (target && target.startsWith('/') && !target.startsWith('//')) {
@@ -342,9 +340,6 @@ pub(crate) const LOGIN_HTML: &str = r#"
                     otpErrorMsg.textContent = data.message || 'Incorrect code. Please try again.';
                     otpErrorMsg.style.display = 'block';
                     if (!data.mfa_required) {
-                        // Challenge is fully dead (expired / too many attempts) — send
-                        // them back to start over rather than let them keep guessing
-                        // against a pending_token that can never succeed again.
                         setTimeout(() => {
                             document.getElementById('otp-card').style.display = 'none';
                             document.getElementById('login-card').style.display = 'block';

@@ -1,5 +1,6 @@
 use crate::document::{DocumentWithMetadata, MetadataInput, RESIDENT_SPECIFIC_CATEGORY};
 use crate::extractors::SessionUser;
+use crate::handlers::error::{bad_request, forbidden, internal_err, ApiError};
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -12,8 +13,6 @@ use uuid::Uuid;
 pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &[
     "pdf", "doc", "docx", "xls", "xlsx", "txt", "jpg", "jpeg", "png",
 ];
-
-type ApiError = (StatusCode, Json<String>);
 
 // ---------------------------------------------------------------------------
 // Utility
@@ -32,18 +31,6 @@ pub fn derive_content_type_from_ext(ext: &str) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
-}
-
-fn internal_err(e: impl std::fmt::Display) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string()))
-}
-
-fn forbidden(msg: impl Into<String>) -> ApiError {
-    (StatusCode::FORBIDDEN, Json(msg.into()))
-}
-
-fn bad_request(msg: impl Into<String>) -> ApiError {
-    (StatusCode::BAD_REQUEST, Json(msg.into()))
 }
 
 fn not_found(msg: &str) -> ApiError {
@@ -138,9 +125,7 @@ async fn require_manageable_category(
     }
 }
 
-/// Fetches `document_id` (404 if missing, ignoring soft-delete) and errors with 403
-/// unless `user` can manage its category. Shared by every admin document handler that
-/// needs "does this document exist, and can this caller touch it" in one step.
+/// Fetches document_id (404 if missing) and 403s unless user can manage its category.
 async fn require_manageable_document(
     state: &AppState,
     user: &authentication::User,
@@ -457,12 +442,9 @@ pub struct UpdateDocumentPayload {
     pub metadata: Option<CreateMetadataPayload>,
 }
 
-/// Updates title/description/category/metadata for an existing document. Changing category
-/// can change who's able to see the document (categories are what access is keyed on), so
-/// callers should surface that clearly — this handler just enforces it isn't done blindly:
-/// the caller must be able to manage both the document's current category and the target
-/// one, and category changes into/out of RESIDENT_SPECIFIC are rejected outright since that
-/// category's visibility also depends on flat mapping, which this endpoint doesn't touch.
+/// Updates title/description/category/metadata. Caller must be able to manage both the
+/// current and target category; category changes into/out of RESIDENT_SPECIFIC are
+/// rejected since that category's visibility also depends on flat mapping.
 pub async fn admin_update_document(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,

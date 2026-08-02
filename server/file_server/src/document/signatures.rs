@@ -1,4 +1,4 @@
-use super::DocumentManager;
+use super::{Document, DocumentManager};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
@@ -57,9 +57,7 @@ const CURRENT_TURN_CLAUSE: &str = "NOT EXISTS ( \
 )";
 
 impl DocumentManager {
-    /// PENDING requirements scoped to `user_id` AND whose turn it currently is — the
-    /// queue as seen by a plain signer, who should only be offered documents waiting on
-    /// them specifically, and only once everyone signing before them is done.
+    /// PENDING requirements for `user_id` whose turn it currently is.
     pub async fn signature_queue_list_for_user(
         &self,
         user_id: i32,
@@ -74,11 +72,8 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// Whether `user_id` is (or ever was) attached as a signer on ANY document within
-    /// `process_id` — regardless of requirement status. Used to grant a signer
-    /// read-only access to view the one specific process their signature concerns,
-    /// without granting `process.reviewer`/`process.view`'s blanket visibility into
-    /// every resident's processes.
+    /// Whether `user_id` is/was attached as a signer on any document in `process_id` —
+    /// grants read-only access to that one process without full reviewer visibility.
     pub async fn signer_has_requirement_for_process(
         &self,
         user_id: i32,
@@ -98,9 +93,7 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// Every requirement regardless of status, for building a document_id <->
-    /// signed_document_id lineage map in the admin document list (one call instead of
-    /// a lookup per document).
+    /// Every requirement, for the admin document_id <-> signed_document_id lineage map.
     pub async fn signature_list_all(&self) -> Result<Vec<SignatureRequirement>, String> {
         sqlx::query_as(&format!(
             "{} ORDER BY r.created_at DESC",
@@ -122,6 +115,24 @@ impl DocumentManager {
         ))
         .bind(requirement_id)
         .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Multiple requirements by id in one round trip, in sign_order.
+    pub async fn signature_get_requirements_batch(
+        &self,
+        requirement_ids: &[i32],
+    ) -> Result<Vec<SignatureRequirement>, String> {
+        if requirement_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        sqlx::query_as(&format!(
+            "{} WHERE r.requirement_id = ANY($1) ORDER BY r.sign_order",
+            REQUIREMENT_SELECT
+        ))
+        .bind(requirement_ids)
+        .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())
     }
@@ -160,10 +171,8 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// The document `requirement`'s signer should actually see/sign: the original for
-    /// the first signer in the chain, otherwise the PREVIOUS signer's signed copy — so
-    /// each signer builds on what the one before them produced, instead of every
-    /// signer independently signing a blind copy of the untouched original.
+    /// What this signer should see: the original if first in chain, else the previous
+    /// signer's copy.
     pub async fn input_document_id_for_requirement(
         &self,
         requirement: &SignatureRequirement,
@@ -182,11 +191,8 @@ impl DocumentManager {
         Ok(previous_signed.flatten().unwrap_or(requirement.document_id))
     }
 
-    /// A process reviewer attaches one or more signers to a document from a specific
-    /// process field, IN THE ORDER GIVEN — `signer_ids[0]` signs first, and later
-    /// signers only become actionable once everyone before them has signed. Idempotent
-    /// per (document, signer) — re-attaching an already PENDING/COMPLETED signer is a
-    /// no-op for that signer (it keeps its original position in the chain).
+    /// Attaches signers in the given order (signer_ids[0] signs first). Idempotent per
+    /// (document, signer) — re-attaching an existing signer is a no-op for them.
     #[allow(clippy::too_many_arguments)]
     pub async fn signature_add_signers_to_document(
         &self,
@@ -209,78 +215,81 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
         let start_order = existing_max_order.unwrap_or(0) + 1;
 
-        let mut created_ids = Vec::new();
-        for (sign_order, signer_id) in (start_order..).zip(signer_ids.iter()) {
-            let requirement_id: Option<i32> = sqlx::query_scalar(
-                "INSERT INTO document_signature_requirements \
-                    (document_id, process_id, template_step_id, template_field_id, signer_id, sign_order) \
-                 VALUES ($1, $2, $3, $4, $5, $6) \
-                 ON CONFLICT (document_id, signer_id) DO NOTHING \
-                 RETURNING requirement_id",
-            )
-            .bind(document_id)
-            .bind(process_id)
-            .bind(template_step_id)
-            .bind(template_field_id)
-            .bind(signer_id)
-            .bind(sign_order)
-            .fetch_optional(&self.pg_pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let sign_orders: Vec<i32> = (start_order..start_order + signer_ids.len() as i32).collect();
 
-            if let Some(requirement_id) = requirement_id {
-                created_ids.push(requirement_id);
-            }
+        let created_ids: Vec<i32> = sqlx::query_scalar(
+            "INSERT INTO document_signature_requirements \
+                (document_id, process_id, template_step_id, template_field_id, signer_id, sign_order) \
+             SELECT $1, $2, $3, $4, v.signer_id, v.sign_order \
+             FROM UNNEST($5::int[], $6::int[]) AS v(signer_id, sign_order) \
+             ON CONFLICT (document_id, signer_id) DO NOTHING \
+             RETURNING requirement_id",
+        )
+        .bind(document_id)
+        .bind(process_id)
+        .bind(template_step_id)
+        .bind(template_field_id)
+        .bind(signer_ids)
+        .bind(&sign_orders)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if created_ids.is_empty() {
+            return Ok(vec![]);
         }
 
-        let mut requirements = Vec::with_capacity(created_ids.len());
-        for id in created_ids {
-            if let Some(req) = self.signature_get_requirement(id).await? {
-                requirements.push(req);
-            }
-        }
-        Ok(requirements)
+        // ORDER BY sign_order: callers zip this against a per-signer response list.
+        sqlx::query_as(&format!(
+            "{} WHERE r.requirement_id = ANY($1) ORDER BY r.sign_order",
+            REQUIREMENT_SELECT
+        ))
+        .bind(&created_ids)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())
     }
 
-    /// Records that `requirement_id` is now tracked by an external provider (SignYu),
-    /// after successfully sending it out for signature there.
-    pub async fn signature_set_external_tracking(
+    /// Records N requirements as now tracked by an external provider (SignYu), in 2
+    /// statements total. Parallel arrays, same order, all sharing `external_document_id`.
+    pub async fn signature_set_external_tracking_batch(
         &self,
-        requirement_id: i32,
+        requirement_ids: &[i32],
         provider: &str,
         external_document_id: &str,
-        external_signer_id: &str,
-        sign_url: Option<&str>,
+        external_signer_ids: &[String],
+        sign_urls: &[Option<String>],
     ) -> Result<(), String> {
         sqlx::query(
-            "UPDATE document_signature_requirements SET provider = $1, updated_at = NOW() WHERE requirement_id = $2",
+            "UPDATE document_signature_requirements SET provider = $1, updated_at = NOW() \
+             WHERE requirement_id = ANY($2)",
         )
         .bind(provider)
-        .bind(requirement_id)
+        .bind(requirement_ids)
         .execute(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
 
         sqlx::query(
             "INSERT INTO signyu_requirement_links (requirement_id, external_document_id, external_signer_id, sign_url) \
-             VALUES ($1, $2, $3, $4) \
+             SELECT v.requirement_id, $1, v.external_signer_id, v.sign_url \
+             FROM UNNEST($2::int[], $3::text[], $4::text[]) AS v(requirement_id, external_signer_id, sign_url) \
              ON CONFLICT (requirement_id) DO UPDATE SET \
                  external_document_id = EXCLUDED.external_document_id, \
                  external_signer_id = EXCLUDED.external_signer_id, \
                  sign_url = EXCLUDED.sign_url",
         )
-        .bind(requirement_id)
         .bind(external_document_id)
-        .bind(external_signer_id)
-        .bind(sign_url)
+        .bind(requirement_ids)
+        .bind(external_signer_ids)
+        .bind(sign_urls)
         .execute(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
         Ok(())
     }
 
-    /// Every SignYu-tracked requirement sharing one `external_document_id` — used to
-    /// reconcile ALL of them at once when the provider reports completion.
+    /// Every requirement sharing one external_document_id, for bulk reconciliation.
     pub async fn signature_requirements_for_external_document(
         &self,
         external_document_id: &str,
@@ -295,12 +304,8 @@ impl DocumentManager {
         .map_err(|e| e.to_string())
     }
 
-    /// Marks a provider-tracked requirement COMPLETED once the whole external document
-    /// is done, pointing it at `signed_document_id` (the downloaded, fully-signed PDF —
-    /// shared by every requirement for the same document, since SignYu produces one
-    /// final file for everyone, not a copy per signer). `signed_by` is the requirement's
-    /// own signer's user account, since that's who actually signed, even though it
-    /// happened at the external provider rather than through our own upload flow.
+    /// Marks a provider-tracked requirement COMPLETED, pointing it at the one shared
+    /// signed PDF SignYu produces for all signers.
     pub async fn signature_complete_via_provider(
         &self,
         requirement_id: i32,
@@ -327,10 +332,42 @@ impl DocumentManager {
         Ok(())
     }
 
-    /// Ingests the fully-signed PDF once an external provider reports the whole
-    /// document COMPLETED: stores it as a new document, then marks every still-PENDING
-    /// requirement sharing that `external_document_id` COMPLETED against it. Idempotent
-    /// — a document with nothing left PENDING is a no-op (already reconciled).
+    /// Clones `original`'s title/description/category/flat mapping into a new unconfirmed row.
+    async fn clone_document_as_new_row(
+        conn: &mut sqlx::PgConnection,
+        original: &Document,
+        content_type: &str,
+        uploaded_by: Option<i32>,
+    ) -> Result<Document, String> {
+        let new_doc = Self::insert_document(
+            &mut *conn,
+            &original.title,
+            original.description.as_deref(),
+            &original.category,
+            false,
+            false,
+            uploaded_by,
+            Some(content_type),
+        )
+        .await?;
+
+        if original.category == super::RESIDENT_SPECIFIC_CATEGORY {
+            sqlx::query(
+                "INSERT INTO document_flats (document_id, flat_id) \
+                 SELECT $1, flat_id FROM document_flats WHERE document_id = $2",
+            )
+            .bind(new_doc.document_id)
+            .bind(original.document_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        Ok(new_doc)
+    }
+
+    /// Stores the fully-signed PDF and marks every PENDING requirement for it
+    /// COMPLETED. No-op if already reconciled.
     pub async fn signature_ingest_provider_completed_document(
         &self,
         external_document_id: &str,
@@ -355,17 +392,10 @@ impl DocumentManager {
             .ok_or_else(|| "Original document not found".to_string())?
             .document;
 
-        let new_doc = Self::insert_document(
-            &self.pg_pool,
-            &original.title,
-            original.description.as_deref(),
-            &original.category,
-            false,
-            false,
-            None,
-            Some("application/pdf"),
-        )
-        .await?;
+        let mut conn = self.pg_pool.acquire().await.map_err(|e| e.to_string())?;
+        let new_doc =
+            Self::clone_document_as_new_row(&mut conn, &original, "application/pdf", None).await?;
+        drop(conn);
 
         let key = super::derive_s3_key(new_doc.document_id);
         self.s3_accessor
@@ -373,18 +403,6 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
         self.confirm_upload(new_doc.document_id).await?;
-
-        if original.category == super::RESIDENT_SPECIFIC_CATEGORY {
-            sqlx::query(
-                "INSERT INTO document_flats (document_id, flat_id) \
-                 SELECT $1, flat_id FROM document_flats WHERE document_id = $2",
-            )
-            .bind(new_doc.document_id)
-            .bind(original_document_id)
-            .execute(&self.pg_pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
 
         for requirement_id in pending_ids {
             self.signature_complete_via_provider(requirement_id, new_doc.document_id)
@@ -422,13 +440,7 @@ impl DocumentManager {
             );
         }
 
-        // Metadata (title/description/category/flat) always mirrors the TRUE original —
-        // not whatever the previous signer's intermediate copy was titled — so the title
-        // stays exactly what the resident/admin uploaded, with no "(Signed by X) (Signed
-        // by Y)" suffix pile-up as a chain grows. The signer's own content (what they
-        // actually upload) is a separate concern, handled by `input_document_id_for_requirement`
-        // in `document_download_url` — that's what determines what they SEE to sign,
-        // unrelated to what this new row is TITLED.
+        // Metadata always mirrors the TRUE original, not an intermediate signer's copy.
         let original = self
             .admin_get_any_document(requirement.document_id)
             .await?
@@ -439,29 +451,11 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        let new_doc = Self::insert_document(
-            &mut *tx,
-            &original.title,
-            original.description.as_deref(),
-            &original.category,
-            false, // is_user_uploaded
-            false, // is_upload_confirmed: not until the client finishes the PUT
-            Some(signer_user_id),
-            Some(content_type),
-        )
-        .await?;
-
-        if original.category == super::RESIDENT_SPECIFIC_CATEGORY {
-            sqlx::query(
-                "INSERT INTO document_flats (document_id, flat_id) \
-                 SELECT $1, flat_id FROM document_flats WHERE document_id = $2",
-            )
-            .bind(new_doc.document_id)
-            .bind(requirement.document_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
+        // is_user_uploaded: false; is_upload_confirmed: false (not until the client
+        // finishes the PUT).
+        let new_doc =
+            Self::clone_document_as_new_row(&mut tx, &original, content_type, Some(signer_user_id))
+                .await?;
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
@@ -475,54 +469,53 @@ impl DocumentManager {
         Ok((new_doc.document_id, upload_url))
     }
 
-    /// Confirms the signed-replacement upload for `requirement_id`, marking it
-    /// COMPLETED. Returns the updated requirement plus whether this was the LAST
-    /// outstanding (PENDING) requirement for the underlying document — the caller
-    /// should only repoint the process field at the signed document when every
-    /// attached signer has now signed.
+    /// Marks the replacement upload COMPLETED. Returns the updated requirement and
+    /// whether it was the last PENDING one for the document. `existing` is the
+    /// caller's already-fetched copy, avoiding a redundant re-fetch here.
     pub async fn signature_replace_confirm_upload(
         &self,
-        requirement_id: i32,
+        existing: &SignatureRequirement,
         new_document_id: Uuid,
         signer_user_id: i32,
     ) -> Result<(SignatureRequirement, bool), String> {
         self.confirm_upload(new_document_id).await?;
 
-        let existing = self
-            .signature_get_requirement(requirement_id)
-            .await?
-            .ok_or_else(|| "Signature requirement not found".to_string())?;
-
         if existing.status != SignatureStatus::Pending {
             return Err("Signature requirement is no longer pending".to_string());
         }
 
-        sqlx::query(
-            "UPDATE document_signature_requirements \
-             SET status = 'COMPLETED', signed_document_id = $1, signed_by = $2, \
-                 signed_at = NOW(), updated_at = NOW() \
-             WHERE requirement_id = $3 AND status = 'PENDING'",
-        )
+        let updated: Option<SignatureRequirement> = sqlx::query_as(&format!(
+            "WITH updated AS ( \
+                 UPDATE document_signature_requirements \
+                 SET status = 'COMPLETED', signed_document_id = $1, signed_by = $2, \
+                     signed_at = NOW(), updated_at = NOW() \
+                 WHERE requirement_id = $3 AND status = 'PENDING' \
+                 RETURNING * \
+             ) {}",
+            REQUIREMENT_SELECT.replacen(
+                "FROM document_signature_requirements r",
+                "FROM updated r",
+                1
+            )
+        ))
         .bind(new_document_id)
         .bind(signer_user_id)
-        .bind(requirement_id)
-        .execute(&self.pg_pool)
+        .bind(existing.requirement_id)
+        .fetch_optional(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
+
+        let updated =
+            updated.ok_or_else(|| "Signature requirement is no longer pending".to_string())?;
 
         let remaining_pending: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM document_signature_requirements \
              WHERE document_id = $1 AND status = 'PENDING'",
         )
-        .bind(existing.document_id)
+        .bind(updated.document_id)
         .fetch_one(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
-
-        let updated = self
-            .signature_get_requirement(requirement_id)
-            .await?
-            .ok_or_else(|| "Requirement vanished after update".to_string())?;
 
         Ok((updated, remaining_pending == 0))
     }

@@ -21,14 +21,8 @@ fn default_true() -> bool {
     true
 }
 
-/// Config for the SignYu e-signature provider. `api_key` and `webhook_secret` are
-/// secrets — always sourced from env vars, never committed to a config_*.toml.
-/// `webhook_secret` is the HMAC-SHA256 signing secret SignYu's dashboard shows for a
-/// configured webhook endpoint — used to verify the `X-SignSetu-Signature` header on
-/// every inbound `POST /webhooks/signyu` call; a webhook received with no secret
-/// configured is rejected outright (unverifiable input is untrusted input).
-/// `base_url` defaults to the real SignYu API but is overridable so tests (and any
-/// future staging setup) can point the client at a local mock server instead.
+/// SignYu e-signature provider config. `api_key`/`webhook_secret` are secrets, always
+/// from env vars. `base_url` defaults to the real API but is overridable for tests.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SignYuConfig {
     #[serde(default)]
@@ -114,10 +108,7 @@ impl AppConfig {
         if let Ok(super_admin_email) = std::env::var("SUPER_ADMIN_EMAIL") {
             config.super_admin_email = super_admin_email;
         }
-        // A set-but-empty env var (e.g. `SIGNYU_API_KEY=` in a compose file with no
-        // value supplied) must NOT be treated as "configured" — `api_key.is_some()` is
-        // literally the on/off switch for the whole SignYu provider, so an empty
-        // string here would silently enable it with a blank key.
+        // A set-but-empty var must not count as configured — it's the on/off switch.
         if let Ok(signyu_api_key) = std::env::var("SIGNYU_API_KEY") {
             if !signyu_api_key.is_empty() {
                 config.signyu.api_key = Some(signyu_api_key);

@@ -87,8 +87,7 @@ pub async fn save_process_step(
 ) -> Result<Json<SaveStepResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    // Write path: deliberately NOT widened to process.view — that permission is read-only
-    // oversight and must never gain the ability to save a step on someone else's process.
+    // process.view is read-only oversight; never grants write access here.
     let is_admin = user.has_permission(authentication::Permission::ProcessReviewer);
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
@@ -122,9 +121,7 @@ pub async fn save_process_step(
                         )),
                     ));
                 }
-                // Process fields only ever hold flat-scoped documents. Other categories
-                // are visible in a user's document list but must never be attachable to a
-                // process step.
+                // Process fields only ever hold flat-scoped (RESIDENT_SPECIFIC) documents.
                 Some(ref doc)
                     if doc.document.category != crate::document::RESIDENT_SPECIFIC_CATEGORY =>
                 {
@@ -376,8 +373,7 @@ pub struct AddDocumentSignersRequest {
     pub template_field_id: i32,
     pub document_id: Uuid,
     pub signer_ids: Vec<i32>,
-    /// "manual" (default, the resident/admin-managed upload-a-signed-copy flow) or a
-    /// registered external provider name (currently only "signyu").
+    /// "manual" (default) or a registered external provider name ("signyu").
     #[serde(default = "default_provider")]
     pub provider: String,
 }
@@ -393,10 +389,8 @@ pub struct AddDocumentSignersResponse {
 }
 
 /// POST /api/v1/admin/process/documents/add-signers
-/// A process reviewer attaches one or more signers (from the signer directory) to a
-/// document already submitted into a process field, in the given order — earlier
-/// signers must complete before later ones become actionable (see `sign_order`). The
-/// field stays blocked until every attached signer has signed.
+/// Attaches signers to a document field in order — the field stays blocked until
+/// every attached signer has signed.
 pub async fn admin_add_document_signers(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -413,6 +407,39 @@ pub async fn admin_add_document_signers(
         return Err((
             StatusCode::BAD_REQUEST,
             Json("Signers can only be attached while the step is still open".to_string()),
+        ));
+    }
+
+    // template_field_id, document_id, and template_step_id are all client-supplied —
+    // verify they actually belong together, not an arbitrary combination the caller
+    // happens to have access to (which for provider="signyu" would send the wrong PDF
+    // to real signers via the live e-sign integration).
+    let field_belongs_to_step = process::state_machine::build_step_info_map(&template)
+        .get(&payload.template_step_id)
+        .map(|info| {
+            info.fields
+                .iter()
+                .any(|f| f.field_id == payload.template_field_id)
+        })
+        .unwrap_or(false);
+    if !field_belongs_to_step {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("template_field_id does not belong to template_step_id".to_string()),
+        ));
+    }
+    let is_current_document = process::db::is_current_field_value(
+        &mut conn,
+        payload.process_id,
+        payload.template_field_id,
+        payload.document_id,
+    )
+    .await
+    .internal_err()?;
+    if !is_current_document {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("document_id is not the current document for this field".to_string()),
         ));
     }
 
@@ -504,12 +531,9 @@ pub async fn admin_add_document_signers(
     }))
 }
 
-/// If the target field declares `required_signs_from_designations`, verify the requested
-/// `signer_ids` order is consistent with it: every signer must hold one of the listed
-/// designations, and their designations' positions in the list must be non-decreasing
-/// across the given order (ties — e.g. two signers both covering the same designation
-/// — are fine in either relative order). An empty list imposes no constraint, matching
-/// the picker UI's fallback to plain click order.
+/// If the field declares `required_signs_from_designations`, every signer must hold one
+/// of the listed designations, in non-decreasing order of designation rank. Empty list
+/// = no constraint.
 async fn validate_signer_order_against_designations(
     state: &AppState,
     template: &process::ProcessTemplate,
@@ -561,9 +585,7 @@ async fn validate_signer_order_against_designations(
     Ok(())
 }
 
-/// Sends the underlying document out via SignYu for the newly-created requirements
-/// (all sharing one document_id, in `sign_order`), then records the returned
-/// SignYu document/signer ids on each row so the webhook/refresh path can find them.
+/// Sends the document via SignYu and records the returned external ids on each requirement.
 async fn send_new_requirements_via_signyu(
     state: &AppState,
     requirements: Vec<crate::document::SignatureRequirement>,
@@ -614,36 +636,24 @@ async fn send_new_requirements_via_signyu(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, Json(e)))?;
 
-    for ((req, external_signer_id), sign_url) in requirements
-        .iter()
-        .zip(result.external_signer_ids.iter())
-        .zip(result.sign_urls.iter())
-    {
-        state
-            .document_manager
-            .signature_set_external_tracking(
-                req.requirement_id,
-                "signyu",
-                &result.external_document_id,
-                external_signer_id,
-                sign_url.as_deref(),
-            )
-            .await
-            .internal_err()?;
-    }
+    let requirement_ids: Vec<i32> = requirements.iter().map(|r| r.requirement_id).collect();
+    state
+        .document_manager
+        .signature_set_external_tracking_batch(
+            &requirement_ids,
+            "signyu",
+            &result.external_document_id,
+            &result.external_signer_ids,
+            &result.sign_urls,
+        )
+        .await
+        .internal_err()?;
 
-    let mut updated = Vec::with_capacity(requirements.len());
-    for req in &requirements {
-        if let Some(r) = state
-            .document_manager
-            .signature_get_requirement(req.requirement_id)
-            .await
-            .internal_err()?
-        {
-            updated.push(r);
-        }
-    }
-    Ok(updated)
+    state
+        .document_manager
+        .signature_get_requirements_batch(&requirement_ids)
+        .await
+        .internal_err()
 }
 
 fn bad_request_err(msg: impl Into<String>) -> ApiError {

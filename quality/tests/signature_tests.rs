@@ -1692,3 +1692,172 @@ async fn test_signature_status_still_resolves_after_field_repoints_to_signed_cop
     assert_eq!(resident_statuses.len(), 1);
     assert_eq!(resident_statuses[0]["status"], "COMPLETED");
 }
+
+/// `add-signers` must reject a `document_id` that isn't the field's current document —
+/// otherwise a caller could route signers (and, for provider="signyu", a real external
+/// e-sign request) to a stale/unrelated document while claiming a valid
+/// (process_id, template_step_id, template_field_id) triple.
+#[tokio::test]
+async fn test_add_signers_rejects_stale_document_id() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+    let (template_id, step_id, field_id) =
+        save_template_draft(&url, &admin_jwt, template_draft_requires_signature(&[]));
+
+    quick_create_user(&env, &admin_jwt, "resident_stale@sigtest.test", "SG", "260");
+    let res_jwt = quick_onboard_user(&env, "resident_stale@sigtest.test", "password123");
+    let pid = start_process(&url, &res_jwt, template_id);
+
+    let stale_doc_id = upload_doc_as_admin(&url, &admin_auth, &pid, "stale.pdf");
+    save_step(&url, &admin_auth, &pid, step_id, field_id, &stale_doc_id);
+
+    let current_doc_id = upload_doc_as_admin(&url, &admin_auth, &pid, "current.pdf");
+    save_step(&url, &admin_auth, &pid, step_id, field_id, &current_doc_id);
+
+    let (_jwt1, signer1, ..) = make_signer(&env, &admin_jwt, "stale1", "261");
+
+    let stale_result = add_signers(
+        &url,
+        &admin_auth,
+        &pid,
+        step_id,
+        field_id,
+        &stale_doc_id,
+        &[signer1],
+    );
+    assert_eq!(
+        stale_result,
+        Err(400),
+        "attaching signers to a superseded document_id must be rejected"
+    );
+
+    let current_result = add_signers(
+        &url,
+        &admin_auth,
+        &pid,
+        step_id,
+        field_id,
+        &current_doc_id,
+        &[signer1],
+    );
+    assert!(
+        current_result.is_ok(),
+        "attaching signers to the field's actual current document must still succeed"
+    );
+}
+
+/// `add-signers` must reject a `template_field_id` that doesn't actually belong to the
+/// claimed `template_step_id`, even when both IDs are independently valid for the
+/// process — otherwise a reviewer authorized on one step could attach signers (and
+/// route a real document to SignYu) under a different step's identity.
+#[tokio::test]
+async fn test_add_signers_rejects_field_not_belonging_to_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let draft = serde_json::json!({
+        "template_id": null,
+        "name": "Sig Test Two Stage Template",
+        "substeps": [
+            {
+                "name": "Stage One",
+                "is_review_required": false,
+                "fields": [
+                    { "name": "Doc One", "type": "document", "filled_by": "admin", "requires_signature": true }
+                ]
+            },
+            {
+                "name": "Stage Two",
+                "is_review_required": false,
+                "fields": [
+                    { "name": "Doc Two", "type": "document", "filled_by": "admin", "requires_signature": true }
+                ]
+            }
+        ]
+    });
+    let save_resp: serde_json::Value =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/save", url))
+            .set("Authorization", &admin_auth)
+            .send_json(draft)
+            .expect("template save failed")
+            .into_json()
+            .unwrap();
+    let version_id = save_resp["version_id"].as_i64().unwrap() as i32;
+
+    let templates: Vec<serde_json::Value> =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/list", url))
+            .set("Authorization", &admin_auth)
+            .send_json(serde_json::json!({}))
+            .unwrap()
+            .into_json()
+            .unwrap();
+    let template_id = templates
+        .iter()
+        .find(|t| {
+            t["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["version_id"].as_i64() == Some(version_id as i64))
+        })
+        .unwrap()["template_id"]
+        .as_i64()
+        .unwrap() as i32;
+    ureq::post(&format!("{}/api/v1/admin/process-templates/activate", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "template_id": template_id, "version_id": version_id }))
+        .expect("activate failed");
+
+    let tree: serde_json::Value = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/get-version",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "version_id": version_id }))
+    .unwrap()
+    .into_json()
+    .unwrap();
+    let stage1_step_id = tree["substeps"][0]["step_id"].as_i64().unwrap() as i32;
+    let field1_id = tree["substeps"][0]["fields"][0]["field_id"]
+        .as_i64()
+        .unwrap() as i32;
+    let _stage2_step_id = tree["substeps"][1]["step_id"].as_i64().unwrap() as i32;
+    let field2_id = tree["substeps"][1]["fields"][0]["field_id"]
+        .as_i64()
+        .unwrap() as i32;
+
+    quick_create_user(
+        &env,
+        &admin_jwt,
+        "resident_mismatch@sigtest.test",
+        "SG",
+        "262",
+    );
+    let res_jwt = quick_onboard_user(&env, "resident_mismatch@sigtest.test", "password123");
+    let pid = start_process(&url, &res_jwt, template_id);
+
+    let doc_id = upload_doc_as_admin(&url, &admin_auth, &pid, "mismatch.pdf");
+    save_step(&url, &admin_auth, &pid, stage1_step_id, field1_id, &doc_id);
+
+    let (_jwt1, signer1, ..) = make_signer(&env, &admin_jwt, "mismatch1", "263");
+
+    // stage1_step_id is genuinely Open, but field2_id belongs to stage2 — must be
+    // rejected even though both IDs are independently valid for this process.
+    let mismatched_result = add_signers(
+        &url,
+        &admin_auth,
+        &pid,
+        stage1_step_id,
+        field2_id,
+        &doc_id,
+        &[signer1],
+    );
+    assert_eq!(
+        mismatched_result, Err(400),
+        "attaching signers with a field_id that doesn't belong to the claimed step_id must be rejected"
+    );
+}

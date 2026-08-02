@@ -14,21 +14,12 @@ pub struct ProcessFieldTemplate {
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
-    /// Document fields only. When true, a process reviewer cannot complete the
-    /// step until the field's current document has at least one signature
-    /// requirement attached AND every attached requirement has been signed —
-    /// enforced via `ProcessStateInput.blocking_document_ids`, computed in
-    /// `db::load_state`.
+    /// Document fields only. Blocks step completion until the field's document has a
+    /// signature requirement attached and signed.
     #[serde(default)]
     pub requires_signature: bool,
-    /// Designation codes eligible to be picked as a signer for this field, in the
-    /// order they must sign. Enforced server-side when a reviewer attaches signers
-    /// (`add-signers`): every submitted signer must currently hold one of these
-    /// designations, and their designations' order must be non-decreasing across the
-    /// submitted array — see
-    /// `handlers::process::actions::validate_signer_order_against_designations`.
-    /// Also re-checked again at the moment of signing (not just at attach time), so a
-    /// designation revoked in between invalidates the pending signature.
+    /// Designations eligible to sign this field, in required signing order. Enforced
+    /// both when a reviewer attaches signers and again at the moment of signing.
     #[serde(default)]
     pub required_signs_from_designations: Vec<String>,
 }
@@ -44,9 +35,7 @@ pub struct ProcessStepTemplate {
     pub substeps: Option<Vec<ProcessStepTemplate>>,
 }
 
-/// The template tree itself carries no identity — which template/version this is is
-/// tracked entirely by the DB row wrapping it (`process_template_versions.version_id`,
-/// threaded alongside this struct wherever needed, e.g. `process::db::ProcessInfo`).
+/// Carries no identity of its own — the version is tracked by the wrapping DB row.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessTemplate {
     pub name: String,

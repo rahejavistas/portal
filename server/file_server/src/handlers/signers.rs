@@ -2,32 +2,19 @@
 
 use crate::document::SignerDirectoryEntry;
 use crate::extractors::SessionUser;
+use crate::handlers::error::{bad_request, internal_err, ApiError};
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode, Json};
-
-type ApiError = (StatusCode, Json<String>);
-
-fn internal_err(e: impl std::fmt::Display) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string()))
-}
-
-fn bad_request(msg: impl Into<String>) -> ApiError {
-    (StatusCode::BAD_REQUEST, Json(msg.into()))
-}
+use axum::{extract::State, Json};
 
 #[derive(serde::Deserialize, Default)]
 pub struct ListSignersPayload {
-    /// The Signer Directory oversight card sends `true` to see everyone (for
-    /// activate/deactivate). The "Add Signers" picker sends no body at all, which
-    /// defaults to `false` — it has no business offering a deactivated person.
+    /// true for the oversight card (see everyone); the Add Signers picker omits this.
     #[serde(default)]
     pub include_inactive: bool,
 }
 
 /// POST /api/v1/admin/signers/list
-/// Requires `process.reviewer` (the same permission that attaches signers in the
-/// first place — there's no separate signatures-management permission). Response
-/// deliberately excludes phone/email — see `SignerDirectoryEntry`.
+/// Requires process.reviewer. Response excludes phone/email — see SignerDirectoryEntry.
 pub async fn list(
     State(state): State<AppState>,
     _session_user: SessionUser,

@@ -1,27 +1,13 @@
 use crate::document::SignatureRequirement;
 use crate::extractors::SessionUser;
+use crate::handlers::error::{bad_request, forbidden, internal_err, ApiError};
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::State, Json};
 use hmac::Mac;
 use uuid::Uuid;
 
-type ApiError = (StatusCode, Json<String>);
-
-fn internal_err(e: impl std::fmt::Display) -> ApiError {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string()))
-}
-
-fn bad_request(msg: impl Into<String>) -> ApiError {
-    (StatusCode::BAD_REQUEST, Json(msg.into()))
-}
-
-fn forbidden(msg: impl Into<String>) -> ApiError {
-    (StatusCode::FORBIDDEN, Json(msg.into()))
-}
-
-/// Only the signer a requirement is actually waiting on may sign it — signing is a
-/// legal act tied to a specific person, so nobody (not even a reviewer) can complete
-/// it on someone else's behalf.
+/// Only the requirement's own signer may act on it — not even a reviewer can sign on
+/// someone else's behalf.
 fn can_act_on_requirement(user: &authentication::User, requirement: &SignatureRequirement) -> bool {
     user.user_id == requirement.signer_user_id
 }
@@ -51,10 +37,8 @@ fn field_required_designations(
         .unwrap_or_default()
 }
 
-/// A field can declare which designations are eligible to sign it
-/// (`required_signs_from_designations`). Re-checked at the moment of signing (not just when
-/// the reviewer attaches the signer) so a designation revoked in between makes the
-/// signature invalid — the signer must currently hold one of the listed designations.
+/// Re-checks the signer still holds a required designation at signing time, not just
+/// at attach time.
 async fn ensure_signer_still_eligible(
     state: &AppState,
     requirement: &SignatureRequirement,
@@ -89,10 +73,8 @@ async fn ensure_signer_still_eligible(
     Ok(())
 }
 
-/// Recompute a step's completion after a signature requirement's status changed,
-/// WITHOUT repointing the field at any signed document — used when a completed sign
-/// still leaves other attached signers outstanding. Also notifies whichever manual
-/// signer just became actionable (SignYu manages its own signer notifications).
+/// Recomputes step completion without repointing the field — used when other signers
+/// are still outstanding. Notifies the next manual signer, if any.
 async fn recompute_gating_only(
     state: &AppState,
     requirement: &SignatureRequirement,
@@ -146,8 +128,8 @@ async fn recompute_gating_only(
     Ok(())
 }
 
-/// Repoints the field at the newly signed document (only valid once every attached
-/// signer has signed) and recomputes gating.
+/// Repoints the field at the signed document (once every signer has signed) and
+/// recomputes gating.
 async fn attach_replacement_and_recompute_gating(
     state: &AppState,
     requirement: &SignatureRequirement,
@@ -156,8 +138,7 @@ async fn attach_replacement_and_recompute_gating(
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let template = load_template(&mut conn, requirement.process_id).await?;
 
-    // The original document may have already been superseded by a later save (this
-    // requirement is stale) — only repoint the field if it's still pointing at it.
+    // Skip if the field was already superseded by a later save.
     let still_current = process::db::is_current_field_value(
         &mut conn,
         requirement.process_id,
@@ -194,9 +175,7 @@ async fn attach_replacement_and_recompute_gating(
     .await
     .map_err(internal_err)?;
 
-    // Only notify the resident if THIS signature completion is what pushed the step
-    // over the line into Completed — never for a mid-chain signature, and never if the
-    // step needed something else besides this signature and is still incomplete.
+    // Only notify if this signature is what completed the step, not a mid-chain one.
     if !was_completed {
         let statuses_after =
             process::db::get_statuses(&mut conn, requirement.process_id, &template)
@@ -258,18 +237,14 @@ pub async fn queue(
 
 #[derive(serde::Deserialize, Default)]
 pub struct AllPayload {
-    /// When given, scopes to that one document's requirements (one per attached
-    /// signer) instead of every requirement in the system.
+    /// When given, scopes to just that document's requirements.
     #[serde(default)]
     pub document_id: Option<Uuid>,
 }
 
 /// POST /api/v1/documents/signatures/all
-/// With no `document_id`: every requirement regardless of status — lets the admin
-/// document list build a document_id <-> signed_document_id lineage map in one call
-/// instead of a lookup per row. With `document_id`: just that document's requirements.
-/// The body itself is optional (existing callers send no body at all) — anything that
-/// isn't valid JSON is just treated as "no filter".
+/// No document_id: every requirement in the system. Body is optional — invalid/missing
+/// JSON is treated as "no filter".
 pub async fn all(
     State(state): State<AppState>,
     _session_user: SessionUser,
@@ -291,10 +266,7 @@ pub async fn all(
 
 #[derive(serde::Serialize)]
 pub struct ProviderStatusResponse {
-    /// Whether the server has `SIGNYU_API_KEY` configured — the actual on/off switch
-    /// for offering "signyu" as a provider choice when attaching signers (see
-    /// `main.rs`'s `signyu_client` construction). Lets the Add Signers UI hide the
-    /// SignYu option entirely rather than offering a choice that will 400.
+    /// Whether SIGNYU_API_KEY is configured — lets the UI hide the SignYu option.
     pub signyu_available: bool,
 }
 
@@ -314,11 +286,8 @@ pub struct DocumentDownloadUrlPayload {
 }
 
 /// POST /api/v1/admin/documents/signatures/document-download-url
-/// Lets the signer a requirement is actually waiting on view the document before they
-/// sign it — the original for the first signer in the chain, otherwise the PREVIOUS
-/// signer's signed copy, so they're signing on top of what came before them, not a
-/// blind copy of the untouched original. Same authorization as the sign endpoints:
-/// only that requirement's own signer, and only while it's still PENDING.
+/// Lets the signer preview the document to sign — the original, or the previous
+/// signer's copy if mid-chain.
 pub async fn document_download_url(
     State(state): State<AppState>,
     SessionUser(user): SessionUser,
@@ -427,11 +396,7 @@ pub async fn replace_confirm_upload(
 
     let (requirement, all_signed) = state
         .document_manager
-        .signature_replace_confirm_upload(
-            payload.requirement_id,
-            payload.new_document_id,
-            user.user_id,
-        )
+        .signature_replace_confirm_upload(&existing, payload.new_document_id, user.user_id)
         .await
         .map_err(bad_request)?;
 
@@ -445,11 +410,8 @@ pub async fn replace_confirm_upload(
     Ok(Json(requirement))
 }
 
-/// Polls the external provider for `external_document_id` and, if it's now COMPLETED,
-/// ingests the signed PDF and unblocks the process field. Shared by the manual
-/// "Refresh Status" button and the webhook handler below — the webhook doesn't trust
-/// its own payload fields (the exact SignYu webhook contract wasn't available when this
-/// was written), it just uses receipt of ANY webhook hit as a signal to re-poll here.
+/// Polls the provider for `external_document_id`; if COMPLETED, ingests the signed PDF
+/// and unblocks the field. Shared by "Refresh Status" and the webhook handler.
 async fn reconcile_external_document(
     state: &AppState,
     external_document_id: &str,
@@ -496,7 +458,7 @@ async fn reconcile_external_document(
     let document_id = sample.document_id;
     let template_field_id = sample.template_field_id;
 
-    state
+    let updated = state
         .document_manager
         .signature_ingest_provider_completed_document(external_document_id, pdf_bytes)
         .await
@@ -511,24 +473,16 @@ async fn reconcile_external_document(
             .map_err(internal_err)?;
 
     if still_current {
-        // The new signed document was created inside `signature_ingest_provider_completed_document`
-        // — look it up via the just-updated requirements so we repoint the field at it.
-        if let Ok(updated) = state
-            .document_manager
-            .signature_requirements_for_external_document(external_document_id)
+        if let Some(signed_document_id) = updated.iter().find_map(|r| r.signed_document_id) {
+            process::db::attach_signed_replacement(
+                &mut conn,
+                process_id,
+                template_step_id,
+                template_field_id,
+                signed_document_id,
+            )
             .await
-        {
-            if let Some(signed_document_id) = updated.iter().find_map(|r| r.signed_document_id) {
-                process::db::attach_signed_replacement(
-                    &mut conn,
-                    process_id,
-                    template_step_id,
-                    template_field_id,
-                    signed_document_id,
-                )
-                .await
-                .map_err(internal_err)?;
-            }
+            .map_err(internal_err)?;
         }
     }
 
@@ -608,10 +562,8 @@ pub async fn refresh_status(
     ))
 }
 
-/// SignYu's two webhook events (`signer.signed`, `document.completed`) — see the
-/// Webhooks doc. We don't currently branch on which one fired (both just trigger a
-/// re-poll of `get_document`, see `signyu_webhook` below), but the field is parsed and
-/// kept so it lands in logs/error messages if something about a payload looks wrong.
+/// SignYu's two webhook events (signer.signed, document.completed) — both just
+/// trigger a re-poll, so we don't branch on which one fired.
 #[derive(serde::Deserialize)]
 pub struct SignYuWebhookPayload {
     #[allow(dead_code)]
@@ -624,14 +576,8 @@ pub struct SignYuWebhookPayload {
 
 type HmacSha256 = hmac::Hmac<sha2::Sha256>;
 
-/// Verifies a SignYu webhook's `X-SignSetu-Signature` header — `sha256=<hex>`, an
-/// HMAC-SHA256 of the exact raw request body bytes, keyed with the endpoint's signing
-/// secret (SignYu dashboard → Developers). Per SignYu's docs this MUST be computed over
-/// the raw bytes, not a re-serialized object, which is exactly why this handler takes
-/// `Bytes` instead of a `Json<T>` extractor — deserializing first and re-serializing
-/// later would not reproduce the same bytes SignYu signed. `hmac::Mac::verify_slice`
-/// does the comparison in constant time internally, per SignYu's "always compare using
-/// a constant time function" requirement.
+/// Verifies `X-SignSetu-Signature: sha256=<hex>`, an HMAC-SHA256 over the raw body
+/// bytes — must be the raw bytes, not a re-serialized object, hence `Bytes` not `Json<T>`.
 fn verify_signyu_signature(secret: &str, raw_body: &[u8], signature_header: &str) -> bool {
     let Some(hex_sig) = signature_header.strip_prefix("sha256=") else {
         return false;
@@ -646,21 +592,11 @@ fn verify_signyu_signature(secret: &str, raw_body: &[u8], signature_header: &str
     mac.verify_slice(&signature_bytes).is_ok()
 }
 
-/// POST /webhooks/signyu — public (no session). SignYu fires this on `signer.signed`
-/// and `document.completed`. Requires `SIGNYU_WEBHOOK_SECRET` to be configured — an
-/// unverifiable webhook (no secret configured, missing/malformed header, or a
-/// signature that doesn't match) is rejected outright rather than trusted.
-///
-/// Once verified, we still don't trust the payload's own `status`/`signer`/`signers`
-/// fields as authoritative for mutating state — we only use `documentId` as a signal
-/// to re-poll `get_document` (the exact same path the manual "Refresh Status" button
-/// uses), so there is only ever one code path that actually writes signature
-/// completion state, regardless of how it was triggered.
-///
-/// Idempotent by construction: SignYu retries on a non-2xx response or a 10s timeout,
-/// which means the same event can be redelivered — `reconcile_external_document` is a
-/// no-op once nothing is left PENDING for the document, so a redelivered event can
-/// never double-apply a completion.
+/// POST /webhooks/signyu — public, no session. Rejects unverifiable webhooks (no
+/// secret configured, bad header, or signature mismatch). Never trusts the payload's
+/// own status fields — only uses `documentId` as a signal to re-poll `get_document`,
+/// the same path "Refresh Status" uses. Idempotent: a redelivered event just re-polls
+/// an already-reconciled document, which is a no-op.
 pub async fn signyu_webhook(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,

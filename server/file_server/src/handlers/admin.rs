@@ -138,9 +138,8 @@ pub struct LookupFlatOwnersPayload {
     pub flat_number: String,
 }
 
-/// Previews who currently owns a flat, so an admin mapping a document to it can see who'll
-/// get access before saving. Invalid/incomplete input (e.g. mid-typing) returns an empty
-/// list rather than an error — this is a soft preview, not a validated write.
+/// Previews who owns a flat before mapping a document to it. Invalid/incomplete input
+/// returns an empty list rather than an error — a soft preview, not a validated write.
 pub async fn lookup_flat_owners(
     State(state): State<AppState>,
     _session_user: SessionUser,

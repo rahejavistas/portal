@@ -445,13 +445,16 @@ pub async fn forgot_password(
             }
         }
         Ok(false) => {
+            // Same response as a registered email — an unregistered-email 404 would let
+            // anyone enumerate which addresses have accounts.
             return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({
-                    "status": "error",
-                    "message": "Email address not registered. Please contact your property administrator."
-                })),
-            ).into_response();
+                StatusCode::OK,
+                Json(ForgotPasswordResponse {
+                    status: "success".to_string(),
+                    message: "Password setup/reset link generated successfully".to_string(),
+                }),
+            )
+                .into_response();
         }
         Err(e) => {
             return (
@@ -692,9 +695,7 @@ pub struct SaveSignerInfoPayload {
 }
 
 /// POST /api/v1/profile/signer-info/save
-/// Self-service: eligible to anyone holding at least one designation — there's no
-/// dedicated signing permission. A plain resident (no designation at all) can't
-/// register.
+/// Any designation holder can register; a plain resident with none cannot.
 pub async fn save_signer_info(
     State(state): State<AppState>,
     crate::extractors::SessionUser(user): crate::extractors::SessionUser,
