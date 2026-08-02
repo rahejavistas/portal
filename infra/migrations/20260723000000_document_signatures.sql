@@ -89,7 +89,6 @@ CREATE TABLE IF NOT EXISTS signature_provider_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sig_provider_requests_requirement ON signature_provider_requests(requirement_id);
-CREATE INDEX IF NOT EXISTS idx_sig_provider_requests_provider ON signature_provider_requests(provider);
 
 -- SignYu-specific correlation data for a requirement handled by that provider — kept
 -- out of `document_signature_requirements` so the shared table stays provider-agnostic.
