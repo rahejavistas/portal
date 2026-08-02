@@ -20,12 +20,25 @@ CREATE TABLE IF NOT EXISTS documents (
     is_deleted BOOLEAN DEFAULT FALSE NOT NULL,
     is_user_uploaded BOOLEAN DEFAULT FALSE NOT NULL,
     is_upload_confirmed BOOLEAN NOT NULL DEFAULT TRUE,
-    uploaded_by INT REFERENCES users(user_id) ON DELETE SET NULL
+    uploaded_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    content_type VARCHAR(255),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- UI-only tag scoped to a category; never used for access control.
+CREATE TABLE IF NOT EXISTS document_subcategories (
+    subcategory_id SERIAL PRIMARY KEY,
+    category VARCHAR(64) NOT NULL REFERENCES document_categories(code) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL,
+    label VARCHAR(255) NOT NULL,
+    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    UNIQUE (category, code)
 );
 
 CREATE TABLE IF NOT EXISTS generic_document_metadata (
     document_id UUID PRIMARY KEY REFERENCES documents(document_id) ON DELETE CASCADE,
-    subcategory VARCHAR(255),
+    subcategory_id INT REFERENCES document_subcategories(subcategory_id) ON DELETE SET NULL,
     tags TEXT[] DEFAULT '{}'::TEXT[] NOT NULL,
     document_date DATE NOT NULL,
     valid_from DATE,
@@ -53,6 +66,3 @@ CREATE TABLE IF NOT EXISTS document_category_designations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_category ON documents(category);
-
-CREATE INDEX IF NOT EXISTS idx_generic_meta_date ON generic_document_metadata(document_date);
-CREATE INDEX IF NOT EXISTS idx_generic_meta_tags ON generic_document_metadata USING gin(tags);

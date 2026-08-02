@@ -12,7 +12,24 @@ CREATE TABLE IF NOT EXISTS user_credentials (
     password_hash VARCHAR(255),
     reset_token VARCHAR(255),
     reset_token_expires_at TIMESTAMP WITH TIME ZONE,
-    failed_login_attempts INT DEFAULT 0 NOT NULL
+    failed_login_attempts INT DEFAULT 0 NOT NULL,
+    mfa_otp_code VARCHAR(6),
+    mfa_otp_expires_at TIMESTAMP WITH TIME ZONE,
+    mfa_otp_attempts INT NOT NULL DEFAULT 0,
+    mfa_pending_token VARCHAR(255),
+    mfa_otp_resends INT NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_credentials_mfa_pending_token
+ON user_credentials (mfa_pending_token)
+WHERE (mfa_pending_token IS NOT NULL);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+    mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    notify_process_updates BOOLEAN NOT NULL DEFAULT TRUE,
+    notify_signature_events BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS flats (
@@ -78,3 +95,11 @@ CREATE INDEX IF NOT EXISTS idx_user_designations_user ON user_designations(user_
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_designations_active_unique
 ON user_designations (user_id, designation_id)
 WHERE (is_active = TRUE);
+
+-- Append-only audit trail for permission/role/document-category-access changes.
+CREATE TABLE IF NOT EXISTS permission_log (
+    log_id SERIAL PRIMARY KEY,
+    description TEXT NOT NULL,
+    done_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    done_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);

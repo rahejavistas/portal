@@ -76,9 +76,7 @@ CREATE TABLE IF NOT EXISTS process_reviewer_comments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_processes_user ON processes(user_id);
-CREATE INDEX IF NOT EXISTS idx_processes_template_version_id ON processes(template_version_id);
 CREATE INDEX IF NOT EXISTS idx_process_steps_process ON process_steps(process_id);
-CREATE INDEX IF NOT EXISTS idx_process_steps_parent ON process_steps(parent_step_instance_id);
 CREATE INDEX IF NOT EXISTS idx_process_fields_step ON process_fields(step_instance_id);
 CREATE INDEX IF NOT EXISTS idx_process_reviews_step ON process_step_reviews(step_instance_id);
 CREATE INDEX IF NOT EXISTS idx_reviewer_comments_process ON process_reviewer_comments(process_id);
