@@ -828,6 +828,9 @@
                             </button>
                         </div>
                     </div>
+                    <a href="/admin-accounting" class="nav-item" id="suite-btn-accounting" style="display:none; text-decoration: none;" onclick="closeSidebar()">
+                        Accounting &amp; Billing
+                    </a>
                     <a href="/dashboard" class="admin-btn" id="my-flat-dashboard-link" style="display:none;">
                         My Flat Dashboard &rarr;
                     </a>
@@ -1548,7 +1551,7 @@
             return raw;
         }
 
-        const API_BASE = "https://krm3err35eo7fqlzwfv5qrjtgy0oltum.lambda-url.ap-south-1.on.aws";
+        const API_BASE = "";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
         const user = userStr ? JSON.parse(userStr) : null;
@@ -1563,6 +1566,10 @@
         if (canManageProcessTemplates) {
             const templatesBtn = document.getElementById('suite-btn-templates');
             if (templatesBtn) templatesBtn.style.display = 'block';
+        }
+        if (user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) {
+            const accountingBtn = document.getElementById('suite-btn-accounting');
+            if (accountingBtn) accountingBtn.style.display = 'block';
         }
         const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
         const canManageSignerDirectory = !!(user && user.can_review_process);

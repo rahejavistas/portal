@@ -8,7 +8,8 @@ members = [
     "server/email",
     "quality",
     "telemetry",
-    "process"
+    "process",
+    "accounting"
 ]
 resolver = "2"
 

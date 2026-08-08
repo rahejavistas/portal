@@ -73,6 +73,7 @@ async fn main() {
         super_admin_email: config.super_admin_email.clone(),
         signyu_client,
         signyu_webhook_secret: config.signyu.webhook_secret.clone(),
+        accounting_enabled: config.accounting_enabled,
     };
 
     macro_rules! make_app {
@@ -350,6 +351,279 @@ async fn main() {
                     middleware::require_any_of(&[Permission::ProcessReviewer]),
                 ));
 
+            let accounting_manage_routes = Router::new()
+                .route(
+                    "/accounting/billing-plans/create",
+                    post(handlers::accounting::create_billing_plan),
+                )
+                .route(
+                    "/accounting/billing-plans/assign",
+                    post(handlers::accounting::assign_billing_plan),
+                )
+                .route(
+                    "/accounting/billing-plans/assign-bulk",
+                    post(handlers::accounting::bulk_assign_billing_plan),
+                )
+                .route(
+                    "/accounting/invoices/generate",
+                    post(handlers::accounting::generate_invoices),
+                )
+                .route(
+                    "/accounting/invoices/:id/void",
+                    post(handlers::accounting::void_invoice),
+                )
+                .route(
+                    "/accounting/gst-rules/create",
+                    post(handlers::accounting::create_gst_rule),
+                )
+                .route(
+                    "/accounting/interest-rules/create",
+                    post(handlers::accounting::create_interest_rule),
+                )
+                .route(
+                    "/accounting/interest/run",
+                    post(handlers::accounting::run_interest),
+                )
+                .route(
+                    "/accounting/payments/record",
+                    post(handlers::accounting::record_payment),
+                )
+                .route(
+                    "/accounting/payment-instructions/set",
+                    post(handlers::accounting::set_payment_instructions),
+                )
+                .route(
+                    "/accounting/claims/list",
+                    post(handlers::accounting::list_claims),
+                )
+                .route(
+                    "/accounting/claims/:id/confirm",
+                    post(handlers::accounting::confirm_claim),
+                )
+                .route(
+                    "/accounting/claims/:id/reject",
+                    post(handlers::accounting::reject_claim),
+                )
+                .route(
+                    "/accounting/invoices/preview",
+                    post(handlers::accounting::preview_bill_generation),
+                )
+                .route(
+                    "/accounting/credit/apply",
+                    post(handlers::accounting::apply_credit_to_invoice),
+                )
+                .route(
+                    "/accounting/funds/contribution-rules/create",
+                    post(handlers::accounting::create_fund_contribution_rule),
+                )
+                .route(
+                    "/accounting/funds/assign-flat",
+                    post(handlers::accounting::assign_flat_to_fund),
+                )
+                .route(
+                    "/accounting/accounts/create",
+                    post(handlers::accounting::create_account),
+                )
+                .route(
+                    "/accounting/accounts/:id/set-active",
+                    post(handlers::accounting::set_account_active),
+                )
+                .route(
+                    "/accounting/vendors/create",
+                    post(handlers::accounting::create_vendor),
+                )
+                .route(
+                    "/accounting/vendors/list",
+                    post(handlers::accounting::list_vendors),
+                )
+                .route(
+                    "/accounting/purchase-orders/create",
+                    post(handlers::accounting::create_purchase_order),
+                )
+                .route(
+                    "/accounting/purchase-orders/list",
+                    post(handlers::accounting::list_purchase_orders),
+                )
+                .route(
+                    "/accounting/expenses/submit",
+                    post(handlers::accounting::submit_expense),
+                )
+                .route(
+                    "/accounting/expenses/list",
+                    post(handlers::accounting::list_expenses),
+                )
+                .route(
+                    "/accounting/expenses/:id/approve",
+                    post(handlers::accounting::approve_expense),
+                )
+                .route(
+                    "/accounting/expenses/:id/reject",
+                    post(handlers::accounting::reject_expense),
+                )
+                .route(
+                    "/accounting/tds-rules/create",
+                    post(handlers::accounting::create_tds_rule),
+                )
+                .route(
+                    "/accounting/tds-rules/list",
+                    post(handlers::accounting::list_tds_rules),
+                )
+                .route(
+                    "/accounting/tds-summary",
+                    post(handlers::accounting::tds_summary),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/import",
+                    post(handlers::accounting::import_statement),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/:id/auto-match",
+                    post(handlers::accounting::auto_match),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/lines/list",
+                    post(handlers::accounting::list_lines),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/lines/:id/match-candidates",
+                    post(handlers::accounting::match_candidates),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/lines/:id/match",
+                    post(handlers::accounting::match_line),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/lines/:id/ignore",
+                    post(handlers::accounting::ignore_line),
+                )
+                .route(
+                    "/accounting/budgets/set",
+                    post(handlers::accounting::set_budget),
+                )
+                .route(
+                    "/accounting/budgets/variance",
+                    post(handlers::accounting::variance_report),
+                )
+                .route(
+                    "/accounting/fiscal-years/:id/close",
+                    post(handlers::accounting::close_fiscal_year),
+                )
+                .route(
+                    "/accounting/fiscal-years/:id/reopen",
+                    post(handlers::accounting::reopen_fiscal_year),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[Permission::AccountingManage]),
+                ));
+
+            // Reports and generated documents are read-only against the ledger, so
+            // AccountingView holds these too, not just AccountingManage.
+            let accounting_reports_routes = Router::new()
+                .route(
+                    "/accounting/documents/pdf",
+                    post(handlers::accounting::admin_document_pdf),
+                )
+                .route(
+                    "/accounting/reports/run",
+                    post(handlers::accounting::run_report),
+                )
+                .route(
+                    "/accounting/reports/collection-summary",
+                    post(handlers::accounting::collection_summary),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[
+                        Permission::AccountingManage,
+                        Permission::AccountingView,
+                    ]),
+                ));
+
+            let accounting_view_routes = Router::new()
+                .route(
+                    "/accounting/billing-plans/list",
+                    post(handlers::accounting::list_billing_plans),
+                )
+                .route(
+                    "/accounting/billing-plans/assignments",
+                    post(handlers::accounting::list_billing_assignments),
+                )
+                .route(
+                    "/accounting/invoices/list",
+                    post(handlers::accounting::list_invoices),
+                )
+                .route(
+                    "/accounting/gst-rules/list",
+                    post(handlers::accounting::list_gst_rules),
+                )
+                .route(
+                    "/accounting/interest-rules/list",
+                    post(handlers::accounting::list_interest_rules),
+                )
+                .route(
+                    "/accounting/payments/list",
+                    post(handlers::accounting::list_payments),
+                )
+                .route(
+                    "/accounting/payment-instructions",
+                    post(handlers::accounting::get_payment_instructions),
+                )
+                .route(
+                    "/accounting/credit/balance",
+                    post(handlers::accounting::get_flat_credit_balance),
+                )
+                .route("/accounting/funds/list", post(handlers::accounting::list_funds))
+                .route(
+                    "/accounting/funds/contribution-rules/for-flat",
+                    post(handlers::accounting::list_fund_rules_for_flat),
+                )
+                .route(
+                    "/accounting/fiscal-years/list",
+                    post(handlers::accounting::list_fiscal_years),
+                )
+                .route(
+                    "/accounting/settings/overview",
+                    post(handlers::accounting::overview),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[
+                        Permission::AccountingManage,
+                        Permission::AccountingView,
+                    ]),
+                ));
+
+            let accounting_accounts_read_routes = Router::new()
+                .route(
+                    "/accounting/accounts/list",
+                    post(handlers::accounting::list_accounts),
+                )
+                .route(
+                    "/accounting/flats/resolve",
+                    post(handlers::accounting::resolve_flat),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[
+                        Permission::AccountingManage,
+                        Permission::AccountingView,
+                    ]),
+                ));
+
+            // No permission layer — every handler here checks `user.is_admin()`
+            // itself, restricted to the super_admin designation specifically, tighter
+            // than any accounting.manage/view grant a treasurer-style role might hold.
+            let society_profile_routes = Router::new()
+                .route(
+                    "/accounting/society-profile",
+                    post(handlers::accounting::get_society_profile),
+                )
+                .route(
+                    "/accounting/society-profile/set",
+                    post(handlers::accounting::set_society_profile),
+                );
+
             let admin_routes = users_view_routes
                 .merge(users_manage_routes)
                 .merge(documents_manage_routes)
@@ -362,7 +636,12 @@ async fn main() {
                 .merge(document_signatures_sign_routes)
                 .merge(document_signatures_read_routes)
                 .merge(signer_directory_manage_routes)
-                .merge(signer_directory_read_routes);
+                .merge(signer_directory_read_routes)
+                .merge(accounting_manage_routes)
+                .merge(accounting_view_routes)
+                .merge(accounting_reports_routes)
+                .merge(accounting_accounts_read_routes)
+                .merge(society_profile_routes);
 
             Router::new()
                 .route("/health", get(handlers::health::health_check))
@@ -442,6 +721,26 @@ async fn main() {
                 .route(
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),
+                )
+                .route(
+                    "/api/v1/accounting/claims/submit",
+                    post(handlers::accounting::submit_claim),
+                )
+                .route(
+                    "/api/v1/accounting/claims/mine",
+                    post(handlers::accounting::list_my_claims),
+                )
+                .route(
+                    "/api/v1/accounting/invoices/mine",
+                    post(handlers::accounting::list_my_invoices),
+                )
+                .route(
+                    "/api/v1/accounting/documents/pdf",
+                    post(handlers::accounting::member_document_pdf),
+                )
+                .route(
+                    "/api/v1/accounting/payment-instructions",
+                    post(handlers::accounting::get_payment_instructions),
                 )
                 .nest("/api/v1/admin", admin_routes)
                 // Standard CORS and custom security headers middleware

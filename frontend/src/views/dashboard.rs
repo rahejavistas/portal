@@ -200,10 +200,37 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             color: var(--background);
         }
         #panel-documents { display: none; }
+        #panel-billing { display: none; }
         html[data-tab="documents"] #panel-profile { display: none; }
         html[data-tab="documents"] #panel-documents { display: block; }
         html[data-tab="documents"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
         html[data-tab="documents"] #tab-btn-documents { background-color: var(--primary); color: var(--background); }
+        html[data-tab="billing"] #panel-profile { display: none; }
+        html[data-tab="billing"] #panel-billing { display: block; }
+        html[data-tab="billing"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
+        html[data-tab="billing"] #tab-btn-billing { background-color: var(--primary); color: var(--background); }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 9999px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+        .badge-green { background-color: #D1FAE5; color: #065F46; }
+        .badge-amber { background-color: #FEF3C7; color: #92400E; }
+        .badge-red { background-color: #FEE2E2; color: #991B1B; }
+        .badge-gray { background-color: var(--muted); color: var(--muted-foreground); }
+        .secondary-btn {
+            background-color: var(--muted);
+            color: var(--foreground);
+            border: none;
+            padding: 10px 18px;
+            border-radius: var(--radius-md);
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .secondary-btn:hover { background-color: var(--border); }
+        .section-title { font-size: 1.125rem; font-weight: 800; margin: 32px 0 16px 0; }
+        .section-title:first-child { margin-top: 0; }
+        .empty-note { color: var(--muted-foreground); font-size: 0.875rem; padding: 20px 0; }
         .admin-btn {
             display: none;
             padding: 12px 16px;
@@ -604,6 +631,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <nav class="nav-menu">
                     <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
+                    <button class="nav-item" id="tab-btn-billing" style="display:none;" onclick="switchTab('billing'); closeSidebar()">Billing</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
                     <a href="/admin" class="admin-btn" id="admin-link" style="display:none;">
                         Admin Dashboard &rarr;
@@ -714,6 +742,20 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <div class="doc-cards-mobile" id="doc-cards-mobile-target" style="flex-direction: column; gap: 12px; display: none;">
                     <p style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</p>
                 </div>
+            </section>
+
+            <section id="panel-billing">
+                <h2 style="margin-top: 0;">Billing</h2>
+                <p class="section-desc" style="margin-bottom: 0;">Your maintenance bills and payment history for this flat.</p>
+
+                <div class="section-title">Pending Bills</div>
+                <div id="billing-pending-list"><p class="empty-note">Loading…</p></div>
+
+                <div class="section-title">Paid Bills</div>
+                <div id="billing-paid-list"><p class="empty-note">Loading…</p></div>
+
+                <div class="section-title">Payments You've Reported</div>
+                <div id="billing-claims-list"><p class="empty-note">Loading…</p></div>
             </section>
         </main>
         
@@ -868,6 +910,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             }
 
             document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
+            document.getElementById('tab-btn-billing').style.display = (user.accounting_enabled && hasFlat) ? 'block' : 'none';
 
             loadAccountSettings();
 
@@ -1063,10 +1106,14 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             
             document.getElementById('panel-profile').style.display = 'none';
             document.getElementById('panel-documents').style.display = 'none';
-            
+            document.getElementById('panel-billing').style.display = 'none';
+
             if (tabName === 'documents') {
                 document.getElementById('panel-documents').style.display = 'block';
                 loadResidentDocuments();
+            } else if (tabName === 'billing') {
+                document.getElementById('panel-billing').style.display = 'block';
+                loadBillingTab();
             } else {
                 document.getElementById('panel-profile').style.display = 'block';
             }
@@ -1097,6 +1144,169 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         }
 
         switchTab(initialTab);
+
+        function money(v) {
+            if (v === null || v === undefined) return '—';
+            const n = typeof v === 'string' ? parseFloat(v) : v;
+            if (Number.isNaN(n)) return '—';
+            return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        function fmtDate(v) {
+            if (!v) return '—';
+            const d = new Date(v);
+            if (Number.isNaN(d.getTime())) return v;
+            return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        }
+        function paymentMethodLabelResident(m) {
+            const map = { bank_transfer: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', cash: 'Cash' };
+            return map[m] || m;
+        }
+
+        function invoiceCard(inv) {
+            const outstanding = parseFloat(inv.total_amount) - parseFloat(inv.amount_paid);
+            const statusMap = { PAID: 'badge-green', PARTIALLY_PAID: 'badge-amber', UNPAID: 'badge-red', VOID: 'badge-gray' };
+            const cls = statusMap[inv.status] || 'badge-gray';
+            const isPending = inv.status === 'UNPAID' || inv.status === 'PARTIALLY_PAID';
+            return `<div class="card" style="padding:24px; margin-bottom:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div style="font-weight:800; font-size:1.0625rem;">${escapeHtml(inv.invoice_number)}</div>
+                        <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">Billing period ${fmtDate(inv.billing_period_start)} to ${fmtDate(inv.billing_period_end)} — due ${fmtDate(inv.due_date)}</div>
+                    </div>
+                    <span class="badge ${cls}">${(inv.status || '').replace(/_/g, ' ')}</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div style="font-size:1.375rem; font-weight:800;">${money(inv.total_amount)}</div>
+                        ${isPending ? `<div style="color:var(--muted-foreground); font-size:0.8125rem;">${money(outstanding)} still due</div>` : ''}
+                    </div>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button class="secondary-btn" onclick="downloadInvoicePdf('${inv.invoice_id}', '${escapeHtml(inv.invoice_number)}')">Download PDF</button>
+                        ${isPending ? `<button class="download-btn" onclick="toggleReportPayment('${inv.invoice_id}')">Report a Payment</button>` : ''}
+                    </div>
+                </div>
+                ${isPending ? `<div id="report-payment-${inv.invoice_id}" style="display:none; margin-top:20px; padding-top:20px; border-top:1px solid var(--border);">
+                    <div class="form-group"><label>Amount Paid</label><input type="number" step="0.01" id="claim-amount-${inv.invoice_id}" value="${outstanding.toFixed(2)}"></div>
+                    <div class="form-group"><label>Payment Method</label><select id="claim-method-${inv.invoice_id}"><option value="upi">UPI</option><option value="bank_transfer">Bank Transfer</option><option value="cheque">Cheque</option><option value="cash">Cash</option></select></div>
+                    <div class="form-group"><label>Reference Number</label><input id="claim-ref-${inv.invoice_id}" placeholder="UPI ref, cheque no., or bank UTR"></div>
+                    <div class="form-group"><label>Note (optional)</label><input id="claim-note-${inv.invoice_id}" placeholder="Anything the admin should know"></div>
+                    <div class="feedback-box" id="claim-feedback-${inv.invoice_id}"></div>
+                    <button class="download-btn" onclick="submitPaymentReport('${inv.invoice_id}')">Submit</button>
+                </div>` : ''}
+            </div>`;
+        }
+
+        async function loadBillingTab() {
+            document.getElementById('billing-pending-list').innerHTML = '<p class="empty-note">Loading…</p>';
+            document.getElementById('billing-paid-list').innerHTML = '<p class="empty-note">Loading…</p>';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/accounting/invoices/mine`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!response.ok) throw new Error('Failed to load your bills');
+                const invoices = await response.json();
+                const pending = invoices.filter(i => i.status === 'UNPAID' || i.status === 'PARTIALLY_PAID');
+                const paid = invoices.filter(i => i.status === 'PAID');
+                document.getElementById('billing-pending-list').innerHTML = pending.length
+                    ? pending.map(invoiceCard).join('')
+                    : '<p class="empty-note">No pending bills — you\'re all caught up.</p>';
+                document.getElementById('billing-paid-list').innerHTML = paid.length
+                    ? paid.map(invoiceCard).join('')
+                    : '<p class="empty-note">No paid bills yet.</p>';
+            } catch (err) {
+                document.getElementById('billing-pending-list').innerHTML = '<p class="empty-note">Could not load your bills.</p>';
+                document.getElementById('billing-paid-list').innerHTML = '';
+            }
+            loadMyPaymentReports();
+        }
+
+        async function loadMyPaymentReports() {
+            const el = document.getElementById('billing-claims-list');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/accounting/claims/mine`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!response.ok) throw new Error('Failed to load your payment reports');
+                const claims = await response.json();
+                if (!claims.length) { el.innerHTML = '<p class="empty-note">You haven\'t reported any payments yet.</p>'; return; }
+                const statusMap = { CONFIRMED: 'badge-green', PENDING: 'badge-amber', REJECTED: 'badge-red' };
+                el.innerHTML = claims.map(c => `<div class="card" style="padding:20px; margin-bottom:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                        <div>
+                            <div style="font-weight:700;">${escapeHtml(c.invoice_number)} — ${money(c.amount)}</div>
+                            <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">${paymentMethodLabelResident(c.payment_method)} — reference ${escapeHtml(c.reference_number)} — reported ${fmtDate(c.submitted_at)}</div>
+                            ${c.status === 'REJECTED' && c.review_note ? `<div style="color:#991B1B; font-size:0.8125rem; margin-top:4px;">Reason: ${escapeHtml(c.review_note)}</div>` : ''}
+                        </div>
+                        <span class="badge ${statusMap[c.status] || 'badge-gray'}">${c.status}</span>
+                    </div>
+                </div>`).join('');
+            } catch (err) {
+                el.innerHTML = '<p class="empty-note">Could not load your payment reports.</p>';
+            }
+        }
+
+        function toggleReportPayment(invoiceId) {
+            const el = document.getElementById(`report-payment-${invoiceId}`);
+            el.style.display = el.style.display === 'none' ? 'block' : 'none';
+        }
+
+        async function submitPaymentReport(invoiceId) {
+            const feedback = document.getElementById(`claim-feedback-${invoiceId}`);
+            feedback.style.display = 'none';
+            const amount = parseFloat(document.getElementById(`claim-amount-${invoiceId}`).value);
+            const paymentMethod = document.getElementById(`claim-method-${invoiceId}`).value;
+            const referenceNumber = document.getElementById(`claim-ref-${invoiceId}`).value.trim();
+            const note = document.getElementById(`claim-note-${invoiceId}`).value.trim();
+            if (!amount || amount <= 0) {
+                feedback.style.display = 'block'; feedback.className = 'feedback-box error'; feedback.textContent = 'Enter the amount you paid.';
+                return;
+            }
+            if (!referenceNumber) {
+                feedback.style.display = 'block'; feedback.className = 'feedback-box error'; feedback.textContent = 'Enter your payment reference number.';
+                return;
+            }
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/accounting/claims/submit`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        invoice_id: invoiceId, amount, payment_method: paymentMethod,
+                        reference_number: referenceNumber, note: note || null
+                    })
+                });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.message || 'Could not submit your payment report.');
+                }
+                feedback.style.display = 'block'; feedback.className = 'feedback-box success';
+                feedback.textContent = 'Reported. An admin will review and confirm it shortly.';
+                loadMyPaymentReports();
+            } catch (err) {
+                feedback.style.display = 'block'; feedback.className = 'feedback-box error'; feedback.textContent = err.message;
+            }
+        }
+
+        async function downloadInvoicePdf(invoiceId, invoiceNumber) {
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/accounting/documents/pdf`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kind: 'invoice', invoice_id: invoiceId })
+                });
+                if (!response.ok) throw new Error('Could not download this invoice.');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `${invoiceNumber}.pdf`;
+                document.body.appendChild(a); a.click(); a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (err) {
+                showAlert(err.message);
+            }
+        }
 
         function renderCategoryFilterChips() {
             const bar = document.getElementById('user-filter-bar');

@@ -67,6 +67,11 @@ fn main() {
         process_html(&views::process::admin_process_html(), &api_base),
     )
     .unwrap();
+    fs::write(
+        dist_dir.join("admin-accounting.html"),
+        process_html(&views::accounting::accounting_html(), &api_base),
+    )
+    .unwrap();
 
     println!("Static files generated in dist/ directory.");
 }

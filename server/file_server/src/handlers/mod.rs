@@ -1,3 +1,4 @@
+pub mod accounting;
 pub mod admin;
 pub mod auth;
 pub mod bulk_users_upload;

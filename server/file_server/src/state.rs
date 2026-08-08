@@ -19,4 +19,5 @@ pub struct AppState {
     /// then simply unavailable (add-signers rejects it with a clear error).
     pub signyu_client: Option<Arc<SignYuClient>>,
     pub signyu_webhook_secret: Option<String>,
+    pub accounting_enabled: bool,
 }

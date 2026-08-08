@@ -1,0 +1,1871 @@
+pub(crate) fn accounting_html() -> String {
+    HTML.to_string()
+}
+
+const HTML: &str = r##"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vistas Portal - Accounting &amp; Billing</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; font-family: 'Outfit', sans-serif; margin: 0; padding: 0; }
+        html { overflow-x: hidden; }
+        :root {
+            --background: #FFFFFF;
+            --foreground: #111827;
+            --primary: #3B82F6;
+            --primary-hover: #2563EB;
+            --secondary: #10B981;
+            --accent: #F59E0B;
+            --danger: #EF4444;
+            --muted: #F3F4F6;
+            --muted-foreground: #6B7280;
+            --border: #E5E7EB;
+            --radius-md: 6px;
+            --radius-lg: 8px;
+        }
+        body { background-color: var(--muted); color: var(--foreground); min-height: 100vh; overflow-x: hidden; width: 100%; }
+        .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 100%; }
+        .layout-container { display: flex; width: 100%; min-height: 100vh; }
+        .bg-shape-top-right {
+            position: fixed; width: 500px; height: 500px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.04) 0%, rgba(59, 130, 246, 0) 70%);
+            top: -100px; right: -100px; z-index: 0; pointer-events: none;
+        }
+
+        .sidebar {
+            width: 260px; min-width: 260px; border-right: 1px solid var(--border);
+            display: flex; flex-direction: column; padding: 40px 24px; justify-content: space-between;
+            position: fixed; height: 100vh; left: 0; top: 0; z-index: 150; background-color: var(--background);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform;
+        }
+        .mobile-topbar {
+            display: none; position: fixed; top: 0; left: 0; right: 0; height: 48px; background-color: var(--background);
+            border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; padding: 0 14px; z-index: 200;
+        }
+        .mobile-topbar-brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; text-transform: uppercase; color: var(--primary); }
+        .hamburger-btn { background: none; border: none; cursor: pointer; padding: 8px; display: flex; flex-direction: column; gap: 5px; border-radius: var(--radius-md); transition: background 0.2s; }
+        .hamburger-btn:hover { background-color: var(--muted); }
+        .hamburger-btn span { display: block; width: 22px; height: 2px; background-color: var(--foreground); border-radius: 2px; }
+        .sidebar-overlay { display: none; position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.45); z-index: 149; opacity: 0; transition: opacity 0.3s ease; }
+        .sidebar-overlay.open { display: block; opacity: 1; }
+        .sidebar-brand h1 { font-size: 2.25rem; font-weight: 800; letter-spacing: -0.03em; text-transform: uppercase; color: var(--primary); margin: 0 0 4px 0; line-height: 0.9; }
+        .sidebar-brand p { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted-foreground); margin: 0 0 40px 0; }
+        .nav-menu { display: flex; flex-direction: column; gap: 10px; flex-grow: 1; }
+        .nav-item { display: block; padding: 12px 16px; border: none; border-radius: var(--radius-md); color: var(--foreground); text-decoration: none; font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s ease; text-align: left; background: none; width: 100%; }
+        .nav-item:hover { background-color: var(--muted); transform: scale(1.03); }
+        .nav-item.active { background-color: var(--primary); color: var(--background); }
+        .nav-group-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .nav-group-arrow { transition: transform 0.2s ease; flex-shrink: 0; }
+        .nav-group.collapsed .nav-group-arrow { transform: rotate(-90deg); }
+        .nav-subgroup { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+        .nav-group.collapsed .nav-subgroup { display: none; }
+        .nav-subitem { padding-left: 28px; font-size: 0.8125rem; }
+        .admin-btn { display: block; padding: 12px 16px; background-color: #FEF3C7; color: #D97706; border-radius: var(--radius-md); text-decoration: none; font-weight: 700; font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.05em; text-align: center; transition: all 0.2s ease; }
+        .admin-btn:hover { background-color: #FDE68A; transform: scale(1.05); }
+        .logout-btn { background-color: var(--background); border: 2px solid var(--border); border-radius: var(--radius-md); color: var(--foreground); padding: 12px; cursor: pointer; font-weight: 700; font-size: 0.8125rem; text-transform: uppercase; width: 100%; text-align: center; transition: all 0.2s ease; }
+        .logout-btn:hover { background-color: #FEE2E2; border-color: #FCA5A5; color: #EF4444; transform: scale(1.03); }
+
+        .workspace { flex-grow: 1; margin-left: 260px; padding: 48px 64px; max-width: 1400px; position: relative; z-index: 10; }
+        h2 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.03em; color: var(--foreground); margin-top: 0; margin-bottom: 4px; }
+        .section-desc { font-size: 1.0625rem; color: var(--muted-foreground); margin: 0 0 28px 0; }
+        h3 { font-size: 1.125rem; font-weight: 800; margin: 0 0 4px 0; }
+        .card-desc { font-size: 0.8125rem; color: var(--muted-foreground); margin: 0 0 20px 0; line-height: 1.5; }
+
+        .subtab-bar { display: flex; gap: 10px; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+        .subtab-btn { background-color: var(--background); border: 2px solid var(--border); border-radius: var(--radius-md); color: var(--foreground); padding: 8px 14px; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; cursor: pointer; transition: all 0.2s ease; }
+        .subtab-btn:hover { background-color: var(--muted); transform: scale(1.03); }
+        .subtab-btn.active { background-color: var(--primary); color: var(--background); border-color: var(--primary); }
+        .subtab-panel { display: none; }
+        .subtab-panel.active { display: block; }
+
+        .card { background-color: var(--background); border-radius: var(--radius-lg); padding: 28px; margin-bottom: 24px; border: 1px solid var(--border); }
+        .card-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+        .card-row > .card { flex: 1; min-width: 320px; }
+
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .stat-card { background-color: var(--background); border-radius: var(--radius-lg); border: 1px solid var(--border); padding: 20px 22px; position: relative; overflow: hidden; }
+        .stat-card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--accent-color, var(--primary)); }
+        .stat-label { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-foreground); margin-bottom: 8px; }
+        .stat-value { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; }
+        .stat-sub { font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; }
+
+        .table-container { overflow-x: auto; overflow-y: auto; max-height: 480px; border-radius: var(--radius-lg); background-color: var(--background); border: 1px solid var(--border); margin-top: 12px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+        .table-container::-webkit-scrollbar { width: 6px; height: 6px; }
+        .table-container::-webkit-scrollbar-track { background: transparent; }
+        .table-container::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 3px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        thead th { position: sticky; top: 0; z-index: 2; }
+        th { background-color: #F8FAFC; border-bottom: 1px solid var(--border); padding: 12px 16px; color: var(--muted-foreground); font-size: 0.6875rem; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; white-space: nowrap; }
+        td { border-bottom: 1px solid var(--border); padding: 14px 16px; font-size: 0.875rem; vertical-align: middle; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background-color: #FAFAFA; }
+        td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 9999px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; background-color: var(--muted); color: var(--muted-foreground); white-space: nowrap; }
+        .badge-green { background-color: #D1FAE5; color: #065F46; }
+        .badge-amber { background-color: #FEF3C7; color: #92400E; }
+        .badge-red { background-color: #FEE2E2; color: #991B1B; }
+        .badge-blue { background-color: #DBEAFE; color: #1E40AF; }
+        .badge-gray { background-color: var(--muted); color: var(--muted-foreground); }
+
+        .btn { background-color: var(--primary); color: var(--background); border: none; padding: 9px 16px; border-radius: var(--radius-md); font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s ease; display: inline-block; text-align: center; }
+        .btn:hover { background-color: var(--primary-hover); transform: scale(1.03); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-secondary { background-color: var(--background); color: var(--foreground); border: 2px solid var(--border); }
+        .btn-secondary:hover { background-color: var(--muted); }
+        .btn-danger { background-color: var(--danger); }
+        .btn-danger:hover { background-color: #DC2626; }
+        .btn-success { background-color: var(--secondary); }
+        .btn-success:hover { background-color: #0D9F6E; }
+        .btn-sm { padding: 6px 10px; font-size: 0.6875rem; }
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.5); z-index: 9999; justify-content: center; align-items: center; padding: 20px; }
+        .modal-content { background: var(--background); border-radius: var(--radius-lg); width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; padding: 24px; box-sizing: border-box; position: relative; }
+        .modal-content.modal-wide { max-width: 760px; }
+        .close-modal-btn { position: absolute; top: 16px; right: 16px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--muted-foreground); }
+
+        .form-group { margin-bottom: 16px; display: flex; flex-direction: column; gap: 6px; }
+        .form-group label { font-size: 0.75rem; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; display: flex; align-items: center; gap: 5px; }
+        .form-group select, .form-group input, .form-group textarea { padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); font-size: 0.875rem; font-family: inherit; width: 100%; }
+        .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+        @media (max-width: 640px) { .form-row-2, .form-row-3 { grid-template-columns: 1fr; } }
+
+        .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%; background: var(--muted); color: var(--muted-foreground); font-size: 10px; font-weight: 800; cursor: pointer; flex-shrink: 0; text-transform: none; letter-spacing: normal; }
+        .info-icon:hover { background: var(--primary); color: #fff; }
+        .info-banner { display: flex; gap: 10px; align-items: flex-start; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: var(--radius-md); padding: 12px 14px; font-size: 0.8125rem; color: #1E3A8A; margin-bottom: 20px; line-height: 1.5; }
+        .info-banner.warn { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
+        .info-banner .info-icon { background: rgba(255,255,255,0.6); margin-top: 2px; }
+
+        .feedback-box { padding: 10px 14px; border-radius: var(--radius-md); font-size: 0.8125rem; margin-top: 4px; display: none; }
+        .feedback-box.error { display: block; background: #FEE2E2; color: #991B1B; }
+        .feedback-box.success { display: block; background: #D1FAE5; color: #065F46; }
+
+        .empty-state { text-align: center; color: var(--muted-foreground); padding: 40px 20px; font-weight: 500; font-size: 0.875rem; }
+        .settings-category { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; margin-bottom: 20px; }
+        .settings-category-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 8px; }
+
+        @media (max-width: 768px) {
+            .mobile-topbar { display: flex; }
+            .sidebar { transform: translateX(-100%); width: min(280px, 85vw); min-width: unset; }
+            .sidebar.open { transform: translateX(0); box-shadow: 8px 0 24px rgba(0,0,0,0.15); }
+            .workspace { margin-left: 0; padding: 76px 20px 40px; }
+            h2 { font-size: 1.875rem; }
+            .card, .table-container { padding: 20px; }
+            .form-row-2, .form-row-3 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-shape-top-right"></div>
+    <div class="mobile-topbar" id="mobile-topbar">
+        <span class="mobile-topbar-brand">Accounting</span>
+        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu"><span></span><span></span><span></span></button>
+    </div>
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <div class="layout-container">
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand" id="sidebar-brand-container"></div>
+        </aside>
+
+        <main class="workspace">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom: 4px;">
+                <div>
+                    <h2>Accounting &amp; Billing</h2>
+                    <p class="section-desc">Maintenance billing, payments, vendor expenses, and the books — in one place.</p>
+                </div>
+            </div>
+
+            <div class="subtab-bar" id="acct-subtab-bar">
+                <button class="subtab-btn active" data-tab="overview" onclick="switchAcctTab('overview')">Overview</button>
+                <button class="subtab-btn" data-tab="billing" onclick="switchAcctTab('billing')">Billing &amp; Invoices</button>
+                <button class="subtab-btn" data-tab="payments" onclick="switchAcctTab('payments')">Payments &amp; Claims</button>
+                <button class="subtab-btn" data-tab="vendors" onclick="switchAcctTab('vendors')">Vendors &amp; Expenses</button>
+                <button class="subtab-btn" data-tab="bankrecon" onclick="switchAcctTab('bankrecon')">Bank Reconciliation</button>
+                <button class="subtab-btn" data-tab="budgets" onclick="switchAcctTab('budgets')">Budgets</button>
+                <button class="subtab-btn" data-tab="reports" onclick="switchAcctTab('reports')">Reports</button>
+                <button class="subtab-btn" data-tab="settings" onclick="switchAcctTab('settings')">Settings</button>
+            </div>
+
+            <section class="subtab-panel active" id="panel-overview"></section>
+
+            <section class="subtab-panel" id="panel-billing"></section>
+
+            <section class="subtab-panel" id="panel-payments"></section>
+
+            <section class="subtab-panel" id="panel-vendors"></section>
+
+            <section class="subtab-panel" id="panel-bankrecon"></section>
+
+            <section class="subtab-panel" id="panel-budgets"></section>
+
+            <section class="subtab-panel" id="panel-reports"></section>
+
+            <section class="subtab-panel" id="panel-settings"></section>
+        </main>
+    </div>
+
+    <div class="modal-overlay" id="confirm-modal" style="z-index:10010;" onclick="if (event.target === this) closeConfirmModal(false)">
+        <div class="modal-content" style="max-width:440px;">
+            <p id="confirm-modal-title" style="margin:0 0 10px 0; font-weight:800; font-size:1.125rem;"></p>
+            <p id="confirm-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.6; white-space:pre-line;"></p>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:22px;">
+                <button type="button" class="btn btn-secondary" onclick="closeConfirmModal(false)">Cancel</button>
+                <button type="button" id="confirm-modal-ok-btn" class="btn btn-danger" onclick="closeConfirmModal(true)">Confirm</button>
+            </div>
+        </div>
+    </div>
+    <div class="modal-overlay" id="alert-modal" style="z-index:10011;" onclick="if (event.target === this) closeAlertModal()">
+        <div class="modal-content" style="max-width:440px;">
+            <p id="alert-modal-message" style="margin:0; color:var(--foreground); font-size:14px; line-height:1.6; white-space:pre-line;"></p>
+            <div style="display:flex; justify-content:flex-end; margin-top:22px;">
+                <button type="button" id="alert-modal-ok-btn" class="btn" onclick="closeAlertModal()">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
+        const token = localStorage.getItem('vfs_token');
+        const userStr = localStorage.getItem('vfs_user');
+        const user = userStr ? JSON.parse(userStr) : null;
+        const canManageAccounting = !!(user && user.can_manage_accounting);
+
+        function authHeaders() {
+            return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            if (sidebar.classList.contains('open')) { closeSidebar(); }
+            else { sidebar.classList.add('open'); overlay.classList.add('open'); document.body.style.overflow = 'hidden'; }
+        }
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-overlay').classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        function escapeHtml(v) {
+            if (v === null || v === undefined) return '';
+            return v.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }
+
+        async function readErrorMessage(response) {
+            const raw = await response.text();
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') return parsed;
+                if (parsed && typeof parsed.message === 'string') return parsed.message;
+            } catch (e) {}
+            return raw || `Request failed (${response.status})`;
+        }
+
+        let _confirmResolve = null;
+        function showConfirm(message, okLabel, title) {
+            document.getElementById('confirm-modal-title').textContent = title || 'Are you sure?';
+            document.getElementById('confirm-modal-message').textContent = message;
+            document.getElementById('confirm-modal-ok-btn').textContent = okLabel || 'Confirm';
+            document.getElementById('confirm-modal').style.display = 'flex';
+            return new Promise(resolve => { _confirmResolve = resolve; });
+        }
+        function closeConfirmModal(result) {
+            document.getElementById('confirm-modal').style.display = 'none';
+            if (_confirmResolve) { const r = _confirmResolve; _confirmResolve = null; r(result); }
+        }
+        let _alertResolve = null;
+        function showAlert(message) {
+            document.getElementById('alert-modal-message').textContent = message;
+            document.getElementById('alert-modal').style.display = 'flex';
+            return new Promise(resolve => { _alertResolve = resolve; });
+        }
+        function closeAlertModal() {
+            document.getElementById('alert-modal').style.display = 'none';
+            if (_alertResolve) { const r = _alertResolve; _alertResolve = null; r(); }
+        }
+
+        async function confirmCritical(message, okLabel, title) {
+            const first = await showConfirm(message, okLabel, title);
+            return first;
+        }
+
+        function money(v) {
+            if (v === null || v === undefined) return '—';
+            const n = typeof v === 'string' ? parseFloat(v) : v;
+            if (Number.isNaN(n)) return '—';
+            return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        function fmtDate(v) {
+            if (!v) return '—';
+            const d = new Date(v);
+            if (Number.isNaN(d.getTime())) return v;
+            return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        }
+        function todayIso() { return new Date().toISOString().slice(0, 10); }
+
+        function statusBadge(status) {
+            const map = {
+                'PAID': 'badge-green', 'CONFIRMED': 'badge-green', 'APPROVED': 'badge-green', 'MATCHED': 'badge-green', 'OPEN': 'badge-green', 'ACTIVE': 'badge-green',
+                'PARTIALLY_PAID': 'badge-amber', 'PENDING': 'badge-amber', 'PENDING_APPROVAL': 'badge-amber', 'UNMATCHED': 'badge-amber',
+                'UNPAID': 'badge-red', 'REJECTED': 'badge-red', 'VOID': 'badge-red', 'CLOSED': 'badge-red',
+                'IGNORED': 'badge-gray',
+            };
+            const cls = map[status] || 'badge-blue';
+            return `<span class="badge ${cls}">${escapeHtml((status || '').replace(/_/g, ' '))}</span>`;
+        }
+
+        function titleCase(s) {
+            if (!s) return '';
+            return s.toString().toLowerCase().split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+
+        function paymentMethodLabel(m) {
+            const map = { bank_transfer: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', cash: 'Cash' };
+            return map[m] || titleCase(m);
+        }
+
+        function billingTypeLabel(type) {
+            const map = { FLAT_RATE: 'Flat Rate', PER_SQFT: 'Per Sqft', SLAB: 'Slab' };
+            return map[type] || titleCase(type);
+        }
+
+        function planAmountSummary(plan) {
+            const cfg = plan.config || {};
+            if (plan.billing_type === 'FLAT_RATE') return money(cfg.amount);
+            if (plan.billing_type === 'PER_SQFT') return `${money(cfg.rate_per_sqft)} per sqft`;
+            if (plan.billing_type === 'SLAB' && Array.isArray(cfg.slabs)) {
+                return cfg.slabs.map(s => `up to ${s.max_sqft} sqft: ${money(s.amount)}`).join(', ');
+            }
+            return '—';
+        }
+
+        function info(text) {
+            return `<span class="info-icon" onclick="showAlert(this.dataset.info)" data-info="${escapeHtml(text)}">i</span>`;
+        }
+
+        async function apiPost(path, body) {
+            const resp = await fetch(`${API_BASE}/api/v1/admin/accounting${path}`, {
+                method: 'POST', headers: authHeaders(), body: JSON.stringify(body || {})
+            });
+            if (!resp.ok) { throw new Error(await readErrorMessage(resp)); }
+            const text = await resp.text();
+            return text ? JSON.parse(text) : null;
+        }
+
+        async function apiDownload(path, body, fallbackFilename) {
+            const resp = await fetch(`${API_BASE}/api/v1/admin/accounting${path}`, {
+                method: 'POST', headers: authHeaders(), body: JSON.stringify(body || {})
+            });
+            if (!resp.ok) { await showAlert(await readErrorMessage(resp)); return; }
+            const disposition = resp.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="([^"]+)"/);
+            const filename = match ? match[1] : fallbackFilename;
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click(); a.remove();
+            window.URL.revokeObjectURL(url);
+        }
+
+        function switchAcctTab(tab) {
+            document.querySelectorAll('#acct-subtab-bar .subtab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+            document.querySelectorAll('.subtab-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
+            window.location.hash = tab;
+            loadTab(tab);
+        }
+
+        const _loadedTabs = new Set();
+        function loadTab(tab) {
+            if (tab === 'overview') loadOverview();
+            else if (tab === 'billing') loadBillingTab();
+            else if (tab === 'payments') loadPaymentsTab();
+            else if (tab === 'vendors') loadVendorsTab();
+            else if (tab === 'bankrecon') loadBankReconTab();
+            else if (tab === 'budgets') loadBudgetsTab();
+            else if (tab === 'reports') loadReportsTab();
+            else if (tab === 'settings') loadSettingsTab();
+        }
+
+        async function loadOverview() {
+            const panel = document.getElementById('panel-overview');
+            panel.innerHTML = `<div class="stat-grid" id="overview-stats"></div>
+                <div class="card-row">
+                    <div class="card" id="overview-recent-invoices"><h3>Recent Invoices</h3><div class="empty-state">Loading…</div></div>
+                    <div class="card" id="overview-pending-actions"><h3>Needs Your Attention</h3><div class="empty-state">Loading…</div></div>
+                </div>`;
+            const statsEl = document.getElementById('overview-stats');
+
+            try {
+                const [unpaid, partial, claims, expenses, monthSummary] = await Promise.all([
+                    apiPost('/invoices/list', { status: 'UNPAID' }),
+                    apiPost('/invoices/list', { status: 'PARTIALLY_PAID' }),
+                    apiPost('/claims/list', { status: 'PENDING' }),
+                    apiPost('/expenses/list', { status: 'PENDING_APPROVAL' }),
+                    apiPost('/reports/collection-summary', {
+                        date_from: todayIso().slice(0, 8) + '01',
+                        date_to: todayIso()
+                    }),
+                ]);
+
+                const outstandingInvoices = [...unpaid, ...partial];
+                const today = new Date();
+                const totalOutstanding = outstandingInvoices.reduce((s, i) => s + (parseFloat(i.total_amount) - parseFloat(i.amount_paid)), 0);
+                const overdueCount = outstandingInvoices.filter(i => new Date(i.due_date) < today).length;
+
+                statsEl.innerHTML = `
+                    ${statCard('Outstanding Dues', money(totalOutstanding), `${outstandingInvoices.length} unpaid/partial invoice(s)`, 'var(--danger)')}
+                    ${statCard('Overdue Units', overdueCount, 'past due date, interest-eligible', 'var(--accent)')}
+                    ${statCard('Collected This Month', money(monthSummary.total_collected), `of ${money(monthSummary.total_billed)} billed (${monthSummary.collection_efficiency_pct}%)`, 'var(--secondary)')}
+                    ${statCard('Pending Payment Claims', claims.length, 'resident-submitted, awaiting review', 'var(--primary)')}
+                    ${statCard('Pending Expense Approvals', expenses.length, 'vendor bills awaiting sign-off', 'var(--primary)')}
+                `;
+
+                const recentInvoices = [...unpaid, ...partial].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 6);
+                document.getElementById('overview-recent-invoices').innerHTML = `
+                    <h3>Recent Outstanding Invoices</h3>
+                    <p class="card-desc">Newest unpaid/partially-paid bills. Full list in the Billing tab.</p>
+                    ${recentInvoices.length ? `<div class="table-container"><table><thead><tr><th>Invoice</th><th>Due</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>
+                        ${recentInvoices.map(i => `<tr><td>${escapeHtml(i.invoice_number)}</td><td>${fmtDate(i.due_date)}</td><td class="num">${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</td><td>${statusBadge(i.status)}</td></tr>`).join('')}
+                        </tbody></table></div>` : '<div class="empty-state">Nothing outstanding right now.</div>'}`;
+
+                let pendingHtml = '';
+                if (claims.length) pendingHtml += `<div style="margin-bottom:14px;"><strong>${claims.length}</strong> payment claim(s) awaiting review — see Payments &amp; Claims tab.</div>`;
+                if (expenses.length) pendingHtml += `<div><strong>${expenses.length}</strong> vendor expense(s) awaiting approval — see Vendors &amp; Expenses tab.</div>`;
+                document.getElementById('overview-pending-actions').innerHTML = `
+                    <h3>Needs Your Attention</h3>
+                    <p class="card-desc">Things sitting in a queue somewhere else in this module.</p>
+                    ${pendingHtml || '<div class="empty-state">Nothing waiting on you. Nice.</div>'}`;
+            } catch (e) {
+                statsEl.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function statCard(label, value, sub, color) {
+            return `<div class="stat-card" style="--accent-color:${color};">
+                <div class="stat-label">${escapeHtml(label)}</div>
+                <div class="stat-value">${value}</div>
+                <div class="stat-sub">${escapeHtml(sub)}</div>
+            </div>`;
+        }
+
+        let _billingPlansCache = [];
+
+        async function resolveFlat(wing, flatNumber) {
+            return apiPost('/flats/resolve', { wing, flat_number: flatNumber });
+        }
+
+        function loadBillingTab() {
+            const panel = document.getElementById('panel-billing');
+            panel.innerHTML = `
+                <div class="info-banner">${info('')}<span>Generating a bill posts it straight to the ledger (accrual accounting) — use <strong>Preview</strong> first to catch a bad plan/rate before residents see anything.</span></div>
+                <div class="card">
+                    <div class="settings-category-header"><h3>Billing Plans ${info('A billing plan defines how a unit\'s maintenance is calculated: a flat fixed amount, a rate per sqft, or a slab table by area.')}</h3>
+                        ${canManageAccounting ? '<button class="btn" onclick="openCreatePlanModal()">+ New Plan</button>' : ''}</div>
+                    <div id="billing-plans-table"><div class="empty-state">Loading…</div></div>
+                </div>
+                <div class="card-row">
+                    <div class="card">
+                        <h3>Assign Plan to a Unit</h3>
+                        <p class="card-desc">Links a billing plan to one flat. Required before that flat can be billed.</p>
+                        <div class="form-row-3">
+                            <div class="form-group"><label>Wing</label><input id="assign-wing" placeholder="A"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="assign-flat-number" placeholder="203"></div>
+                            <div class="form-group"><label>Billing Plan</label><select id="assign-plan-select"></select></div>
+                        </div>
+                        <div class="form-group"><label>Area (sqft) ${info('Only needed for Per Sqft or Slab plans.')}</label><input id="assign-area-sqft" type="number" step="0.01" placeholder="Optional"></div>
+                        <div class="feedback-box" id="assign-plan-feedback"></div>
+                        <div class="btn-row">
+                            <button class="btn" onclick="submitAssignPlan()" ${canManageAccounting ? '' : 'disabled'}>Assign</button>
+                            <button class="btn btn-secondary" onclick="submitBulkAssignPlan()" ${canManageAccounting ? '' : 'disabled'}>Assign to All Unassigned Units ${info('Only works for Flat Rate plans, since Per Sqft and Slab plans need an area entered per flat. Skips any flat that already has a plan assigned — it never overwrites an existing assignment.')}</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Generate Bills ${info('Creates one invoice per flat for the billing period. A flat already billed for that period is skipped, not double-billed — safe to run again.')}</h3>
+                        <p class="card-desc">Preview computes amounts without saving anything — always check it first for a new period.</p>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Period Start</label><input id="gen-period-start" type="date"></div>
+                            <div class="form-group"><label>Period End</label><input id="gen-period-end" type="date"></div>
+                        </div>
+                        <div class="form-group"><label>Due Date</label><input id="gen-due-date" type="date"></div>
+                        <div class="btn-row">
+                            <button class="btn btn-secondary" onclick="previewBillGeneration()">Preview All Units</button>
+                            <button class="btn" onclick="generateAllInvoices()" ${canManageAccounting ? '' : 'disabled'}>Generate for All Assigned Units</button>
+                        </div>
+                        <div id="preview-result" style="margin-top:16px;"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="settings-category-header"><h3>Unit Assignments ${info('Every flat and whichever billing plan is currently linked to it. A flat with no plan here will never get billed — check this before generating invoices.')}</h3>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--muted-foreground);">
+                            <input type="checkbox" id="assignments-unassigned-only" onchange="loadBillingAssignments()"> Unassigned only
+                        </label>
+                    </div>
+                    <div id="billing-assignments-table"><div class="empty-state">Loading…</div></div>
+                </div>
+                <div class="card">
+                    <div class="settings-category-header"><h3>Invoices</h3></div>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Wing</label><input id="inv-filter-wing" placeholder="Any" oninput="renderInvoicesTable()"></div>
+                        <div class="form-group"><label>Flat No.</label><input id="inv-filter-flat-number" placeholder="Any" oninput="renderInvoicesTable()"></div>
+                        <div class="form-group"><label>Status</label><select id="inv-filter-status" onchange="loadInvoicesList()"><option value="">Any</option><option>UNPAID</option><option>PARTIALLY_PAID</option><option>PAID</option><option>VOID</option></select></div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="resetInvoicesFilter()">Reset filters</button>
+                    <div id="invoices-table" style="margin-top:12px;"><div class="empty-state">Loading…</div></div>
+                </div>
+                ${createPlanModalHtml()}
+                ${voidInvoiceModalHtml()}
+            `;
+            loadBillingPlans();
+            loadInvoicesList();
+            loadBillingAssignments();
+        }
+
+        async function loadBillingAssignments() {
+            const el = document.getElementById('billing-assignments-table');
+            const unassignedOnly = document.getElementById('assignments-unassigned-only')?.checked;
+            try {
+                const rows = await apiPost('/billing-plans/assignments', {});
+                const filtered = unassignedOnly ? rows.filter(r => !r.billing_plan_id) : rows;
+                if (!filtered.length) { el.innerHTML = '<div class="empty-state">Nothing to show.</div>'; return; }
+                el.innerHTML = `<div class="table-container" style="max-height:340px;"><table><thead><tr><th>Flat</th><th>Plan</th><th>Type</th><th class="num">Area (sqft)</th></tr></thead><tbody>
+                    ${filtered.map(r => `<tr>
+                        <td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td>
+                        <td>${r.billing_plan_name ? escapeHtml(r.billing_plan_name) : '<span class="badge badge-red">No plan assigned</span>'}</td>
+                        <td>${r.billing_type ? billingTypeLabel(r.billing_type) : '—'}</td>
+                        <td class="num">${r.area_sqft ? r.area_sqft : '—'}</td>
+                    </tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function loadBillingPlans() {
+            try {
+                const plans = await apiPost('/billing-plans/list', {});
+                _billingPlansCache.length = 0;
+                _billingPlansCache.push(...plans);
+                const select = document.getElementById('assign-plan-select');
+                if (select) select.innerHTML = plans.map(p => `<option value="${p.billing_plan_id}">${escapeHtml(p.name)} (${billingTypeLabel(p.billing_type)})</option>`).join('') || '<option>No plans yet</option>';
+
+                const el = document.getElementById('billing-plans-table');
+                if (!plans.length) { el.innerHTML = '<div class="empty-state">No billing plans yet. Create one to start billing.</div>'; return; }
+                el.innerHTML = `<div class="table-container"><table><thead><tr><th>Name</th><th>Type</th><th>Amount</th><th>Billed</th></tr></thead><tbody>
+                    ${plans.map(p => `<tr><td>${escapeHtml(p.name)}</td><td><span class="badge badge-blue">${billingTypeLabel(p.billing_type)}</span></td><td>${escapeHtml(planAmountSummary(p))}</td><td>${titleCase(p.frequency)}</td></tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                document.getElementById('billing-plans-table').innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function createPlanModalHtml() {
+            return `<div class="modal-overlay" id="create-plan-modal">
+                <div class="modal-content">
+                    <button class="close-modal-btn" onclick="document.getElementById('create-plan-modal').style.display='none'">&times;</button>
+                    <h3>New Billing Plan</h3>
+                    <div class="form-group"><label>Name</label><input id="plan-name" placeholder="e.g. Standard Maintenance"></div>
+                    <div class="form-group"><label>Type</label><select id="plan-type" onchange="renderPlanConfigFields()">
+                        <option value="FLAT_RATE">Flat Rate — same amount for every unit</option>
+                        <option value="PER_SQFT">Per Sqft — rate × unit area</option>
+                        <option value="SLAB">Slab — amount depends on area bracket</option>
+                    </select></div>
+                    <div id="plan-config-fields"></div>
+                    <div class="form-group"><label>Frequency</label><select id="plan-frequency"><option value="MONTHLY">Monthly</option><option value="QUARTERLY">Quarterly</option></select></div>
+                    <div class="feedback-box" id="create-plan-feedback"></div>
+                    <button class="btn" onclick="submitCreatePlan()">Create Plan</button>
+                </div>
+            </div>`;
+        }
+        function openCreatePlanModal() {
+            document.getElementById('create-plan-modal').style.display = 'flex';
+            renderPlanConfigFields();
+        }
+        function renderPlanConfigFields() {
+            const type = document.getElementById('plan-type').value;
+            const el = document.getElementById('plan-config-fields');
+            if (type === 'FLAT_RATE') {
+                el.innerHTML = `<div class="form-group"><label>Amount (₹)</label><input id="plan-cfg-amount" type="number" step="0.01"></div>`;
+            } else if (type === 'PER_SQFT') {
+                el.innerHTML = `<div class="form-group"><label>Rate per Sqft (₹)</label><input id="plan-cfg-rate" type="number" step="0.01"></div>`;
+            } else {
+                el.innerHTML = `<div class="form-group"><label>Slabs ${info('First slab whose max sqft is >= the unit\'s area applies.')}</label>
+                    <div id="slab-rows"></div>
+                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px; align-self:flex-start;" onclick="addSlabRow()">+ Add Slab</button>
+                </div>`;
+                addSlabRow(); addSlabRow();
+            }
+        }
+        function addSlabRow() {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+            row.innerHTML = `<input type="number" step="0.01" placeholder="Max sqft" class="slab-max" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px;">
+                <input type="number" step="0.01" placeholder="Amount ₹" class="slab-amount" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">✕</button>`;
+            document.getElementById('slab-rows').appendChild(row);
+        }
+        async function submitCreatePlan() {
+            const type = document.getElementById('plan-type').value;
+            const name = document.getElementById('plan-name').value.trim();
+            const feedback = document.getElementById('create-plan-feedback');
+            feedback.style.display = 'none';
+            if (!name) { feedback.className = 'feedback-box error'; feedback.textContent = 'Name is required'; return; }
+            let config;
+            if (type === 'FLAT_RATE') {
+                config = { amount: parseFloat(document.getElementById('plan-cfg-amount').value) };
+            } else if (type === 'PER_SQFT') {
+                config = { rate_per_sqft: parseFloat(document.getElementById('plan-cfg-rate').value) };
+            } else {
+                const slabs = [...document.querySelectorAll('#slab-rows > div')].map(row => ({
+                    max_sqft: parseFloat(row.querySelector('.slab-max').value),
+                    amount: parseFloat(row.querySelector('.slab-amount').value)
+                }));
+                config = { slabs };
+            }
+            try {
+                await apiPost('/billing-plans/create', { name, billing_type: type, config, frequency: document.getElementById('plan-frequency').value });
+                document.getElementById('create-plan-modal').style.display = 'none';
+                loadBillingPlans();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        async function submitAssignPlan() {
+            const feedback = document.getElementById('assign-plan-feedback');
+            feedback.style.display = 'none';
+            try {
+                const flat = await resolveFlat(document.getElementById('assign-wing').value, document.getElementById('assign-flat-number').value);
+                const planId = parseInt(document.getElementById('assign-plan-select').value, 10);
+                const plan = _billingPlansCache.find(p => p.billing_plan_id === planId);
+                const areaRaw = document.getElementById('assign-area-sqft').value;
+                const ok = await showConfirm(
+                    `Assign "${plan ? plan.name : 'this plan'}" to flat ${flat.wing}-${flat.flat_number}? Any plan already assigned to this flat will be replaced.`,
+                    'Assign', 'Assign billing plan?'
+                );
+                if (!ok) return;
+                await apiPost('/billing-plans/assign', { flat_id: flat.flat_id, billing_plan_id: planId, area_sqft: areaRaw ? parseFloat(areaRaw) : null });
+                feedback.className = 'feedback-box success'; feedback.textContent = `Assigned to ${flat.wing}-${flat.flat_number}.`;
+                loadBillingAssignments();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        async function submitBulkAssignPlan() {
+            const feedback = document.getElementById('assign-plan-feedback');
+            feedback.style.display = 'none';
+            const planId = parseInt(document.getElementById('assign-plan-select').value, 10);
+            const plan = _billingPlansCache.find(p => p.billing_plan_id === planId);
+            if (!plan) { feedback.className = 'feedback-box error'; feedback.textContent = 'Pick a billing plan first'; return; }
+            if (plan.billing_type !== 'FLAT_RATE') {
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Only Flat Rate plans can be bulk-assigned — assign Per Sqft/Slab plans one flat at a time so each gets its own area.';
+                return;
+            }
+            const ok = await confirmCritical(
+                `Assigns "${plan.name}" to every flat that doesn't already have a billing plan. Flats with an existing assignment are left untouched.`,
+                'Assign to All', `Assign "${plan.name}" to every unassigned flat?`
+            );
+            if (!ok) return;
+            try {
+                const result = await apiPost('/billing-plans/assign-bulk', { billing_plan_id: planId });
+                feedback.className = 'feedback-box success';
+                feedback.textContent = `Assigned to ${result.flats_assigned} flat(s).`;
+                loadBillingAssignments();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        async function previewBillGeneration() {
+            const periodStart = document.getElementById('gen-period-start').value;
+            const el = document.getElementById('preview-result');
+            if (!periodStart) { el.innerHTML = '<div class="feedback-box error" style="display:block;">Pick a period start date first</div>'; return; }
+            el.innerHTML = '<div class="empty-state">Computing…</div>';
+            try {
+                const rows = await apiPost('/invoices/preview', { period_start: periodStart });
+                if (!rows.length) { el.innerHTML = '<div class="empty-state">No flats have a billing plan assigned yet.</div>'; return; }
+                el.innerHTML = `<div class="table-container" style="max-height:300px;"><table><thead><tr><th>Flat</th><th>Plan</th><th class="num">Base</th><th class="num">GST</th><th class="num">Total</th></tr></thead><tbody>
+                    ${rows.map(r => r.error
+                        ? `<tr><td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td><td colspan="4" style="color:var(--danger);">${escapeHtml(r.error)}</td></tr>`
+                        : `<tr><td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td><td>${escapeHtml(r.billing_plan_name)}</td><td class="num">${money(r.base_amount)}</td><td class="num">${r.gst_applicable ? money(r.gst_amount) : '—'}</td><td class="num"><strong>${money(r.total_amount)}</strong></td></tr>`
+                    ).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function generateAllInvoices() {
+            const period_start = document.getElementById('gen-period-start').value;
+            const period_end = document.getElementById('gen-period-end').value;
+            const due_date = document.getElementById('gen-due-date').value;
+            if (!period_start || !period_end || !due_date) { await showAlert('Fill in period start, period end, and due date first.'); return; }
+            const ok = await confirmCritical(
+                `This will post a real invoice to the ledger for every unit with a billing plan assigned, for the period ${period_start} to ${period_end}. This cannot be undone (only voided one at a time).`,
+                'Generate Bills', 'Generate bills for all units?'
+            );
+            if (!ok) return;
+            const el = document.getElementById('preview-result');
+            try {
+                const result = await apiPost('/invoices/generate', { period_start, period_end, due_date });
+                el.innerHTML = `<div class="feedback-box success" style="display:block;">Generated ${result.invoices_created.length} invoice(s).${result.skipped.length ? ` Skipped ${result.skipped.length}: ` + result.skipped.map(s => `flat #${s[0]} (${escapeHtml(s[1])})`).join(', ') : ''}</div>`;
+                loadInvoicesList();
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        let _invoicesCache = [];
+        async function loadInvoicesList() {
+            const el = document.getElementById('invoices-table');
+            const status = document.getElementById('inv-filter-status')?.value;
+            try {
+                _invoicesCache = await apiPost('/invoices/list', { flat_id: null, status: status || null });
+                renderInvoicesTable();
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function resetInvoicesFilter() {
+            document.getElementById('inv-filter-wing').value = '';
+            document.getElementById('inv-filter-flat-number').value = '';
+            document.getElementById('inv-filter-status').value = '';
+            loadInvoicesList();
+        }
+
+        function renderInvoicesTable() {
+            const el = document.getElementById('invoices-table');
+            const wing = document.getElementById('inv-filter-wing')?.value.trim().toLowerCase();
+            const flatNumber = document.getElementById('inv-filter-flat-number')?.value.trim().toLowerCase();
+            const invoices = _invoicesCache.filter(i =>
+                (!wing || i.wing.toLowerCase().includes(wing)) &&
+                (!flatNumber || i.flat_number.toLowerCase().includes(flatNumber))
+            );
+            if (!invoices.length) { el.innerHTML = '<div class="empty-state">No invoices match the filter.</div>'; return; }
+            el.innerHTML = `<div class="table-container"><table><thead><tr><th>Invoice #</th><th>Flat</th><th>Period</th><th>Due</th><th class="num">Total</th><th class="num">Paid</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+                ${invoices.map(i => `<tr>
+                    <td>${escapeHtml(i.invoice_number)}</td>
+                    <td>${escapeHtml(i.wing)}-${escapeHtml(i.flat_number)}</td>
+                    <td>${fmtDate(i.billing_period_start)} – ${fmtDate(i.billing_period_end)}</td>
+                    <td>${fmtDate(i.due_date)}</td>
+                    <td class="num">${money(i.total_amount)}</td>
+                    <td class="num">${money(i.amount_paid)}</td>
+                    <td>${statusBadge(i.status)}</td>
+                    <td><div class="btn-row">
+                        <button class="btn btn-secondary btn-sm" onclick="apiDownload('/documents/pdf', { kind: 'invoice', invoice_id: '${i.invoice_id}' }, '${i.invoice_number}.pdf')">PDF</button>
+                        ${i.status !== 'VOID' && i.status !== 'PAID' && canManageAccounting ? `<button class="btn btn-danger btn-sm" onclick="openVoidModal('${i.invoice_id}', '${escapeHtml(i.invoice_number)}')">Void</button>` : ''}
+                    </div></td>
+                </tr>`).join('')}
+                </tbody></table></div>`;
+        }
+
+        function voidInvoiceModalHtml() {
+            return `<div class="modal-overlay" id="void-invoice-modal">
+                <div class="modal-content">
+                    <button class="close-modal-btn" onclick="document.getElementById('void-invoice-modal').style.display='none'">&times;</button>
+                    <h3>Void Invoice <span id="void-invoice-number"></span></h3>
+                    <div class="info-banner warn">${info('')}<span>Voiding is permanent and only allowed before any payment is recorded. This does not delete the invoice — it's kept, marked VOID, for audit history.</span></div>
+                    <div class="form-group"><label>Reason (required)</label><textarea id="void-reason" rows="3" placeholder="e.g. Duplicate bill generated by mistake"></textarea></div>
+                    <div class="feedback-box" id="void-feedback"></div>
+                    <button class="btn btn-danger" onclick="submitVoidInvoice()">Void This Invoice</button>
+                </div>
+            </div>`;
+        }
+        let _voidInvoiceId = null;
+        function openVoidModal(invoiceId, invoiceNumber) {
+            _voidInvoiceId = invoiceId;
+            document.getElementById('void-invoice-number').textContent = invoiceNumber;
+            document.getElementById('void-reason').value = '';
+            document.getElementById('void-feedback').style.display = 'none';
+            document.getElementById('void-invoice-modal').style.display = 'flex';
+        }
+        async function submitVoidInvoice() {
+            const reason = document.getElementById('void-reason').value.trim();
+            const feedback = document.getElementById('void-feedback');
+            if (!reason) { feedback.className = 'feedback-box error'; feedback.textContent = 'A reason is required.'; return; }
+            const ok = await confirmCritical(`This permanently voids invoice — it can never be un-voided.`, 'Void Invoice', 'Are you absolutely sure?');
+            if (!ok) return;
+            try {
+                await apiPost(`/invoices/${_voidInvoiceId}/void`, { reason });
+                document.getElementById('void-invoice-modal').style.display = 'none';
+                loadInvoicesList();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        function loadPaymentsTab() {
+            const panel = document.getElementById('panel-payments');
+            panel.innerHTML = `
+                <div class="card">
+                    <h3>Record a Payment ${info('Use this for anything confirmed outside the app: bank transfer, cheque, UPI, or cash. Paying more than what\'s owed automatically becomes a credit balance instead of overpaying the bill.')}</h3>
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Wing</label><input id="pay-wing" placeholder="A"></div>
+                        <div class="form-group"><label>Flat No.</label><input id="pay-flat-number" placeholder="203"></div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" onclick="loadFlatInvoicesForPayment()">Find Unpaid Invoices</button>
+                    <div id="pay-invoice-picker" style="margin-top:12px;"></div>
+                </div>
+                <div class="card-row">
+                    <div class="card">
+                        <h3>Credit Balance ${info('Money paid beyond what was owed. Sits here until applied to a future bill for the same unit.')}</h3>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Wing</label><input id="credit-wing" placeholder="A"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="credit-flat-number" placeholder="203"></div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="loadCreditBalance()">Check Balance</button>
+                        <div id="credit-balance-result" style="margin-top:12px;"></div>
+                    </div>
+                    <div class="card">
+                        <h3>Payments</h3>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Wing</label><input id="payments-list-wing" placeholder="Any"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="payments-list-flat-number" placeholder="Any"></div>
+                        </div>
+                        <button class="btn btn-secondary btn-sm" onclick="loadPaymentsList()">Filter</button>
+                        <div id="payments-list-table" style="margin-top:12px;"><div class="empty-state">Enter a flat and filter, or leave blank for all.</div></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="settings-category-header"><h3>Resident Payment Claims ${info('A resident self-reporting an offline payment with their own transaction reference. Nothing posts to the ledger until you confirm it against your bank statement.')}</h3></div>
+                    <div id="claims-table"><div class="empty-state">Loading…</div></div>
+                </div>
+            `;
+            loadPendingClaims();
+        }
+
+        async function loadFlatInvoicesForPayment() {
+            const el = document.getElementById('pay-invoice-picker');
+            el.innerHTML = '<div class="empty-state">Loading…</div>';
+            try {
+                const flat = await resolveFlat(document.getElementById('pay-wing').value, document.getElementById('pay-flat-number').value);
+                const [unpaid, partial] = await Promise.all([
+                    apiPost('/invoices/list', { flat_id: flat.flat_id, status: 'UNPAID' }),
+                    apiPost('/invoices/list', { flat_id: flat.flat_id, status: 'PARTIALLY_PAID' }),
+                ]);
+                const invoices = [...unpaid, ...partial];
+                if (!invoices.length) { el.innerHTML = `<div class="empty-state">${flat.wing}-${flat.flat_number} has no outstanding invoices.</div>`; return; }
+                el.innerHTML = `<div class="form-group"><label>Invoice</label><select id="pay-invoice-select">
+                        ${invoices.map(i => `<option value="${i.invoice_id}" data-outstanding="${(parseFloat(i.total_amount) - parseFloat(i.amount_paid)).toFixed(2)}">${escapeHtml(i.invoice_number)} — outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')}
+                    </select></div>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Amount</label><input id="pay-amount" type="number" step="0.01"></div>
+                        <div class="form-group"><label>Method</label><select id="pay-method"><option value="bank_transfer">Bank Transfer</option><option value="upi">UPI</option><option value="cheque">Cheque</option><option value="cash">Cash</option></select></div>
+                        <div class="form-group"><label>Date</label><input id="pay-date" type="date" value="${todayIso()}"></div>
+                    </div>
+                    <div class="form-group"><label>Reference Number ${info('UTR / UPI ref / cheque number. Leave blank for cash.')}</label><input id="pay-reference"></div>
+                    <div class="feedback-box" id="pay-feedback"></div>
+                    <button class="btn" onclick="submitRecordPayment()">Record Payment</button>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function submitRecordPayment() {
+            const feedback = document.getElementById('pay-feedback');
+            feedback.style.display = 'none';
+            const invoiceId = document.getElementById('pay-invoice-select').value;
+            const amount = parseFloat(document.getElementById('pay-amount').value);
+            if (!amount || amount <= 0) { feedback.className = 'feedback-box error'; feedback.textContent = 'Enter a valid amount'; return; }
+            try {
+                const result = await apiPost('/payments/record', {
+                    invoice_id: invoiceId, amount,
+                    payment_method: document.getElementById('pay-method').value,
+                    reference_number: document.getElementById('pay-reference').value.trim() || null,
+                    payment_date: document.getElementById('pay-date').value,
+                });
+                feedback.className = 'feedback-box success';
+                feedback.textContent = result.newly_recorded ? `Recorded. Receipt ${result.receipt_number}.` : `Already recorded earlier as receipt ${result.receipt_number} — not double-posted.`;
+                loadFlatInvoicesForPayment();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        async function loadCreditBalance() {
+            const el = document.getElementById('credit-balance-result');
+            el.innerHTML = '<div class="empty-state">Loading…</div>';
+            try {
+                const flat = await resolveFlat(document.getElementById('credit-wing').value, document.getElementById('credit-flat-number').value);
+                const balance = await apiPost('/credit/balance', { flat_id: flat.flat_id });
+                const bal = parseFloat(balance);
+                el.innerHTML = `<div class="stat-card" style="--accent-color:var(--secondary); margin-bottom:12px;"><div class="stat-label">${flat.wing}-${flat.flat_number} Credit Balance</div><div class="stat-value">${money(bal)}</div></div>`;
+                if (bal > 0) {
+                    el.innerHTML += `<div class="form-group"><label>Apply to Invoice</label><select id="credit-apply-invoice"><option value="">Loading invoices…</option></select></div>
+                        <div class="form-group"><label>Amount (max ${money(bal)})</label><input id="credit-apply-amount" type="number" step="0.01" max="${bal}"></div>
+                        <div class="feedback-box" id="credit-apply-feedback"></div>
+                        <button class="btn" onclick="submitApplyCredit(${flat.flat_id})">Apply Credit</button>`;
+                    const [unpaid, partial] = await Promise.all([
+                        apiPost('/invoices/list', { flat_id: flat.flat_id, status: 'UNPAID' }),
+                        apiPost('/invoices/list', { flat_id: flat.flat_id, status: 'PARTIALLY_PAID' }),
+                    ]);
+                    const invoices = [...unpaid, ...partial];
+                    const sel = document.getElementById('credit-apply-invoice');
+                    sel.innerHTML = invoices.length
+                        ? invoices.map(i => `<option value="${i.invoice_id}">${escapeHtml(i.invoice_number)} — outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')
+                        : '<option value="">No outstanding invoices for this flat</option>';
+                }
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function submitApplyCredit(flatId) {
+            const feedback = document.getElementById('credit-apply-feedback');
+            const invoiceId = document.getElementById('credit-apply-invoice').value;
+            const amount = parseFloat(document.getElementById('credit-apply-amount').value);
+            if (!invoiceId || !amount || amount <= 0) { feedback.className = 'feedback-box error'; feedback.textContent = 'Pick an invoice and a valid amount'; return; }
+            try {
+                await apiPost('/credit/apply', { invoice_id: invoiceId, amount });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Credit applied.';
+                loadCreditBalance();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+
+        async function loadPaymentsList() {
+            const el = document.getElementById('payments-list-table');
+            const wing = document.getElementById('payments-list-wing').value.trim();
+            const flatNumber = document.getElementById('payments-list-flat-number').value.trim();
+            try {
+                let flat_id = null;
+                if (wing && flatNumber) { flat_id = (await resolveFlat(wing, flatNumber)).flat_id; }
+                const payments = await apiPost('/payments/list', { flat_id });
+                if (!payments.length) { el.innerHTML = '<div class="empty-state">No payments found.</div>'; return; }
+                el.innerHTML = `<div class="table-container" style="max-height:340px;"><table><thead><tr><th>Receipt</th><th>Invoice</th><th class="num">Amount</th><th>Method</th><th>Date</th><th></th></tr></thead><tbody>
+                    ${payments.map(p => `<tr><td>${escapeHtml(p.receipt_number)}</td><td>${escapeHtml(p.invoice_number)}</td><td class="num">${money(p.amount)}</td><td>${paymentMethodLabel(p.payment_method)}</td><td>${fmtDate(p.confirmed_at)}</td>
+                        <td><button class="btn btn-secondary btn-sm" onclick="apiDownload('/documents/pdf', { kind: 'receipt', payment_id: '${p.payment_id}' }, '${escapeHtml(p.receipt_number)}.pdf')">PDF</button></td></tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function loadPendingClaims() {
+            const el = document.getElementById('claims-table');
+            try {
+                const claims = await apiPost('/claims/list', { status: 'PENDING' });
+                if (!claims.length) { el.innerHTML = '<div class="empty-state">No pending claims.</div>'; return; }
+                el.innerHTML = `<div class="table-container"><table><thead><tr><th>Flat</th><th>Invoice</th><th class="num">Amount</th><th>Method</th><th>Reference</th><th>Note</th><th>Submitted</th><th>Actions</th></tr></thead><tbody>
+                    ${claims.map(c => `<tr>
+                        <td>${escapeHtml(c.wing)}-${escapeHtml(c.flat_number)}</td><td>${escapeHtml(c.invoice_number)}</td><td class="num">${money(c.amount)}</td><td>${paymentMethodLabel(c.payment_method)}</td><td>${escapeHtml(c.reference_number)}</td><td>${escapeHtml(c.note || '—')}</td><td>${fmtDate(c.submitted_at)}</td>
+                        <td><div class="btn-row">
+                            <button class="btn btn-success btn-sm" onclick="confirmClaim('${c.claim_id}')">Confirm</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectClaim('${c.claim_id}')">Reject</button>
+                        </div></td>
+                    </tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function confirmClaim(claimId) {
+            const ok = await confirmCritical('This posts a real payment to the ledger against the resident\'s claimed reference. Only confirm after checking it against your bank statement.', 'Confirm Payment', 'Confirm this payment claim?');
+            if (!ok) return;
+            try {
+                await apiPost(`/claims/${claimId}/confirm`, {});
+                loadPendingClaims();
+            } catch (e) { await showAlert(e.message); }
+        }
+        async function rejectClaim(claimId) {
+            const note = prompt('Reason for rejecting this claim (shown in the audit trail):');
+            if (!note || !note.trim()) return;
+            const ok = await confirmCritical('The resident will need to resubmit or contact the office.', 'Reject Claim', 'Reject this payment claim?');
+            if (!ok) return;
+            try {
+                await apiPost(`/claims/${claimId}/reject`, { review_note: note.trim() });
+                loadPendingClaims();
+            } catch (e) { await showAlert(e.message); }
+        }
+
+        let _vendorsCache = [];
+
+        function loadVendorsTab() {
+            const panel = document.getElementById('panel-vendors');
+            panel.innerHTML = `
+                <div class="card-row">
+                    <div class="card">
+                        <div class="settings-category-header"><h3>Vendors</h3></div>
+                        <div id="vendors-table"><div class="empty-state">Loading…</div></div>
+                        ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                            <div class="form-row-2">
+                                <div class="form-group"><label>Name</label><input id="vendor-name"></div>
+                                <div class="form-group"><label>Category</label><input id="vendor-category" placeholder="security, housekeeping, ..."></div>
+                            </div>
+                            <div class="form-row-2">
+                                <div class="form-group"><label>GSTIN (optional)</label><input id="vendor-gstin"></div>
+                                <div class="form-group"><label>PAN (optional)</label><input id="vendor-pan"></div>
+                            </div>
+                            <div class="feedback-box" id="vendor-feedback"></div>
+                            <button class="btn" onclick="submitCreateVendor()">+ Add Vendor</button>
+                        </div>` : ''}
+                    </div>
+                    <div class="card">
+                        <div class="settings-category-header"><h3>Purchase Orders ${info('Optional — only needed if you want to track a committed amount before the vendor bill arrives.')}</h3></div>
+                        <div id="pos-table"><div class="empty-state">Loading…</div></div>
+                        ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                            <div class="form-group"><label>Vendor</label><select id="po-vendor-select"></select></div>
+                            <div class="form-group"><label>Description</label><input id="po-description"></div>
+                            <div class="form-group"><label>Amount</label><input id="po-amount" type="number" step="0.01"></div>
+                            <div class="feedback-box" id="po-feedback"></div>
+                            <button class="btn" onclick="submitCreatePO()">+ Create PO</button>
+                        </div>` : ''}
+                    </div>
+                </div>
+                <div class="card">
+                    <h3>Submit Vendor Expense ${info('TDS (if any rule matches) is computed automatically and shown before you approve — the vendor is paid net of TDS, and TDS itself is tracked separately for Form 16A.')}</h3>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Vendor</label><select id="exp-vendor-select"></select></div>
+                        <div class="form-group"><label>Purchase Order (optional)</label><select id="exp-po-select"><option value="">None</option></select></div>
+                        <div class="form-group"><label>Expense Account</label><select id="exp-account-select"></select></div>
+                    </div>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Payment Category ${info('Must match a TDS rule\'s category (e.g. "contractor", "professional_fees", "rent") for TDS to be computed. Free text otherwise.')}</label><input id="exp-payment-category" placeholder="contractor"></div>
+                        <div class="form-group"><label>Vendor Invoice # (optional)</label><input id="exp-invoice-number"></div>
+                        <div class="form-group"><label>Amount</label><input id="exp-amount" type="number" step="0.01"></div>
+                    </div>
+                    <div class="form-group"><label>Expense Date</label><input id="exp-date" type="date" value="${todayIso()}"></div>
+                    <div class="feedback-box" id="exp-feedback"></div>
+                    <button class="btn" onclick="submitExpense()">Submit for Approval</button>
+                </div>
+                <div class="card">
+                    <div class="settings-category-header"><h3>Vendor Expenses</h3>
+                        <select id="exp-status-filter" onchange="loadExpensesList()" style="padding:8px; border:1px solid var(--border); border-radius:6px;">
+                            <option value="PENDING_APPROVAL">Pending Approval</option>
+                            <option value="APPROVED">Approved</option>
+                            <option value="REJECTED">Rejected</option>
+                            <option value="">All</option>
+                        </select>
+                    </div>
+                    <div id="expenses-table"><div class="empty-state">Loading…</div></div>
+                </div>
+            `;
+            loadVendors();
+            loadPurchaseOrders();
+            loadExpenseAccountOptions();
+            loadExpensesList();
+        }
+
+        async function loadVendors() {
+            try {
+                const vendors = await apiPost('/vendors/list', {});
+                _vendorsCache.length = 0; _vendorsCache.push(...vendors);
+                const selects = [document.getElementById('po-vendor-select'), document.getElementById('exp-vendor-select')];
+                selects.forEach(s => { if (s) s.innerHTML = vendors.map(v => `<option value="${v.vendor_id}">${escapeHtml(v.name)} (${escapeHtml(v.category)})</option>`).join('') || '<option>No vendors yet</option>'; });
+                const el = document.getElementById('vendors-table');
+                el.innerHTML = vendors.length ? `<div class="table-container" style="max-height:260px;"><table><thead><tr><th>Name</th><th>Category</th><th>GSTIN</th></tr></thead><tbody>
+                    ${vendors.map(v => `<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(v.category)}</td><td>${escapeHtml(v.gstin || '—')}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No vendors yet.</div>';
+            } catch (e) {
+                document.getElementById('vendors-table').innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function submitCreateVendor() {
+            const feedback = document.getElementById('vendor-feedback');
+            const name = document.getElementById('vendor-name').value.trim();
+            const category = document.getElementById('vendor-category').value.trim();
+            if (!name || !category) { feedback.className = 'feedback-box error'; feedback.textContent = 'Name and category are required'; return; }
+            try {
+                await apiPost('/vendors/create', { name, category, gstin: document.getElementById('vendor-gstin').value.trim() || null, pan: document.getElementById('vendor-pan').value.trim() || null });
+                document.getElementById('vendor-name').value = ''; document.getElementById('vendor-category').value = '';
+                document.getElementById('vendor-gstin').value = ''; document.getElementById('vendor-pan').value = '';
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Vendor added.';
+                loadVendors();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        async function loadPurchaseOrders() {
+            try {
+                const pos = await apiPost('/purchase-orders/list', {});
+                const select = document.getElementById('exp-po-select');
+                if (select) select.innerHTML = '<option value="">None</option>' + pos.map(p => `<option value="${p.po_id}" data-vendor="${p.vendor_id}">${escapeHtml(p.po_number)} — ${escapeHtml(p.description)} (${money(p.amount)})</option>`).join('');
+                const el = document.getElementById('pos-table');
+                el.innerHTML = pos.length ? `<div class="table-container" style="max-height:260px;"><table><thead><tr><th>PO #</th><th>Description</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+                    ${pos.map(p => `<tr><td>${escapeHtml(p.po_number)}</td><td>${escapeHtml(p.description)}</td><td class="num">${money(p.amount)}</td><td>${statusBadge(p.status)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No purchase orders yet.</div>';
+            } catch (e) {
+                document.getElementById('pos-table').innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function submitCreatePO() {
+            const feedback = document.getElementById('po-feedback');
+            const vendorId = parseInt(document.getElementById('po-vendor-select').value, 10);
+            const description = document.getElementById('po-description').value.trim();
+            const amount = parseFloat(document.getElementById('po-amount').value);
+            if (!vendorId || !description || !amount) { feedback.className = 'feedback-box error'; feedback.textContent = 'Fill in all fields'; return; }
+            try {
+                await apiPost('/purchase-orders/create', { vendor_id: vendorId, description, amount });
+                document.getElementById('po-description').value = ''; document.getElementById('po-amount').value = '';
+                feedback.className = 'feedback-box success'; feedback.textContent = 'PO created.';
+                loadPurchaseOrders();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        async function loadExpenseAccountOptions() {
+            try {
+                const accounts = await apiPost('/accounts/list', { account_type: 'EXPENSE', active_only: true });
+                const select = document.getElementById('exp-account-select');
+                if (select) select.innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} — ${escapeHtml(a.name)}</option>`).join('') || '<option>No expense accounts</option>';
+            } catch (e) { }
+        }
+
+        async function submitExpense() {
+            const feedback = document.getElementById('exp-feedback');
+            const amount = parseFloat(document.getElementById('exp-amount').value);
+            if (!amount || amount <= 0) { feedback.className = 'feedback-box error'; feedback.textContent = 'Enter a valid amount'; return; }
+            const poRaw = document.getElementById('exp-po-select').value;
+            try {
+                await apiPost('/expenses/submit', {
+                    po_id: poRaw || null,
+                    vendor_id: parseInt(document.getElementById('exp-vendor-select').value, 10),
+                    account_id: parseInt(document.getElementById('exp-account-select').value, 10),
+                    payment_category: document.getElementById('exp-payment-category').value.trim() || 'general',
+                    vendor_invoice_number: document.getElementById('exp-invoice-number').value.trim() || null,
+                    invoice_document_id: null,
+                    amount,
+                    expense_date: document.getElementById('exp-date').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Submitted for approval.';
+                document.getElementById('exp-amount').value = ''; document.getElementById('exp-invoice-number').value = '';
+                loadExpensesList();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        async function loadExpensesList() {
+            const el = document.getElementById('expenses-table');
+            const status = document.getElementById('exp-status-filter')?.value ?? 'PENDING_APPROVAL';
+            try {
+                const expenses = await apiPost('/expenses/list', { status: status || null });
+                if (!expenses.length) { el.innerHTML = '<div class="empty-state">Nothing here.</div>'; return; }
+                el.innerHTML = `<div class="table-container"><table><thead><tr><th>Vendor</th><th class="num">Gross</th><th class="num">TDS</th><th class="num">Net Payable</th><th>Status</th><th>Submitted</th><th>Actions</th></tr></thead><tbody>
+                    ${expenses.map(e => `<tr>
+                        <td>${escapeHtml(e.vendor_name)}</td><td class="num">${money(e.amount)}</td><td class="num">${money(e.tds_amount)}</td><td class="num"><strong>${money(e.net_payable)}</strong></td><td>${statusBadge(e.status)}</td><td>${fmtDate(e.created_at)}</td>
+                        <td>${e.status === 'PENDING_APPROVAL' && canManageAccounting ? `<div class="btn-row">
+                            <button class="btn btn-success btn-sm" onclick="approveExpense('${e.expense_id}')">Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectExpense('${e.expense_id}')">Reject</button>
+                        </div>` : '—'}</td>
+                    </tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function approveExpense(expenseId) {
+            const ok = await confirmCritical('This posts a real ledger entry: debits the expense account, credits Vendor Payables and TDS Payable. It cannot be un-approved.', 'Approve Expense', 'Approve this vendor expense?');
+            if (!ok) return;
+            try { await apiPost(`/expenses/${expenseId}/approve`, {}); loadExpensesList(); }
+            catch (e) { await showAlert(e.message); }
+        }
+        async function rejectExpense(expenseId) {
+            const reason = prompt('Reason for rejecting this expense:');
+            if (!reason || !reason.trim()) return;
+            const ok = await confirmCritical('The vendor bill will need to be resubmitted if it was a mistake.', 'Reject Expense', 'Reject this vendor expense?');
+            if (!ok) return;
+            try { await apiPost(`/expenses/${expenseId}/reject`, { reason: reason.trim() }); loadExpensesList(); }
+            catch (e) { await showAlert(e.message); }
+        }
+
+        let _lastImportId = null;
+
+        function loadBankReconTab() {
+            const panel = document.getElementById('panel-bankrecon');
+            panel.innerHTML = `
+                <div class="info-banner">${info('')}<span>Auto-match pairs a statement line to a ledger transaction only when exactly one candidate shares the same date and amount. Anything ambiguous or unmatched is left for you to resolve by hand.</span></div>
+                ${canManageAccounting ? `<div class="card">
+                    <h3>Import Bank Statement</h3>
+                    <p class="card-desc">CSV with Date, Description, Amount columns (amount signed: positive = credit, negative = debit).</p>
+                    <input type="file" id="bankrecon-file" accept=".csv">
+                    <div class="feedback-box" id="bankrecon-import-feedback"></div>
+                    <div class="btn-row" style="margin-top:10px;">
+                        <button class="btn" onclick="submitImportStatement()">Import</button>
+                        <button class="btn btn-secondary" id="bankrecon-automatch-btn" style="display:none;" onclick="submitAutoMatch()">Auto-Match This Import</button>
+                    </div>
+                </div>` : ''}
+                <div class="card">
+                    <div class="settings-category-header"><h3>Statement Lines</h3>
+                        <select id="bankrecon-status-filter" onchange="loadBankReconLines()" style="padding:8px; border:1px solid var(--border); border-radius:6px;">
+                            <option value="UNMATCHED">Unmatched</option><option value="MATCHED">Matched</option><option value="IGNORED">Ignored</option><option value="">All</option>
+                        </select>
+                    </div>
+                    <div id="bankrecon-lines-table"><div class="empty-state">Loading…</div></div>
+                </div>
+                ${matchLineModalHtml()}
+            `;
+            loadBankReconLines();
+        }
+
+        function matchLineModalHtml() {
+            return `<div class="modal-overlay" id="match-line-modal">
+                <div class="modal-content">
+                    <button class="close-modal-btn" onclick="document.getElementById('match-line-modal').style.display='none'">&times;</button>
+                    <h3>Match Statement Line</h3>
+                    <p class="card-desc" id="match-line-summary"></p>
+                    <div id="match-candidates-list"><div class="empty-state">Loading…</div></div>
+                </div>
+            </div>`;
+        }
+
+        async function submitImportStatement() {
+            const feedback = document.getElementById('bankrecon-import-feedback');
+            const fileInput = document.getElementById('bankrecon-file');
+            if (!fileInput.files.length) { feedback.className = 'feedback-box error'; feedback.textContent = 'Choose a CSV file first'; return; }
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/accounting/bank-reconciliation/import`, {
+                    method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData
+                });
+                if (!resp.ok) throw new Error(await readErrorMessage(resp));
+                const result = await resp.json();
+                _lastImportId = result.import_id;
+                feedback.className = 'feedback-box success';
+                feedback.textContent = `Imported ${result.lines_imported} line(s).`;
+                document.getElementById('bankrecon-automatch-btn').style.display = 'inline-block';
+                loadBankReconLines();
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+        async function submitAutoMatch() {
+            if (!_lastImportId) return;
+            try {
+                const result = await apiPost(`/bank-reconciliation/${_lastImportId}/auto-match`, {});
+                await showAlert(`Matched ${result.matched} line(s). ${result.unmatched} left unmatched for manual review.`);
+                loadBankReconLines();
+            } catch (e) { await showAlert(e.message); }
+        }
+
+        let _bankReconLinesCache = [];
+        async function loadBankReconLines() {
+            const el = document.getElementById('bankrecon-lines-table');
+            const status = document.getElementById('bankrecon-status-filter')?.value ?? 'UNMATCHED';
+            try {
+                const lines = await apiPost('/bank-reconciliation/lines/list', { match_status: status || null });
+                _bankReconLinesCache = lines;
+                if (!lines.length) { el.innerHTML = '<div class="empty-state">Nothing here.</div>'; return; }
+                el.innerHTML = `<div class="table-container"><table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Status</th>${canManageAccounting ? '<th>Actions</th>' : ''}</tr></thead><tbody>
+                    ${lines.map(l => `<tr>
+                        <td>${fmtDate(l.transaction_date)}</td><td>${escapeHtml(l.description)}</td><td class="num">${money(l.amount)}</td><td>${statusBadge(l.match_status)}</td>
+                        ${canManageAccounting ? `<td>${l.match_status === 'UNMATCHED' ? `<div class="btn-row">
+                            <button class="btn btn-secondary btn-sm" onclick="manualMatchLine(${l.line_id})">Match…</button>
+                            <button class="btn btn-secondary btn-sm" onclick="ignoreLine(${l.line_id})">Ignore</button>
+                        </div>` : '—'}</td>` : ''}
+                    </tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function manualMatchLine(lineId) {
+            const line = _bankReconLinesCache.find(l => l.line_id === lineId);
+            document.getElementById('match-line-summary').textContent = line
+                ? `Statement line: ${fmtDate(line.transaction_date)} — ${line.description} — ${money(line.amount)}`
+                : `Statement line #${lineId}`;
+            const list = document.getElementById('match-candidates-list');
+            list.innerHTML = '<div class="empty-state">Loading…</div>';
+            document.getElementById('match-line-modal').style.display = 'flex';
+            try {
+                const candidates = await apiPost(`/bank-reconciliation/lines/${lineId}/match-candidates`, {});
+                if (!candidates.length) {
+                    list.innerHTML = '<div class="empty-state">No unmatched ledger transactions within 10 days of this line. Nothing to match against yet.</div>';
+                    return;
+                }
+                list.innerHTML = `<div class="table-container" style="max-height:320px;"><table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th></th></tr></thead><tbody>
+                    ${candidates.map(c => `<tr>
+                        <td>${fmtDate(c.transaction_date)}</td><td>${escapeHtml(c.description)}</td><td class="num">${money(c.amount)}</td>
+                        <td><button class="btn btn-secondary btn-sm" onclick="confirmMatchLine(${lineId}, '${c.transaction_id}')">Select</button></td>
+                    </tr>`).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                list.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+        async function confirmMatchLine(lineId, transactionId) {
+            try {
+                await apiPost(`/bank-reconciliation/lines/${lineId}/match`, { transaction_id: transactionId });
+                document.getElementById('match-line-modal').style.display = 'none';
+                loadBankReconLines();
+            } catch (e) { await showAlert(e.message); }
+        }
+        async function ignoreLine(lineId) {
+            const ok = await showConfirm('This marks the line as reviewed-and-ignored — it will no longer show as unmatched.', 'Ignore Line', 'Ignore this statement line?');
+            if (!ok) return;
+            try {
+                await apiPost(`/bank-reconciliation/lines/${lineId}/ignore`, {});
+                loadBankReconLines();
+            } catch (e) { await showAlert(e.message); }
+        }
+
+
+        function loadBudgetsTab() {
+            const panel = document.getElementById('panel-budgets');
+            panel.innerHTML = `
+                <div class="card">
+                    <div class="form-group" style="max-width:280px;"><label>Fiscal Year</label><select id="budget-fy-select" onchange="loadBudgetVariance()"></select></div>
+                </div>
+                ${canManageAccounting ? `<div class="card">
+                    <h3>Set Budget Lines ${info('One row per account. Re-submitting an account updates its budgeted amount rather than adding a duplicate.')}</h3>
+                    <div id="budget-lines-rows"></div>
+                    <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="addBudgetLineRow()">+ Add Line</button>
+                    <div class="feedback-box" id="budget-set-feedback" style="margin-top:12px;"></div>
+                    <button class="btn" style="margin-top:8px;" onclick="submitBudget()">Save Budget</button>
+                </div>` : ''}
+                <div class="card">
+                    <h3>Budget vs Actuals ${info('Actual is signed by each account\'s own normal balance, so it always compares directly against the budgeted amount — over-budget on an expense shows as a positive variance, same as under-collecting on income.')}</h3>
+                    <div id="budget-variance-table"><div class="empty-state">Pick a fiscal year above.</div></div>
+                </div>
+            `;
+            loadFiscalYearOptions('budget-fy-select', loadBudgetVariance);
+            addBudgetLineRow();
+        }
+
+        async function loadFiscalYearOptions(selectId, onLoaded) {
+            try {
+                const years = await apiPost('/fiscal-years/list', {});
+                const select = document.getElementById(selectId);
+                select.innerHTML = years.map(y => `<option value="${y.fiscal_year_id}" data-status="${y.status}">${escapeHtml(y.label)} (${y.status})</option>`).join('');
+                if (onLoaded) onLoaded();
+            } catch (e) { }
+        }
+
+        function addBudgetLineRow() {
+            const container = document.getElementById('budget-lines-rows');
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex; gap:8px; margin-bottom:8px; align-items:center;';
+            row.innerHTML = `<select class="budget-line-account" style="flex:2; padding:8px; border:1px solid var(--border); border-radius:6px;"><option>Loading accounts…</option></select>
+                <input type="number" step="0.01" placeholder="Budgeted amount ₹" class="budget-line-amount" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">✕</button>`;
+            container.appendChild(row);
+            apiPost('/accounts/list', { active_only: true }).then(accounts => {
+                row.querySelector('.budget-line-account').innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} — ${escapeHtml(a.name)} (${titleCase(a.account_type)})</option>`).join('');
+            }).catch(() => {});
+        }
+
+        async function submitBudget() {
+            const feedback = document.getElementById('budget-set-feedback');
+            const fyId = document.getElementById('budget-fy-select').value;
+            const rows = [...document.querySelectorAll('#budget-lines-rows > div')];
+            const lines = rows.map(r => ({
+                account_id: parseInt(r.querySelector('.budget-line-account').value, 10),
+                budgeted_amount: parseFloat(r.querySelector('.budget-line-amount').value),
+            })).filter(l => l.account_id && !Number.isNaN(l.budgeted_amount));
+            if (!lines.length) { feedback.className = 'feedback-box error'; feedback.textContent = 'Add at least one valid line'; return; }
+            try {
+                await apiPost('/budgets/set', { fiscal_year_id: parseInt(fyId, 10), lines });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Budget saved.';
+                loadBudgetVariance();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        async function loadBudgetVariance() {
+            const el = document.getElementById('budget-variance-table');
+            const fyId = document.getElementById('budget-fy-select')?.value;
+            if (!fyId) return;
+            el.innerHTML = '<div class="empty-state">Loading…</div>';
+            try {
+                const rows = await apiPost('/budgets/variance', { fiscal_year_id: parseInt(fyId, 10) });
+                if (!rows.length) { el.innerHTML = '<div class="empty-state">No budget set (or no activity) for this fiscal year yet.</div>'; return; }
+                el.innerHTML = `<div class="table-container"><table><thead><tr><th>Account</th><th>Type</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Variance</th></tr></thead><tbody>
+                    ${rows.map(r => {
+                        const over = parseFloat(r.variance_amount) > 0;
+                        return `<tr><td>${escapeHtml(r.account_code)} — ${escapeHtml(r.account_name)}</td><td><span class="badge badge-blue">${r.account_type}</span></td>
+                            <td class="num">${money(r.budgeted_amount)}</td><td class="num">${money(r.actual_amount)}</td>
+                            <td class="num" style="color:${over ? 'var(--danger)' : 'var(--secondary)'}; font-weight:700;">${money(r.variance_amount)}${r.variance_pct !== null ? ` (${r.variance_pct}%)` : ''}</td></tr>`;
+                    }).join('')}
+                    </tbody></table></div>`;
+            } catch (e) {
+                el.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function loadReportsTab() {
+            const panel = document.getElementById('panel-reports');
+            const firstOfMonth = todayIso().slice(0, 8) + '01';
+            panel.innerHTML = `
+                <div class="card">
+                    <h3>Report Period ${info('Used by every date-ranged report below. As-of-today reports (outstanding dues, ageing, defaulters) ignore this and always use today.')}</h3>
+                    <div class="form-row-2">
+                        <div class="form-group"><label>From</label><input id="report-date-from" type="date" value="${firstOfMonth}"></div>
+                        <div class="form-group"><label>To</label><input id="report-date-to" type="date" value="${todayIso()}"></div>
+                    </div>
+                </div>
+                <div class="card-row">
+                    ${reportButtonCard('Invoice Register', 'Every invoice generated in the period.', 'downloadInvoiceRegister()')}
+                    ${reportButtonCard('GST Summary', 'Taxable value and GST collected, by rate.', 'downloadGstSummary()')}
+                    ${reportButtonCard('Interest Report', 'Every interest charge posted in the period.', 'downloadInterestReport()')}
+                    ${reportButtonCard('Receipt Register', 'All receipts issued, in sequence — check for gaps.', 'downloadReceiptRegister()')}
+                    ${reportButtonCard('Payment Mode Summary', 'Collections broken down by payment method.', 'downloadPaymentModeSummary()')}
+                    ${reportButtonCard('Income Summary', 'Income-side totals by account for the period.', 'downloadIncomeSummary()')}
+                    ${reportButtonCard('Outstanding Dues', 'Every unit with a pending balance, as of today.', 'downloadOutstandingDues()')}
+                    ${reportButtonCard('Ageing Summary', 'Outstanding dues bucketed 0-30/31-60/61-90/90+ days.', 'downloadAgeingSummary()')}
+                </div>
+                <div class="card">
+                    <h3>Defaulter List ${info('For legal/notice action — units that have been unpaid for longer than the number of days you choose below.')}</h3>
+                    <div class="form-group" style="max-width:220px;"><label>Minimum Days Overdue</label><input id="defaulters-min-days" type="number" value="90"></div>
+                    <button class="btn btn-secondary" onclick="downloadDefaulters()">Download CSV</button>
+                </div>
+                <div class="card-row">
+                    <div class="card">
+                        <h3>Member Statement of Account</h3>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Wing</label><input id="stmt-wing" placeholder="A"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="stmt-flat-number" placeholder="203"></div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="downloadStatementPdf()">Download PDF</button>
+                    </div>
+                    <div class="card">
+                        <h3>NOC / Dues Clearance Certificate ${info('Only issues if the unit has zero outstanding balance.')}</h3>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Wing</label><input id="noc-wing" placeholder="A"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="noc-flat-number" placeholder="203"></div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="downloadNocPdf()">Download PDF</button>
+                    </div>
+                </div>
+            `;
+        }
+        function reportButtonCard(title, desc, onclick) {
+            return `<div class="card" style="flex:1; min-width:240px;">
+                <h3 style="font-size:1rem;">${escapeHtml(title)}</h3>
+                <p class="card-desc">${escapeHtml(desc)}</p>
+                <button class="btn btn-secondary btn-sm" onclick="${onclick}">Download CSV</button>
+            </div>`;
+        }
+        function reportRange() {
+            return { date_from: document.getElementById('report-date-from').value, date_to: document.getElementById('report-date-to').value };
+        }
+        function downloadReport(reportType, extraParams, filename) {
+            apiDownload('/reports/run', { report_type: reportType, ...(extraParams || {}) }, filename);
+        }
+        function downloadInvoiceRegister() { downloadReport('invoice_register', reportRange(), 'invoice-register.csv'); }
+        function downloadGstSummary() { downloadReport('gst_summary', reportRange(), 'gst-summary.csv'); }
+        function downloadInterestReport() { downloadReport('interest', reportRange(), 'interest-report.csv'); }
+        function downloadReceiptRegister() { downloadReport('receipt_register', reportRange(), 'receipt-register.csv'); }
+        function downloadPaymentModeSummary() { downloadReport('payment_mode_summary', reportRange(), 'payment-mode-summary.csv'); }
+        function downloadIncomeSummary() { downloadReport('income_summary', reportRange(), 'income-summary.csv'); }
+        function downloadOutstandingDues() { downloadReport('outstanding_dues', {}, 'outstanding-dues.csv'); }
+        function downloadAgeingSummary() { downloadReport('ageing_summary', {}, 'ageing-summary.csv'); }
+        function downloadDefaulters() {
+            const minDays = parseInt(document.getElementById('defaulters-min-days').value, 10) || 90;
+            downloadReport('defaulters', { min_days_overdue: minDays }, 'defaulters.csv');
+        }
+        async function downloadStatementPdf() {
+            try {
+                const flat = await resolveFlat(document.getElementById('stmt-wing').value, document.getElementById('stmt-flat-number').value);
+                apiDownload('/documents/pdf', { kind: 'statement', flat_id: flat.flat_id, ...reportRange() }, `statement-${flat.wing}-${flat.flat_number}.pdf`);
+            } catch (e) { await showAlert(e.message); }
+        }
+        async function downloadNocPdf() {
+            try {
+                const flat = await resolveFlat(document.getElementById('noc-wing').value, document.getElementById('noc-flat-number').value);
+                apiDownload('/documents/pdf', { kind: 'noc', flat_id: flat.flat_id }, `noc-${flat.wing}-${flat.flat_number}.pdf`);
+            } catch (e) { await showAlert(e.message); }
+        }
+
+        async function loadSettingsTab() {
+            const panel = document.getElementById('panel-settings');
+            panel.innerHTML = `<div class="empty-state">Loading settings…</div>`;
+            try {
+                const overview = await apiPost('/settings/overview', {});
+                const fiscalYears = await apiPost('/fiscal-years/list', {});
+                panel.innerHTML = `
+                    ${settingsCategoryGst(overview.gst)}
+                    ${settingsCategoryInterest(overview.interest)}
+                    ${settingsCategoryTds(overview.tds)}
+                    ${settingsCategoryFunds(overview.funds, overview.fund_contribution_rules)}
+                    ${settingsCategoryAccounts(overview.chart_of_accounts)}
+                    ${settingsCategoryPaymentInstructions(overview.payment_instructions)}
+                    ${settingsCategoryFiscalYears(fiscalYears)}
+                `;
+            } catch (e) {
+                panel.innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        function settingsCategoryGst(rules) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>GST Rules ${info('Below the exempt threshold, GST does not apply at all. Above it, GST applies to the full billed amount, not just the excess. Get these figures confirmed by your CA — they change with CBIC circulars.')}</h3></div>
+                ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th>Exempt Threshold</th><th>Turnover Threshold</th><th class="num">Rate</th><th>HSN/SAC</th><th>GSTIN</th><th>Effective From</th></tr></thead><tbody>
+                    ${rules.map(r => `<tr><td>${money(r.per_member_monthly_exempt_threshold)}</td><td>${money(r.society_turnover_registration_threshold)}</td><td class="num">${r.gst_rate_pct}%</td><td>${escapeHtml(r.hsn_sac_code)}</td><td>${escapeHtml(r.society_gstin || '—')}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No GST rule configured yet — GST will not be applied to any invoice until one exists.</div>'}
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Exempt Threshold (₹/month)</label><input id="gst-exempt-threshold" type="number" step="0.01"></div>
+                        <div class="form-group"><label>Turnover Threshold (₹/yr)</label><input id="gst-turnover-threshold" type="number" step="0.01"></div>
+                        <div class="form-group"><label>GST Rate (%)</label><input id="gst-rate" type="number" step="0.01"></div>
+                    </div>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>HSN/SAC Code</label><input id="gst-hsn" placeholder="9995"></div>
+                        <div class="form-group"><label>Society GSTIN (optional)</label><input id="gst-gstin"></div>
+                        <div class="form-group"><label>Effective From</label><input id="gst-effective-from" type="date" value="${todayIso()}"></div>
+                    </div>
+                    <div class="feedback-box" id="gst-feedback"></div>
+                    <button class="btn" onclick="submitGstRule()">Add GST Rule</button>
+                </div>` : ''}
+            </div>`;
+        }
+        async function submitGstRule() {
+            const feedback = document.getElementById('gst-feedback');
+            try {
+                await apiPost('/gst-rules/create', {
+                    per_member_monthly_exempt_threshold: parseFloat(document.getElementById('gst-exempt-threshold').value),
+                    society_turnover_registration_threshold: parseFloat(document.getElementById('gst-turnover-threshold').value),
+                    gst_rate_pct: parseFloat(document.getElementById('gst-rate').value),
+                    hsn_sac_code: document.getElementById('gst-hsn').value.trim(),
+                    society_gstin: document.getElementById('gst-gstin').value.trim() || null,
+                    effective_from: document.getElementById('gst-effective-from').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'GST rule added.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        function settingsCategoryInterest(rules) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Late Payment Interest ${info('Simple interest is charged once on the overdue amount for the days it\'s overdue. Monthly compounds every elapsed month. Confirm the rate against your society bylaws / state Cooperative Societies Act cap.')}</h3>
+                    ${canManageAccounting ? `<button class="btn btn-secondary btn-sm" onclick="runInterestJob()">Run Interest Job Now ${info('Charges interest on every currently-overdue invoice using the active rule below. Safe to re-run the same day — an invoice already charged today is skipped, not double-charged. There is no automatic scheduler in this app; this button (or an external cron hitting the same endpoint) is the only way interest actually gets applied.')}</button>` : ''}
+                </div>
+                <div class="feedback-box" id="interest-run-feedback" style="margin-bottom:12px;"></div>
+                ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th class="num">Annual Rate</th><th>Grace Period</th><th>Compounding</th><th>Effective From</th></tr></thead><tbody>
+                    ${rules.map(r => `<tr><td class="num">${r.annual_rate_pct}%</td><td>${r.grace_period_days} day(s)</td><td>${titleCase(r.compounding)}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No interest rule configured — overdue invoices will never accrue interest until one exists.</div>'}
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Annual Rate (%)</label><input id="interest-rate" type="number" step="0.01"></div>
+                        <div class="form-group"><label>Grace Period (days)</label><input id="interest-grace" type="number" value="0"></div>
+                        <div class="form-group"><label>Compounding</label><select id="interest-compounding"><option value="SIMPLE">Simple</option><option value="MONTHLY">Monthly</option></select></div>
+                    </div>
+                    <div class="form-group" style="max-width:220px;"><label>Effective From</label><input id="interest-effective-from" type="date" value="${todayIso()}"></div>
+                    <div class="feedback-box" id="interest-feedback"></div>
+                    <button class="btn" onclick="submitInterestRule()">Add Interest Rule</button>
+                </div>` : ''}
+            </div>`;
+        }
+        async function runInterestJob() {
+            const feedback = document.getElementById('interest-run-feedback');
+            const ok = await confirmCritical(
+                'Posts a real ledger entry (Dr. Receivable / Cr. Interest Income) for every invoice past its due date, using today\'s active interest rule. Already-charged-today invoices are skipped automatically.',
+                'Run Interest Job', 'Run the interest job now?'
+            );
+            if (!ok) return;
+            try {
+                const result = await apiPost('/interest/run', {});
+                feedback.className = 'feedback-box success';
+                feedback.textContent = `Charged interest on ${result.charges_posted} invoice(s).`;
+            } catch (e) {
+                feedback.className = 'feedback-box error'; feedback.textContent = e.message;
+            }
+        }
+        async function submitInterestRule() {
+            const feedback = document.getElementById('interest-feedback');
+            try {
+                await apiPost('/interest-rules/create', {
+                    annual_rate_pct: parseFloat(document.getElementById('interest-rate').value),
+                    grace_period_days: parseInt(document.getElementById('interest-grace').value, 10) || 0,
+                    compounding: document.getElementById('interest-compounding').value,
+                    effective_from: document.getElementById('interest-effective-from').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Interest rule added.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        function settingsCategoryTds(rules) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>TDS Rules ${info('Applies once either a single vendor payment or the running total paid to that vendor this fiscal year crosses these limits. Confirm section/rate/thresholds with your CA — they change with the Union Budget.')}</h3></div>
+                ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th>Section</th><th>Category</th><th class="num">Rate</th><th class="num">Single Payment Threshold</th><th class="num">Annual Threshold</th></tr></thead><tbody>
+                    ${rules.map(r => `<tr><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.payment_category)}</td><td class="num">${r.rate_pct}%</td><td class="num">${money(r.threshold_single_payment)}</td><td class="num">${money(r.threshold_annual_aggregate)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No TDS rules yet — vendor expenses will attract no TDS until one is added.</div>'}
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Section</label><input id="tds-section" placeholder="194C"></div>
+                        <div class="form-group"><label>Payment Category</label><input id="tds-category" placeholder="contractor"></div>
+                        <div class="form-group"><label>Rate (%)</label><input id="tds-rate" type="number" step="0.01"></div>
+                    </div>
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Single Payment Threshold</label><input id="tds-single-threshold" type="number" step="0.01"></div>
+                        <div class="form-group"><label>Annual Aggregate Threshold</label><input id="tds-annual-threshold" type="number" step="0.01"></div>
+                        <div class="form-group"><label>Effective From</label><input id="tds-effective-from" type="date" value="${todayIso()}"></div>
+                    </div>
+                    <div class="feedback-box" id="tds-feedback"></div>
+                    <button class="btn" onclick="submitTdsRule()">Add TDS Rule</button>
+                </div>` : ''}
+            </div>`;
+        }
+        async function submitTdsRule() {
+            const feedback = document.getElementById('tds-feedback');
+            try {
+                await apiPost('/tds-rules/create', {
+                    section: document.getElementById('tds-section').value.trim(),
+                    payment_category: document.getElementById('tds-category').value.trim(),
+                    rate_pct: parseFloat(document.getElementById('tds-rate').value),
+                    threshold_single_payment: parseFloat(document.getElementById('tds-single-threshold').value),
+                    threshold_annual_aggregate: parseFloat(document.getElementById('tds-annual-threshold').value),
+                    effective_from: document.getElementById('tds-effective-from').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'TDS rule added.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        function settingsCategoryFunds(funds, rules) {
+            const fundName = (id) => (funds.find(f => f.fund_id === id) || {}).name || `#${id}`;
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Sinking &amp; Repair Funds ${info('A flat assigned to a fund with an active contribution rule gets an extra line item on its regular maintenance bill — fixed amount or a % of that bill\'s base maintenance charge.')}</h3></div>
+                <div class="table-container" style="max-height:160px;">
+                    <table><thead><tr><th>Code</th><th>Name</th><th>Restricted</th></tr></thead><tbody>
+                    ${funds.map(f => `<tr><td>${escapeHtml(f.code)}</td><td>${escapeHtml(f.name)}</td><td>${f.is_restricted ? 'Yes' : 'No'}</td></tr>`).join('')}
+                    </tbody></table>
+                </div>
+                <h4 style="margin-top:18px; font-size:0.875rem; text-transform:uppercase; color:var(--muted-foreground);">Contribution Rules</h4>
+                ${rules.length ? `<div class="table-container" style="max-height:180px;"><table><thead><tr><th>Fund</th><th>Type</th><th class="num">Amount / %</th><th>Effective From</th></tr></thead><tbody>
+                    ${rules.map(r => `<tr><td>${escapeHtml(fundName(r.fund_id))}</td><td>${r.contribution_type}</td><td class="num">${r.contribution_type === 'FIXED' ? money(r.amount_or_pct) : r.amount_or_pct + '%'}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No contribution rules yet.</div>'}
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Fund</label><select id="fund-rule-fund">${funds.map(f => `<option value="${f.fund_id}">${escapeHtml(f.name)}</option>`).join('')}</select></div>
+                        <div class="form-group"><label>Type</label><select id="fund-rule-type"><option value="FIXED">Fixed Amount</option><option value="PCT_OF_MAINTENANCE">% of Maintenance</option></select></div>
+                        <div class="form-group"><label>Amount / %</label><input id="fund-rule-amount" type="number" step="0.01"></div>
+                    </div>
+                    <div class="form-group" style="max-width:220px;"><label>Effective From</label><input id="fund-rule-effective-from" type="date" value="${todayIso()}"></div>
+                    <div class="feedback-box" id="fund-rule-feedback"></div>
+                    <button class="btn" onclick="submitFundRule()">Add Contribution Rule</button>
+
+                    <div style="margin-top:20px; border-top:1px dashed var(--border); padding-top:16px;">
+                        <label style="font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--muted-foreground);">Assign a Unit to a Fund</label>
+                        <div class="form-row-3" style="margin-top:8px;">
+                            <div class="form-group"><label>Wing</label><input id="fund-assign-wing" placeholder="A"></div>
+                            <div class="form-group"><label>Flat No.</label><input id="fund-assign-flat-number" placeholder="203"></div>
+                            <div class="form-group"><label>Fund</label><select id="fund-assign-fund">${funds.map(f => `<option value="${f.fund_id}">${escapeHtml(f.name)}</option>`).join('')}</select></div>
+                        </div>
+                        <div class="feedback-box" id="fund-assign-feedback"></div>
+                        <button class="btn btn-secondary" onclick="submitAssignFundFlat()">Assign</button>
+                    </div>
+                </div>` : ''}
+            </div>`;
+        }
+        async function submitFundRule() {
+            const feedback = document.getElementById('fund-rule-feedback');
+            try {
+                await apiPost('/funds/contribution-rules/create', {
+                    fund_id: parseInt(document.getElementById('fund-rule-fund').value, 10),
+                    contribution_type: document.getElementById('fund-rule-type').value,
+                    amount_or_pct: parseFloat(document.getElementById('fund-rule-amount').value),
+                    effective_from: document.getElementById('fund-rule-effective-from').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Contribution rule added.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+        async function submitAssignFundFlat() {
+            const feedback = document.getElementById('fund-assign-feedback');
+            try {
+                const flat = await resolveFlat(document.getElementById('fund-assign-wing').value, document.getElementById('fund-assign-flat-number').value);
+                await apiPost('/funds/assign-flat', { flat_id: flat.flat_id, fund_id: parseInt(document.getElementById('fund-assign-fund').value, 10) });
+                feedback.className = 'feedback-box success'; feedback.textContent = `Assigned ${flat.wing}-${flat.flat_number}.`;
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        function settingsCategoryAccounts(accounts) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Chart of Accounts ${info('Add a new income/expense head your bylaws name that isn\'t here yet (e.g. Water Charges, DG Fuel, Lift AMC). System accounts (bank, receivable, payables, retained earnings) are structural and can\'t be added or removed here.')}</h3></div>
+                <div class="table-container" style="max-height:280px;"><table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Balance</th><th>System</th><th>Active</th>${canManageAccounting ? '<th></th>' : ''}</tr></thead><tbody>
+                    ${accounts.map(a => `<tr><td>${escapeHtml(a.code)}</td><td>${escapeHtml(a.name)}</td><td><span class="badge badge-blue">${titleCase(a.account_type)}</span></td><td>${titleCase(a.normal_balance)}</td><td>${a.is_system ? 'Yes' : 'No'}</td><td>${a.is_active ? statusBadge('ACTIVE') : statusBadge('CLOSED')}</td>
+                        ${canManageAccounting ? `<td>${!a.is_system && a.is_active ? `<button class="btn btn-danger btn-sm" onclick="deactivateAccount(${a.account_id})">Deactivate</button>` : ''}</td>` : ''}
+                    </tr>`).join('')}
+                    </tbody></table></div>
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-3">
+                        <div class="form-group"><label>Code</label><input id="account-code" placeholder="5600"></div>
+                        <div class="form-group"><label>Name</label><input id="account-name" placeholder="Water Charges"></div>
+                        <div class="form-group"><label>Type</label><select id="account-type"><option value="EXPENSE">Expense</option><option value="INCOME">Income</option></select></div>
+                    </div>
+                    <div class="feedback-box" id="account-feedback"></div>
+                    <button class="btn" onclick="submitCreateAccount()">Add Account</button>
+                </div>` : ''}
+            </div>`;
+        }
+        async function submitCreateAccount() {
+            const feedback = document.getElementById('account-feedback');
+            try {
+                await apiPost('/accounts/create', {
+                    code: document.getElementById('account-code').value.trim(),
+                    name: document.getElementById('account-name').value.trim(),
+                    account_type: document.getElementById('account-type').value,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Account added.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+        async function deactivateAccount(accountId) {
+            const ok = await confirmCritical('This account will no longer appear as an option when submitting a new expense or setting a budget line. Existing postings are untouched.', 'Deactivate', 'Deactivate this account?');
+            if (!ok) return;
+            try {
+                await apiPost(`/accounts/${accountId}/set-active`, { is_active: false });
+                loadSettingsTab();
+            } catch (e) { await showAlert(e.message); }
+        }
+
+        function settingsCategoryPaymentInstructions(pi) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Payment Instructions ${info('Printed on every generated invoice PDF so residents know where to NEFT/transfer payment.')}</h3></div>
+                ${pi ? `<p class="card-desc"><strong>${escapeHtml(pi.account_holder_name)}</strong> — ${escapeHtml(pi.bank_name)}, A/C ${escapeHtml(pi.account_number)}, IFSC ${escapeHtml(pi.ifsc_code)}${pi.branch ? ', ' + escapeHtml(pi.branch) : ''}</p>` : '<div class="empty-state">Not set yet — invoices will be generated without bank details.</div>'}
+                ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Account Holder Name</label><input id="pi-holder" value="${escapeHtml(pi?.account_holder_name || '')}"></div>
+                        <div class="form-group"><label>Bank Name</label><input id="pi-bank" value="${escapeHtml(pi?.bank_name || '')}"></div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Account Number</label><input id="pi-account-number" value="${escapeHtml(pi?.account_number || '')}"></div>
+                        <div class="form-group"><label>IFSC Code</label><input id="pi-ifsc" value="${escapeHtml(pi?.ifsc_code || '')}"></div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Branch (optional)</label><input id="pi-branch" value="${escapeHtml(pi?.branch || '')}"></div>
+                        <div class="form-group"><label>Contact Email (optional)</label><input id="pi-email" value="${escapeHtml(pi?.contact_email || '')}"></div>
+                    </div>
+                    <div class="feedback-box" id="pi-feedback"></div>
+                    <button class="btn" onclick="submitPaymentInstructions()">Save</button>
+                </div>` : ''}
+                <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <p class="card-desc" style="margin-top:0;">See exactly how a bill will look with these values before generating any real invoices. Society name/address is set by the super admin under the "Society Profile" tab.</p>
+                    <div class="btn-row">
+                        <button class="btn btn-secondary" onclick="apiDownload('/documents/pdf', { kind: 'sample_invoice' }, 'sample-invoice.pdf')">Preview Sample Invoice</button>
+                        <button class="btn btn-secondary" onclick="apiDownload('/documents/pdf', { kind: 'sample_receipt' }, 'sample-receipt.pdf')">Preview Sample Receipt</button>
+                    </div>
+                </div>
+            </div>`;
+        }
+        async function submitPaymentInstructions() {
+            const feedback = document.getElementById('pi-feedback');
+            try {
+                await apiPost('/payment-instructions/set', {
+                    account_holder_name: document.getElementById('pi-holder').value.trim(),
+                    bank_name: document.getElementById('pi-bank').value.trim(),
+                    account_number: document.getElementById('pi-account-number').value.trim(),
+                    ifsc_code: document.getElementById('pi-ifsc').value.trim(),
+                    branch: document.getElementById('pi-branch').value.trim() || null,
+                    contact_email: document.getElementById('pi-email').value.trim() || null,
+                });
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Saved.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        function settingsCategoryFiscalYears(years) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Fiscal Years ${info('Closing zeroes every income/expense account\'s balance for the year into Retained Earnings and locks the period against new postings. Reopening reverses that closing entry and requires a logged reason.')}</h3></div>
+                <div class="table-container" style="max-height:240px;"><table><thead><tr><th>Label</th><th>Period</th><th>Status</th><th></th></tr></thead><tbody>
+                    ${years.map(y => `<tr><td>${escapeHtml(y.label)}</td><td>${fmtDate(y.start_date)} – ${fmtDate(y.end_date)}</td><td>${statusBadge(y.status)}</td>
+                        <td>${canManageAccounting ? (y.status === 'OPEN'
+                            ? `<button class="btn btn-danger btn-sm" onclick="closeFiscalYear(${y.fiscal_year_id})">Close Year</button>`
+                            : `<button class="btn btn-secondary btn-sm" onclick="reopenFiscalYear(${y.fiscal_year_id})">Reopen</button>`) : ''}</td>
+                    </tr>`).join('')}
+                    </tbody></table></div>
+            </div>`;
+        }
+        async function closeFiscalYear(fyId) {
+            const first = await confirmCritical(
+                'This locks the entire fiscal year against any new invoice, payment, or expense dated inside it, and posts a closing entry zeroing income/expense into Retained Earnings. This is a major, hard-to-reverse action.',
+                'Continue', 'Close this fiscal year?'
+            );
+            if (!first) return;
+            const second = await confirmCritical(
+                'Second confirmation: are you completely sure every bill and payment for this year has been entered? Closing before that means backdating will require a logged reopen.',
+                'Yes, Close It', 'Final confirmation'
+            );
+            if (!second) return;
+            try {
+                await apiPost(`/fiscal-years/${fyId}/close`, {});
+                await showAlert('Fiscal year closed.');
+                loadSettingsTab();
+            } catch (e) { await showAlert(e.message); }
+        }
+        async function reopenFiscalYear(fyId) {
+            const reason = prompt('Reason for reopening this fiscal year (required, logged permanently):');
+            if (!reason || !reason.trim()) return;
+            const ok = await confirmCritical('This reverses the closing entry and unlocks the period for new postings. The reopen is permanently logged with your reason.', 'Reopen Year', 'Reopen this fiscal year?');
+            if (!ok) return;
+            try {
+                await apiPost(`/fiscal-years/${fyId}/reopen`, { reason: reason.trim() });
+                await showAlert('Fiscal year reopened.');
+                loadSettingsTab();
+            } catch (e) { await showAlert(e.message); }
+        }
+
+        if (!token || !user) {
+            localStorage.clear();
+            window.location.href = '/login';
+        }
+        if (!user.accounting_enabled || !(user.can_manage_accounting || user.can_view_accounting)) {
+            window.location.href = '/admin';
+        }
+
+        (function renderSidebar() {
+            const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
+            const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
+            const canViewUsers = !!(user && user.can_view_users);
+            const canManageDocuments = !!(user && (user.can_manage_documents || user.can_manage_categories));
+            const canManageProcessTemplates = !!(user && user.can_manage_process_templates);
+            const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
+            const canManageSignerDirectory = !!(user && user.can_review_process);
+            const canViewAllProcesses = !!(user && user.can_view_all_processes);
+
+            const residentsLink = canViewUsers ? `<a href="/admin?tab=residents" class="nav-item nav-subitem" style="text-decoration:none;">Residents</a>` : '';
+            const rolesLink = canManageRoles ? `<a href="/admin?tab=roles" class="nav-item nav-subitem" style="text-decoration:none;">Roles &amp; Designations</a>` : '';
+            const residentsGroup = (canViewUsers || canManageRoles) ? `
+                <div class="nav-group collapsed" id="residents-nav-group">
+                    <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup('residents-nav-group')"><span>Residents</span><span class="nav-group-arrow">&#9662;</span></button>
+                    <div class="nav-subgroup">${residentsLink}${rolesLink}</div>
+                </div>` : '';
+            const documentsLink = canManageDocuments ? `<a href="/admin?tab=documents" class="nav-item" style="text-decoration:none;">Documents</a>` : '';
+            const processesLink = canViewAllProcesses ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration:none;">Process Review</a>` : '';
+            const signaturesLink = (canSignDocuments || canManageSignerDirectory) ? `<a href="/admin?tab=signatures" class="nav-item nav-subitem" style="text-decoration:none;">Signatures</a>` : '';
+            const templatesLink = canManageProcessTemplates ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration:none;">Process Templates</a>` : '';
+            const processesGroup = (canViewAllProcesses || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory) ? `
+                <div class="nav-group collapsed" id="processes-nav-group">
+                    <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup('processes-nav-group')"><span>Processes</span><span class="nav-group-arrow">&#9662;</span></button>
+                    <div class="nav-subgroup">${processesLink}${signaturesLink}${templatesLink}</div>
+                </div>` : '';
+            const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+            const myFlatDashboardLink = hasFlat ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>` : '';
+            const isSuperAdmin = !!(user && user.designations && user.designations.includes('super_admin'));
+            const societyProfileLink = isSuperAdmin ? `<a href="/admin?tab=society" class="nav-item" style="text-decoration:none;">Society Profile</a>` : '';
+
+            document.getElementById('sidebar-brand-container').innerHTML = `
+                <h1>Admin</h1>
+                <p>Raheja Vistas Admin Room</p>
+                <nav class="nav-menu">
+                    ${residentsGroup}
+                    ${documentsLink}
+                    ${processesGroup}
+                    <a href="/admin-accounting" class="nav-item active" style="text-decoration:none;">Accounting &amp; Billing</a>
+                    ${societyProfileLink}
+                    ${myFlatDashboardLink}
+                    <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
+                </nav>
+            `;
+        })();
+
+        function toggleNavGroup(id) {
+            document.getElementById(id).classList.toggle('collapsed');
+        }
+
+        (function init() {
+            const initialTab = (window.location.hash || '#overview').slice(1);
+            const validTabs = ['overview', 'billing', 'payments', 'vendors', 'bankrecon', 'budgets', 'reports', 'settings'];
+            const tab = validTabs.includes(initialTab) ? initialTab : 'overview';
+            switchAcctTab(tab);
+        })();
+    </script>
+</body>
+</html>
+"##;

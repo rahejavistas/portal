@@ -3,15 +3,21 @@
 What UI a resident sees is driven entirely by boolean capability flags returned on the
 `User` object (`can_manage_users`, `can_view_roles`, etc.) — never by raw permission codes.
 See `derived_capabilities` in `server/authentication/src/lib.rs` for how each flag is
-computed from the 10 seeded permission codes. This doc maps each permission to the concrete
+computed from the 12 seeded permission codes. This doc maps each permission to the concrete
 UI it unlocks, for screenshotting/reference.
 
-Two things are **not** permissions but still gate UI:
+Three things are **not** permissions but still gate UI:
 - **Flat ownership** (`wing`/`flat_number` not `TBD`) — gates "My Flat Dashboard", the
   personal `/process` page, and the `/dashboard` profile view.
-- **`super_admin` designation** — a seed-only designation that holds all 10 permissions.
+- **`super_admin` designation** — a seed-only designation that holds all 12 permissions.
   Nothing in the UI hardcodes a `super_admin` check for capability gating; it just happens
   to unlock everything because it holds every permission.
+- **Whether accounting is turned on for the society at all** — a separate on/off switch
+  from `accounting.view`/`accounting.manage`. If it's off, the Accounting & Billing tab and
+  the resident Billing tab stay hidden even for someone holding those permissions. The
+  Society Profile tab (see below) is the one exception — it's `super_admin`-only and
+  visible regardless, since a super admin needs it to see the society's own identity
+  either way.
 
 ---
 
@@ -122,6 +128,33 @@ Two things are **not** permissions but still gate UI:
 - This permission does not itself grant `process.view`/`process.reviewer` — it only manages
   template *definitions*, not any resident's in-progress process data.
 
+## `accounting.view`
+*Read-only access to the society's accounting and billing.*
+
+- **Accounting & Billing** nav tab appears (only if accounting is turned on for the society
+  at all — see the note above). Everything in it is visible: the ledger, invoices, receipts,
+  payments, every report (GST summary, outstanding dues, ageing, defaulters, collection
+  summary, budget vs. actuals), and generated PDFs.
+- Nothing can be created, edited, posted, voided, or run from this tab — every button that
+  would change something is hidden or disabled. `accounting.manage` includes everything this
+  permission allows, so a manager never needs both.
+- Residents also get a personal **Billing** tab on their own dashboard showing just their own
+  flat's invoices/receipts — that's gated on flat ownership plus accounting being turned on,
+  not on this permission at all.
+
+## `accounting.manage`
+*Full control of the accounting module.*
+
+- Everything `accounting.view` unlocks, plus the ability to act: create billing plans and
+  assign them to units, generate invoices, record payments, run the interest job, manage
+  vendors/purchase orders/expenses and TDS, import and reconcile bank statements, set
+  budgets, edit GST/interest rules and the chart of accounts, and close or reopen a fiscal
+  year.
+- The **Society Profile** tab (society name, registration number, address, state, phone,
+  when the account was created) is a separate, tighter gate — restricted to the
+  `super_admin` designation specifically, not this permission. Holding `accounting.manage`
+  does not unlock it.
+
 ---
 
 ## Quick reference table
@@ -138,3 +171,5 @@ Two things are **not** permissions but still gate UI:
 | `process.view` | Process Review (`/admin-process`) | Read-only process oversight |
 | `process.reviewer` | Process Review (`/admin-process`) | Approve/reject/upload/notes |
 | `process.templates.manage` | Process Templates | Builder: create/edit/version/activate templates |
+| `accounting.view` | Accounting & Billing | Read-only: ledger, invoices, receipts, payments, reports |
+| `accounting.manage` | Accounting & Billing | Full control: billing, invoicing, payments, vendors, TDS, bank reconciliation, budgets, fiscal year close |
