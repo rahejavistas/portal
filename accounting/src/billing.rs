@@ -98,9 +98,11 @@ fn compute_base_amount(
             let area = area_sqft.ok_or(BillingError::MissingAreaForPlan(flat_id))?;
             let cfg: SlabConfig = serde_json::from_value(plan.config.clone())
                 .map_err(|_| BillingError::InvalidSlabConfig(flat_id))?;
+            // Smallest covering slab, not just the first match — config order isn't guaranteed sorted.
             cfg.slabs
                 .iter()
-                .find(|s| area <= s.max_sqft)
+                .filter(|s| area <= s.max_sqft)
+                .min_by(|a, b| a.max_sqft.cmp(&b.max_sqft))
                 .map(|s| s.amount)
                 .ok_or(BillingError::InvalidSlabConfig(flat_id))
         }
@@ -114,19 +116,13 @@ pub struct ComputedBill {
     pub gst_rule: Option<db::GstRule>,
     pub gst_applicable: bool,
     pub gst_amount: Decimal,
-    /// One line per fund the flat is assigned to with an active contribution rule
-    /// (sinking fund, repair fund, ...) — this is the real multi-line-item invoicing
-    /// the P0 reports doc flagged as a gap; a flat's bill can now carry maintenance
-    /// plus any number of fund contributions in one invoice.
+    /// One line per active fund contribution rule the flat is assigned to.
     pub fund_contributions: Vec<(db::FundContributionRule, Decimal)>,
-    /// base_amount + gst_amount + sum(fund_contributions) — the actual invoice total.
     pub total: Decimal,
 }
 
-/// Read-only: resolves the flat's billing plan and computes what it would be billed
-/// for `period_start`, without writing anything. Shared by `generate_invoice_for_flat`
-/// (which posts it) and the bill-generation preview report (which doesn't) — so preview
-/// and real generation can never drift apart on the actual math.
+/// Read-only: what a flat would be billed for `period_start`. Shared by
+/// `generate_invoice_for_flat` and the preview report so they can't drift apart.
 pub async fn compute_bill_for_flat(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -167,10 +163,8 @@ pub async fn compute_bill_for_flat(
     })
 }
 
-/// Generates and posts (accrual-basis) one invoice for `flat_id` covering
-/// [period_start, period_end]. Dr. Member Dues Receivable / Cr. Maintenance Income
-/// (+ Cr. GST Payable if applicable) — the receivable is recognized immediately, not
-/// on payment. Idempotent per (flat_id, billing_period_start) via the unique index.
+/// Posts one invoice for `flat_id`: Dr. Receivable / Cr. Income (+ GST if applicable).
+/// Idempotent per (flat_id, billing_period_start) via the unique index.
 pub async fn generate_invoice_for_flat(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -311,12 +305,47 @@ pub async fn generate_invoice_for_flat(
     Ok(invoice_id)
 }
 
-/// Voids an invoice AND reverses its original ledger entries with an equal-and-opposite
-/// posting — voiding must never leave the original Dr. Receivable / Cr. Income entries
-/// on the books, or the ledger permanently overstates revenue by every voided invoice's
-/// amount (and double-counts it if the same flat/period is re-billed later, since voided
-/// invoices don't block re-billing). The caller is responsible for confirming the
-/// invoice is voidable (unpaid, not already void) before calling this.
+/// Posts the exact reverse of `transaction_id` (debits/credits swapped), linked via
+/// `reverses_transaction_id`. Shared by invoice void and interest-charge reversal.
+async fn reverse_transaction(
+    conn: &mut sqlx::PgConnection,
+    transaction_id: TransactionId,
+    description: &str,
+    source_type: &str,
+    source_id: uuid::Uuid,
+    as_of: NaiveDate,
+    created_by: i32,
+) -> Result<(), BillingError> {
+    let entries = db::get_ledger_entries_for_transaction(conn, transaction_id)
+        .await
+        .map_err(BillingError::Db)?;
+    let reversed: Vec<EntryLine> = entries
+        .into_iter()
+        .map(|e| EntryLine {
+            account_id: e.account_id,
+            flat_id: e.flat_id,
+            debit: e.credit,
+            credit: e.debit,
+        })
+        .collect();
+    ledger::post_transaction(
+        conn,
+        PostTransactionRequest {
+            transaction_date: as_of,
+            description,
+            source_type,
+            source_id: Some(source_id),
+            reverses_transaction_id: Some(transaction_id),
+            entries: reversed,
+            created_by,
+        },
+    )
+    .await
+    .map_err(BillingError::Post)?;
+    Ok(())
+}
+
+/// Reverses the invoice's original entries and any interest charged against it.
 pub async fn void_invoice(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
@@ -328,33 +357,32 @@ pub async fn void_invoice(
         .await
         .map_err(BillingError::Db)?
     {
-        let original_entries =
-            db::get_ledger_entries_for_transaction(conn, original_transaction_id)
-                .await
-                .map_err(BillingError::Db)?;
-        let reversed: Vec<EntryLine> = original_entries
-            .into_iter()
-            .map(|e| EntryLine {
-                account_id: e.account_id,
-                flat_id: e.flat_id,
-                debit: e.credit,
-                credit: e.debit,
-            })
-            .collect();
-        ledger::post_transaction(
+        reverse_transaction(
             conn,
-            PostTransactionRequest {
-                transaction_date: as_of,
-                description: &format!("Voiding invoice: {}", reason),
-                source_type: "INVOICE_VOID",
-                source_id: Some(invoice_id.0),
-                reverses_transaction_id: Some(original_transaction_id),
-                entries: reversed,
-                created_by,
-            },
+            original_transaction_id,
+            &format!("Voiding invoice: {}", reason),
+            "INVOICE_VOID",
+            invoice_id.0,
+            as_of,
+            created_by,
         )
+        .await?;
+    }
+
+    for interest_transaction_id in db::get_interest_charge_transaction_ids(conn, invoice_id)
         .await
-        .map_err(BillingError::Post)?;
+        .map_err(BillingError::Db)?
+    {
+        reverse_transaction(
+            conn,
+            interest_transaction_id,
+            &format!("Reversing interest charge on voided invoice: {}", reason),
+            "INTEREST_VOID",
+            invoice_id.0,
+            as_of,
+            created_by,
+        )
+        .await?;
     }
 
     db::void_invoice(conn, invoice_id, reason)
@@ -363,9 +391,8 @@ pub async fn void_invoice(
     Ok(())
 }
 
-/// Computes and posts interest for one overdue invoice as of `as_of`. Posted as its
-/// own transaction (Dr. Receivable / Cr. Interest Income) — never merged into the
-/// invoice's own total_amount, so the original billed amount stays intact.
+/// Posts interest for one overdue invoice as its own transaction (Dr. Receivable /
+/// Cr. Interest Income), separate from the invoice's own total_amount.
 pub async fn charge_interest_for_invoice(
     conn: &mut sqlx::PgConnection,
     invoice: &db::Invoice,
@@ -378,14 +405,8 @@ pub async fn charge_interest_for_invoice(
         return Ok(None);
     }
     let days_overdue = (as_of - invoice.due_date).num_days() as i32;
-    // Total interest owed as of today, on the whole overdue period since due_date —
-    // then charge only what hasn't already been posted in a prior run. Recomputing
-    // the full-period total each time (rather than tracking a running day-count) is
-    // deliberate: it stays correct even if `overdue_amount` changes between runs
-    // (a partial payment), since each run's total reflects the current balance.
-    // Charging the raw total every run instead of this delta would double- and
-    // triple-count the same days on every subsequent run — the whole point of this
-    // subtraction.
+    // Recompute the full-period total, then charge only the delta not yet posted —
+    // keeps re-runs correct after partial payments without double-charging.
     let total_interest_accrued = interest::compute_interest(rule, overdue_amount, days_overdue);
     let already_charged = db::sum_interest_charged(conn, invoice.invoice_id).await?;
     let interest_amount = total_interest_accrued - already_charged;
@@ -445,8 +466,7 @@ pub async fn charge_interest_for_invoice(
     Ok(Some(transaction_id))
 }
 
-/// Runs the interest job for every currently-overdue invoice. Meant to be hit by an
-/// external trigger (e.g. Cloud Scheduler) — this codebase has no in-process cron.
+/// Runs the interest job for every currently-overdue invoice.
 pub async fn run_interest_for_all_overdue(
     conn: &mut sqlx::PgConnection,
     as_of: NaiveDate,
@@ -466,4 +486,54 @@ pub async fn run_interest_for_all_overdue(
         }
     }
     Ok(charged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    fn slab_plan(slabs_json: serde_json::Value) -> BillingPlan {
+        BillingPlan {
+            billing_plan_id: crate::BillingPlanId(1),
+            name: "Slab Plan".to_string(),
+            billing_type: "SLAB".to_string(),
+            config: serde_json::json!({ "slabs": slabs_json }),
+            frequency: "MONTHLY".to_string(),
+            is_active: true,
+            created_by: 1,
+        }
+    }
+
+    /// Selection must pick the smallest covering slab regardless of config order.
+    #[test]
+    fn slab_selection_is_correct_even_when_config_is_not_sorted_ascending() {
+        let unsorted = slab_plan(serde_json::json!([
+            { "max_sqft": 999999, "amount": 7000 },
+            { "max_sqft": 800, "amount": 3500 },
+            { "max_sqft": 1200, "amount": 5000 },
+        ]));
+
+        assert_eq!(
+            compute_base_amount(1, &unsorted, Some(dec!(650))).unwrap(),
+            dec!(3500),
+            "650 sqft must land in the 0-800 band regardless of array order"
+        );
+        assert_eq!(
+            compute_base_amount(1, &unsorted, Some(dec!(1000))).unwrap(),
+            dec!(5000),
+            "1000 sqft must land in the 800-1200 band, not the first (largest) one listed"
+        );
+        assert_eq!(
+            compute_base_amount(1, &unsorted, Some(dec!(1500))).unwrap(),
+            dec!(7000)
+        );
+    }
+
+    #[test]
+    fn slab_selection_rejects_area_above_every_slab() {
+        let plan = slab_plan(serde_json::json!([{ "max_sqft": 800, "amount": 3500 }]));
+        let result = compute_base_amount(1, &plan, Some(dec!(5000)));
+        assert!(matches!(result, Err(BillingError::InvalidSlabConfig(1))));
+    }
 }

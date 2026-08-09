@@ -31,6 +31,18 @@ pub async fn create_fund_contribution_rule(
             "contribution_type must be FIXED or PCT_OF_MAINTENANCE",
         ));
     }
+    if payload.amount_or_pct < Decimal::ZERO {
+        return Err(crate::handlers::error::bad_request(
+            "amount_or_pct cannot be negative",
+        ));
+    }
+    if payload.contribution_type == "PCT_OF_MAINTENANCE"
+        && payload.amount_or_pct > Decimal::from(100)
+    {
+        return Err(crate::handlers::error::bad_request(
+            "amount_or_pct cannot exceed 100 for PCT_OF_MAINTENANCE",
+        ));
+    }
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let rule_id = accounting::db::insert_fund_contribution_rule(
         &mut conn,

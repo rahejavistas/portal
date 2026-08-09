@@ -14,9 +14,7 @@ pub struct PostTransactionRequest<'a> {
     pub transaction_date: NaiveDate,
     pub description: &'a str,
     pub source_type: &'a str,
-    /// Polymorphic FK-by-convention (an invoice_id, payment_id, ...) whose meaning
-    /// depends on `source_type` — deliberately a raw `Uuid`, not one of the entity
-    /// newtypes, since no single type could describe it.
+    /// Polymorphic FK (invoice_id, payment_id, ...) whose meaning depends on `source_type`.
     pub source_id: Option<Uuid>,
     pub reverses_transaction_id: Option<TransactionId>,
     pub entries: Vec<EntryLine>,
@@ -66,10 +64,8 @@ impl From<sqlx::Error> for PostError {
     }
 }
 
-/// The only function anywhere that writes to ledger_transactions/ledger_entries —
-/// rejects unbalanced entries and posting into a closed fiscal year outright. Caller
-/// owns the surrounding DB transaction (see billing::generate_invoice_for_flat for the
-/// typical shape: begin, insert domain row, post_transaction, link, commit).
+/// The only function that writes to ledger_transactions/ledger_entries. Rejects
+/// unbalanced entries and posting into a closed fiscal year. Caller owns the transaction.
 pub async fn post_transaction(
     conn: &mut sqlx::PgConnection,
     req: PostTransactionRequest<'_>,

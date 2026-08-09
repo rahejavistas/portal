@@ -6,11 +6,8 @@ pub struct TdsCalculation<'a> {
     pub tds_amount: Decimal,
 }
 
-/// Whether TDS applies to this payment, and how much. Crosses the threshold if EITHER
-/// this single payment, or the running year-to-date total for this vendor including
-/// this payment, exceeds the rule's threshold — per section 194C/194J/194I etc., TDS
-/// becomes due once the annual aggregate crosses the limit even if no single payment
-/// did.
+/// Whether TDS applies, and how much — crosses the threshold if this payment or the
+/// running year-to-date total for this vendor exceeds the rule's threshold.
 pub fn resolve_tds<'a>(
     rules: &'a [TdsRule],
     payment_category: &str,

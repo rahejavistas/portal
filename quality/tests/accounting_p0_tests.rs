@@ -518,6 +518,8 @@ async fn test_resident_payment_claim_submit_confirm_and_reject() {
     .send_json(serde_json::json!({}))
     .expect("confirm claim failed");
     assert_eq!(confirm_resp.status(), 200);
+    let confirm_val: serde_json::Value = confirm_resp.into_json().unwrap();
+    let payment_id = confirm_val["payment_id"].as_str().unwrap().to_string();
 
     let list_after = ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
         .set("Authorization", &admin_auth)
@@ -526,16 +528,50 @@ async fn test_resident_payment_claim_submit_confirm_and_reject() {
     let invoices_after: serde_json::Value = list_after.into_json().unwrap();
     assert_eq!(invoices_after[0]["status"], "PAID");
 
-    // Confirming the same claim twice must fail (already reviewed).
+    // Confirming the same claim again (e.g. a retried request) must be treated as the
+    // same action repeated, not an error — it returns the same payment already posted,
+    // never posts a second one.
     let reconfirm = ureq::post(&format!(
         "{}/api/v1/admin/accounting/claims/{}/confirm",
         url, claim_id
     ))
     .set("Authorization", &admin_auth)
-    .send_json(serde_json::json!({}));
-    assert!(reconfirm.is_err());
+    .send_json(serde_json::json!({}))
+    .expect("repeated confirm must succeed idempotently");
+    assert_eq!(reconfirm.status(), 200);
+    let reconfirm_val: serde_json::Value = reconfirm.into_json().unwrap();
     assert_eq!(
-        reconfirm.unwrap_err().into_response().unwrap().status(),
+        reconfirm_val["payment_id"].as_str().unwrap(),
+        payment_id,
+        "a repeated confirm must return the SAME payment_id, never post a second payment"
+    );
+
+    let payments_after_reconfirm =
+        ureq::post(&format!("{}/api/v1/admin/accounting/payments/list", url))
+            .set("Authorization", &admin_auth)
+            .send_json(serde_json::json!({ "invoice_id": invoice_id }))
+            .expect("list payments failed");
+    let payments_val: serde_json::Value = payments_after_reconfirm.into_json().unwrap();
+    assert_eq!(
+        payments_val.as_array().unwrap().len(),
+        1,
+        "repeated confirm must not create a second payment"
+    );
+
+    // Rejecting an already-CONFIRMED claim is a real conflict, not a retry — must fail.
+    let reject_confirmed = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/claims/{}/reject",
+        url, claim_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "review_note": "too late" }));
+    assert!(reject_confirmed.is_err());
+    assert_eq!(
+        reject_confirmed
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
         400
     );
 
@@ -570,6 +606,16 @@ async fn test_resident_payment_claim_submit_confirm_and_reject() {
     .expect("reject claim failed");
     assert_eq!(reject_resp.status(), 204);
 
+    // Rejecting the same already-REJECTED claim again is a no-op retry, not an error.
+    let re_reject = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/claims/{}/reject",
+        url, claim2_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "review_note": "still no match" }))
+    .expect("repeated reject must succeed idempotently");
+    assert_eq!(re_reject.status(), 204);
+
     let list_final = ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
         .set("Authorization", &admin_auth)
         .send_json(serde_json::json!({ "flat_id": flat_id }))
@@ -582,6 +628,88 @@ async fn test_resident_payment_claim_submit_confirm_and_reject() {
         .find(|i| i["invoice_id"] == invoice2_id)
         .unwrap();
     assert_eq!(inv2["status"], "UNPAID");
+}
+
+/// Double-submitting the exact same claim (a retried request, a double-tap on the
+/// submit button) must not create a second PENDING row in the admin review queue.
+/// Once the first is reviewed, the same reference must be free to submit again.
+#[tokio::test]
+async fn test_duplicate_pending_claim_submission_is_idempotent() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let email = "claimdupe@vistas.com";
+    let _ = quick_create_user(&env, &admin_jwt, email, "E", "0707");
+    let flat_id = flat_id_for(&env, "E", "0707").await;
+    let plan_id = create_flat_rate_plan(&url, &admin_auth, 4000);
+    assign_plan(&url, &admin_auth, flat_id, plan_id);
+    let gen = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_id,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_id = gen["invoices_created"][0].as_str().unwrap().to_string();
+
+    let resident_jwt = quality::quick_onboard_user(&env, email, "resident_pass_secure_123");
+    let resident_auth = auth(&resident_jwt);
+
+    let submit_claim = || {
+        ureq::post(&format!("{}/api/v1/accounting/claims/submit", url))
+            .set("Authorization", &resident_auth)
+            .send_json(serde_json::json!({
+                "invoice_id": invoice_id, "amount": 4000, "payment_method": "upi",
+                "reference_number": "UPI-CLAIM-DUPE-1"
+            }))
+            .expect("submit claim failed")
+            .into_json::<serde_json::Value>()
+            .unwrap()
+    };
+
+    let first = submit_claim();
+    let second = submit_claim();
+    assert_eq!(
+        first["claim_id"], second["claim_id"],
+        "a double-submitted claim must return the same claim, not create a second PENDING row"
+    );
+
+    let list_resp = ureq::post(&format!("{}/api/v1/admin/accounting/claims/list", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "status": "PENDING" }))
+        .expect("list claims failed");
+    let claims: serde_json::Value = list_resp.into_json().unwrap();
+    assert_eq!(
+        claims
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["reference_number"] == "UPI-CLAIM-DUPE-1")
+            .count(),
+        1,
+        "only one PENDING claim must exist for this reference"
+    );
+
+    let claim_id = first["claim_id"].as_str().unwrap();
+    let reject_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/claims/{}/reject",
+        url, claim_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "review_note": "Testing resubmission" }))
+    .expect("reject claim failed");
+    assert_eq!(reject_resp.status(), 204);
+
+    // After rejection, the exact same reference must be submittable again — a NEW
+    // PENDING claim, not blocked by the now-reviewed one.
+    let third = submit_claim();
+    assert_ne!(
+        third["claim_id"], first["claim_id"],
+        "after rejection, resubmitting the same reference must create a fresh claim"
+    );
 }
 
 /// Voiding an invoice that already has money against it would silently corrupt the
@@ -916,6 +1044,69 @@ async fn test_duplicate_cash_payment_submission_is_idempotent() {
     );
 }
 
+/// Reusing the same (payment_method, reference_number) with a DIFFERENT amount must be
+/// rejected outright, not silently treated as the same idempotent retry and handed back
+/// the earlier receipt — that would tell the caller the wrong amount was recorded.
+#[tokio::test]
+async fn test_reusing_a_payment_reference_with_a_different_amount_is_rejected() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let _ = quick_create_user(&env, &admin_jwt, "refmismatch@vistas.com", "J", "1002");
+    let flat_id = flat_id_for(&env, "J", "1002").await;
+    let plan_id = create_flat_rate_plan(&url, &admin_auth, 4000);
+    assign_plan(&url, &admin_auth, flat_id, plan_id);
+    let gen = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_id,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_id = gen["invoices_created"][0].as_str().unwrap().to_string();
+
+    let first = ureq::post(&format!("{}/api/v1/admin/accounting/payments/record", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "invoice_id": invoice_id, "amount": 3000, "payment_method": "upi",
+            "reference_number": "UPI-MISMATCH-1", "payment_date": "2026-07-05"
+        }))
+        .expect("first payment failed");
+    assert_eq!(first.status(), 200);
+
+    let mismatched = ureq::post(&format!("{}/api/v1/admin/accounting/payments/record", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "invoice_id": invoice_id, "amount": 4000, "payment_method": "upi",
+            "reference_number": "UPI-MISMATCH-1", "payment_date": "2026-07-06"
+        }));
+    assert!(
+        mismatched.is_err(),
+        "same reference with a different amount must be rejected, not silently accepted"
+    );
+    assert_eq!(
+        mismatched.unwrap_err().into_response().unwrap().status(),
+        400
+    );
+
+    // The invoice must reflect only the first, genuinely-recorded payment.
+    let list_resp = ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "flat_id": flat_id }))
+        .expect("list invoices failed");
+    let invoices: serde_json::Value = list_resp.into_json().unwrap();
+    let invoice = invoices
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["invoice_id"] == invoice_id)
+        .unwrap();
+    assert_eq!(invoice["amount_paid"].as_str().unwrap(), "3000.00");
+}
+
 /// Generating a second invoice for a flat covering the same billing period must be
 /// rejected — this is what makes the whole invoicing flow idempotent/safe to re-run.
 #[tokio::test]
@@ -1086,6 +1277,131 @@ async fn test_billing_assignments_lists_every_flat_including_unassigned() {
         .expect("unassigned flat must still appear in the list");
     assert!(unassigned_row["billing_plan_id"].is_null());
     assert!(unassigned_row["billing_plan_name"].is_null());
+}
+
+/// A flat's area is a property of the flat itself, not of whichever billing plan
+/// happens to be assigned to it — it must survive reassignment to a different plan
+/// (with no area_sqft re-entered), and correctly feed the new plan's calculation.
+#[tokio::test]
+async fn test_flat_area_sqft_persists_across_billing_plan_reassignment() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let _ = quick_create_user(&env, &admin_jwt, "areapersist@vistas.com", "AR", "0101");
+    let flat_id = flat_id_for(&env, "AR", "0101").await;
+
+    let per_sqft_plan_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/billing-plans/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "name": "Per Sqft Plan A", "billing_type": "PER_SQFT",
+        "config": {"rate_per_sqft": 5}, "frequency": "MONTHLY"
+    }))
+    .expect("create per-sqft plan failed");
+    let per_sqft_plan_id: i64 = per_sqft_plan_resp
+        .into_json::<serde_json::Value>()
+        .unwrap()
+        .as_i64()
+        .unwrap();
+
+    ureq::post(&format!(
+        "{}/api/v1/admin/accounting/billing-plans/assign",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "flat_id": flat_id, "billing_plan_id": per_sqft_plan_id, "area_sqft": 900
+    }))
+    .expect("assign with area failed");
+
+    let assignments = |auth_hdr: &str| {
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/assignments",
+            url
+        ))
+        .set("Authorization", auth_hdr)
+        .send_json(serde_json::json!({}))
+        .expect("list assignments failed")
+        .into_json::<serde_json::Value>()
+        .unwrap()
+    };
+
+    let rows = assignments(&admin_auth);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["flat_id"].as_i64().unwrap() as i32 == flat_id)
+        .unwrap();
+    assert_eq!(row["area_sqft"].as_str().unwrap(), "900.00");
+
+    // Reassign to a DIFFERENT plan without specifying area_sqft at all.
+    let second_plan_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/billing-plans/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "name": "Per Sqft Plan B", "billing_type": "PER_SQFT",
+        "config": {"rate_per_sqft": 8}, "frequency": "MONTHLY"
+    }))
+    .expect("create second per-sqft plan failed");
+    let second_plan_id: i64 = second_plan_resp
+        .into_json::<serde_json::Value>()
+        .unwrap()
+        .as_i64()
+        .unwrap();
+
+    ureq::post(&format!(
+        "{}/api/v1/admin/accounting/billing-plans/assign",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "flat_id": flat_id, "billing_plan_id": second_plan_id
+    }))
+    .expect("reassign without area failed");
+
+    let rows_after = assignments(&admin_auth);
+    let row_after = rows_after
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["flat_id"].as_i64().unwrap() as i32 == flat_id)
+        .unwrap();
+    assert_eq!(
+        row_after["area_sqft"].as_str().unwrap(),
+        "900.00",
+        "area must persist across reassignment even though it wasn't re-entered"
+    );
+    assert_eq!(row_after["billing_plan_name"], "Per Sqft Plan B");
+
+    // Generating a bill against the new plan must use the persisted area: 900 * 8 = 7200.
+    let gen = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_id,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_id = gen["invoices_created"][0].as_str().unwrap().to_string();
+    let list_resp = ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "flat_id": flat_id }))
+        .expect("list invoices failed");
+    let invoices: serde_json::Value = list_resp.into_json().unwrap();
+    let invoice = invoices
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["invoice_id"] == invoice_id)
+        .unwrap();
+    assert_eq!(invoice["subtotal"].as_str().unwrap(), "7200.00");
 }
 
 /// A resident's "my bills" view (`/invoices/mine`) takes no flat_id from the request at
@@ -1604,6 +1920,138 @@ async fn test_pdf_dispatcher_routes_multiple_kinds_and_rejects_unknown() {
         sample_receipt.header("Content-Type").unwrap(),
         "application/pdf"
     );
+}
+
+/// A resident hitting the member-facing PDF endpoint for another flat's invoice/
+/// receipt/statement/NOC must be rejected before anything is rendered or disclosed —
+/// and a genuinely nonexistent id must produce the exact same error as one that exists
+/// but isn't theirs, so the error itself can't be used to enumerate other residents'
+/// invoices or payments.
+#[tokio::test]
+async fn test_member_document_pdf_rejects_another_flats_documents_without_leaking_which() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let _ = quick_create_user(&env, &admin_jwt, "pdfidor-a@vistas.com", "P", "0101");
+    let _ = quick_create_user(&env, &admin_jwt, "pdfidor-b@vistas.com", "P", "0102");
+    let flat_a = flat_id_for(&env, "P", "0101").await;
+    let flat_b = flat_id_for(&env, "P", "0102").await;
+
+    let plan_id = create_flat_rate_plan(&url, &admin_auth, 4000);
+    assign_plan(&url, &admin_auth, flat_a, plan_id);
+    assign_plan(&url, &admin_auth, flat_b, plan_id);
+
+    let gen_a = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_a,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_a = gen_a["invoices_created"][0].as_str().unwrap().to_string();
+
+    let gen_b = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_b,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_b = gen_b["invoices_created"][0].as_str().unwrap().to_string();
+
+    let pay_b = ureq::post(&format!("{}/api/v1/admin/accounting/payments/record", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "invoice_id": invoice_b, "amount": 4000, "payment_method": "upi",
+            "reference_number": "PDFIDORB1", "payment_date": "2026-07-05"
+        }))
+        .expect("record payment for flat b failed");
+    let payment_b: serde_json::Value = pay_b.into_json().unwrap();
+    let payments_b_list = ureq::post(&format!("{}/api/v1/admin/accounting/payments/list", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "invoice_id": invoice_b }))
+        .expect("list payments for flat b failed");
+    let payments_b_val: serde_json::Value = payments_b_list.into_json().unwrap();
+    let payment_b_id = payments_b_val[0]["payment_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(payment_b["receipt_number"]
+        .as_str()
+        .unwrap()
+        .starts_with("RCT-"));
+
+    let resident_a_jwt =
+        quality::quick_onboard_user(&env, "pdfidor-a@vistas.com", "resident_pass_secure_123");
+    let resident_a_auth = auth(&resident_a_jwt);
+
+    let forbidden_cases: Vec<(&str, serde_json::Value)> = vec![
+        (
+            "invoice for flat B",
+            serde_json::json!({ "kind": "invoice", "invoice_id": invoice_b }),
+        ),
+        (
+            "receipt for flat B",
+            serde_json::json!({ "kind": "receipt", "payment_id": payment_b_id }),
+        ),
+        (
+            "statement for flat B",
+            serde_json::json!({
+                "kind": "statement", "flat_id": flat_b,
+                "date_from": "2026-07-01", "date_to": "2026-07-31"
+            }),
+        ),
+        (
+            "noc for flat B",
+            serde_json::json!({ "kind": "noc", "flat_id": flat_b }),
+        ),
+        (
+            "nonexistent invoice_id",
+            serde_json::json!({
+                "kind": "invoice", "invoice_id": "00000000-0000-0000-0000-000000000000"
+            }),
+        ),
+        (
+            "nonexistent payment_id",
+            serde_json::json!({
+                "kind": "receipt", "payment_id": "00000000-0000-0000-0000-000000000000"
+            }),
+        ),
+    ];
+
+    let mut bodies = Vec::new();
+    for (label, body) in forbidden_cases {
+        let resp = ureq::post(&format!("{}/api/v1/accounting/documents/pdf", url))
+            .set("Authorization", &resident_a_auth)
+            .send_json(body);
+        let err = resp.expect_err(&format!("{label} must be rejected"));
+        let response = err.into_response().unwrap();
+        assert_eq!(
+            response.status(),
+            403,
+            "{label} must be 403, not leak existence via 404"
+        );
+        bodies.push((label, response.into_string().unwrap()));
+    }
+    let first_body = &bodies[0].1;
+    for (label, body) in &bodies[1..] {
+        assert_eq!(
+            body, first_body,
+            "{} produced a different error body than {} — that difference itself leaks which ids are real",
+            label, bodies[0].0
+        );
+    }
+
+    // The exact same requests for resident A's own flat must succeed.
+    let own_invoice = ureq::post(&format!("{}/api/v1/accounting/documents/pdf", url))
+        .set("Authorization", &resident_a_auth)
+        .send_json(serde_json::json!({ "kind": "invoice", "invoice_id": invoice_a }))
+        .expect("resident must be able to fetch their own invoice pdf");
+    assert_eq!(own_invoice.status(), 200);
 }
 
 fn extract_pdf_text(bytes: &[u8]) -> String {

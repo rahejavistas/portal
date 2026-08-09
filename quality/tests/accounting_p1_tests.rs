@@ -211,6 +211,91 @@ async fn test_vendor_expense_tds_and_approval_posts_correctly() {
     assert!(rereject.is_err());
 }
 
+/// Submitting an expense that crosses a TDS threshold speculatively records a TDS
+/// record before anyone has approved anything — if the expense is then REJECTED, that
+/// record must be deleted. A vendor's TDS summary (Form 16A source data) must never
+/// show tax deducted on money that was never actually paid.
+#[tokio::test]
+async fn test_rejecting_a_tds_crossing_expense_removes_its_tds_record() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/create", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "section": "194C",
+            "payment_category": "contractor",
+            "rate_pct": 1,
+            "threshold_single_payment": 30000,
+            "threshold_annual_aggregate": 100000,
+            "effective_from": "2026-04-01"
+        }))
+        .expect("create tds rule failed");
+
+    let vendor_id: i64 = ureq::post(&format!("{}/api/v1/admin/accounting/vendors/create", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "name": "Rejected Co", "category": "security" }))
+        .expect("create vendor failed")
+        .into_json::<serde_json::Value>()
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    let security_account = account_id_for(&env, "5100").await;
+
+    let expense_id = ureq::post(&format!("{}/api/v1/admin/accounting/expenses/submit", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "vendor_id": vendor_id,
+            "account_id": security_account,
+            "payment_category": "contractor",
+            "vendor_invoice_number": "REJ-INV-001",
+            "amount": 35000,
+            "expense_date": "2026-07-15"
+        }))
+        .expect("submit expense failed")
+        .into_json::<serde_json::Value>()
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let fy_id = current_fiscal_year_id(&env).await;
+    let before = ureq::post(&format!("{}/api/v1/admin/accounting/tds-summary", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "vendor_id": vendor_id, "fiscal_year_id": fy_id }))
+        .expect("tds summary failed")
+        .into_json::<serde_json::Value>()
+        .unwrap();
+    assert_eq!(
+        before.as_array().unwrap().len(),
+        1,
+        "submitting a TDS-crossing expense must record it, even before approval"
+    );
+
+    let reject_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/expenses/{}/reject",
+        url, expense_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "reason": "Invoice amount disputed" }))
+    .expect("reject expense failed");
+    assert_eq!(reject_resp.status(), 204);
+
+    let after = ureq::post(&format!("{}/api/v1/admin/accounting/tds-summary", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "vendor_id": vendor_id, "fiscal_year_id": fy_id }))
+        .expect("tds summary failed")
+        .into_json::<serde_json::Value>()
+        .unwrap();
+    assert!(
+        after.as_array().unwrap().is_empty(),
+        "rejecting the expense must remove its TDS record — got {:?}",
+        after
+    );
+}
+
 /// A purchase order belongs to exactly one vendor — submitting an expense against it
 /// while billing a DIFFERENT vendor would corrupt that vendor's spend history and PO
 /// tracking with no error at all if left unchecked.
@@ -979,4 +1064,358 @@ async fn test_settings_overview_reflects_all_categories() {
             .unwrap(),
         "HDFC Bank"
     );
+}
+
+/// A flat that has churned through several owners over time (each revoked ownership
+/// left behind as an inactive `flat_ownerships` row, plus one currently active one) must
+/// still appear exactly once in the defaulters report, with the correct current owner
+/// and an undoubled total — this report drives legal notices, so the amount has to be
+/// exact. `flat_id` carries at most one active ownership row at a time (enforced by a
+/// partial unique index), but historical inactive rows for the same flat are common and
+/// must not multiply the joined invoice total.
+#[tokio::test]
+async fn test_defaulters_report_is_correct_for_a_flat_with_ownership_history() {
+    let env = setup_api_test_env().await;
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_user_id: i32 =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE email = 'superadmin@vistas.com'")
+            .fetch_one(&env.db_pool)
+            .await
+            .unwrap();
+    let _ = quick_create_user(&env, &admin_jwt, "multiowner@vistas.com", "Q", "0101");
+    let flat_id = flat_id_for(&env, "Q", "0101").await;
+
+    // A previous owner, no longer active — their ownership record is never deleted,
+    // only marked inactive, so it stays in the table forever.
+    let former_owner_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) VALUES ('multiowner-former@vistas.com', TRUE) RETURNING user_id",
+    )
+    .fetch_one(&env.db_pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO flat_ownerships (flat_id, user_id, is_active) VALUES ($1, $2, FALSE)")
+        .bind(flat_id)
+        .bind(former_owner_id)
+        .execute(&env.db_pool)
+        .await
+        .unwrap();
+
+    let fiscal_year_id = current_fiscal_year_id(&env).await;
+    sqlx::query(
+        "INSERT INTO invoices \
+            (invoice_number, flat_id, fiscal_year_id, billing_period_start, billing_period_end, \
+             due_date, subtotal, total_amount, status, created_by) \
+         VALUES ('DEFAULT-TEST-001', $1, $2, '2026-06-01', '2026-06-30', '2026-06-10', \
+                 5000, 5000, 'UNPAID', $3)",
+    )
+    .bind(flat_id)
+    .bind(fiscal_year_id)
+    .bind(admin_user_id)
+    .execute(&env.db_pool)
+    .await
+    .unwrap();
+
+    let mut conn = env.db_pool.acquire().await.unwrap();
+    let as_of = chrono::NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+    let rows = accounting::reports::defaulters(&mut conn, as_of, 1)
+        .await
+        .expect("defaulters report failed");
+    let row = rows
+        .iter()
+        .find(|r| r.flat_id == flat_id)
+        .expect("flat must appear in the defaulters report");
+    assert_eq!(
+        rows.iter().filter(|r| r.flat_id == flat_id).count(),
+        1,
+        "a flat with ownership history must appear exactly once, not once per historical owner"
+    );
+    assert_eq!(
+        row.total_outstanding,
+        rust_decimal::Decimal::new(500000, 2),
+        "outstanding total must not be inflated by a historical inactive ownership row"
+    );
+    assert_eq!(
+        row.unpaid_invoice_count, 1,
+        "invoice count must not be inflated by a historical inactive ownership row"
+    );
+    assert_eq!(
+        row.owner_email.as_deref(),
+        Some("multiowner@vistas.com"),
+        "the report must show the current active owner, not the former one"
+    );
+}
+
+/// A fiscal year where an expense account ends up net-credit (a reversal larger than
+/// that account's normal debits this year — an edge case, but a real one) must still
+/// close cleanly. `ledger_entries` requires non-negative, one-sided debit/credit, so
+/// naively posting the raw (possibly negative) balance would violate that constraint
+/// outright and fail to close the year at all.
+#[tokio::test]
+async fn test_fiscal_year_close_handles_an_account_with_a_net_credit_expense_balance() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+    let admin_user_id: i32 =
+        sqlx::query_scalar("SELECT user_id FROM users WHERE email = 'superadmin@vistas.com'")
+            .fetch_one(&env.db_pool)
+            .await
+            .unwrap();
+
+    let fy_id = current_fiscal_year_id(&env).await;
+    let expense_account_id = account_id_for(&env, "5100").await; // Security Expense
+    let payables_account_id = account_id_for(&env, "2200").await; // Vendor Payables
+
+    // Normal expense posting: Dr Expense 1000 / Cr Vendor Payables 1000.
+    let tx1: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO ledger_transactions (fiscal_year_id, transaction_date, description, source_type, created_by) \
+         VALUES ($1, '2026-06-01', 'Normal expense', 'EXPENSE', $2) RETURNING transaction_id",
+    )
+    .bind(fy_id)
+    .bind(admin_user_id)
+    .fetch_one(&env.db_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO ledger_entries (transaction_id, account_id, debit, credit) VALUES \
+         ($1, $2, 1000, 0), ($1, $3, 0, 1000)",
+    )
+    .bind(tx1)
+    .bind(expense_account_id)
+    .bind(payables_account_id)
+    .execute(&env.db_pool)
+    .await
+    .unwrap();
+
+    // A larger correcting reversal: Dr Vendor Payables 1500 / Cr Expense 1500 — leaves
+    // the expense account net CREDIT 500 for the fiscal year.
+    let tx2: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO ledger_transactions (fiscal_year_id, transaction_date, description, source_type, created_by) \
+         VALUES ($1, '2026-06-15', 'Correcting reversal', 'EXPENSE', $2) RETURNING transaction_id",
+    )
+    .bind(fy_id)
+    .bind(admin_user_id)
+    .fetch_one(&env.db_pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO ledger_entries (transaction_id, account_id, debit, credit) VALUES \
+         ($1, $2, 1500, 0), ($1, $3, 0, 1500)",
+    )
+    .bind(tx2)
+    .bind(payables_account_id)
+    .bind(expense_account_id)
+    .execute(&env.db_pool)
+    .await
+    .unwrap();
+
+    let close_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/fiscal-years/{}/close",
+        url, fy_id
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({}));
+    let close_resp = close_resp.expect("close must succeed, not fail a debit>=0 constraint");
+    assert_eq!(close_resp.status(), 200);
+
+    let closing_val: serde_json::Value = close_resp.into_json().unwrap();
+    let closing_transaction_id = closing_val["closing_transaction_id"].as_str().unwrap();
+
+    // The expense account's net-credit 500 balance must post as a DEBIT of 500 (moving
+    // it back to zero), never as a negative credit.
+    let entry: (rust_decimal::Decimal, rust_decimal::Decimal) = sqlx::query_as(
+        "SELECT debit, credit FROM ledger_entries \
+         WHERE transaction_id = $1::uuid AND account_id = $2",
+    )
+    .bind(closing_transaction_id)
+    .bind(expense_account_id)
+    .fetch_one(&env.db_pool)
+    .await
+    .expect("closing entry for the expense account must exist");
+    assert_eq!(
+        entry.0,
+        rust_decimal::Decimal::new(50000, 2),
+        "must debit 500.00"
+    );
+    assert_eq!(entry.1, rust_decimal::Decimal::ZERO);
+}
+
+fn upload_statement_csv(url: &str, admin_auth: &str, csv_content: &str) -> ureq::Response {
+    ureq::post(&format!(
+        "{}/api/v1/admin/accounting/bank-reconciliation/import",
+        url
+    ))
+    .set("Authorization", admin_auth)
+    .set("Content-Type", "multipart/form-data; boundary=----boundary")
+    .send_string(&format!(
+        "------boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"stmt.csv\"\r\nContent-Type: text/csv\r\n\r\n{}\r\n------boundary--\r\n",
+        csv_content
+    ))
+    .expect("import statement request failed")
+}
+
+/// A statement with both "Value Date" and "Transaction Date" columns (both containing
+/// "date") must be rejected as ambiguous rather than silently picking whichever comes
+/// first — the two columns can hold genuinely different dates for the same line, and
+/// guessing wrong means every imported line is misdated.
+#[tokio::test]
+async fn test_statement_import_rejects_ambiguous_date_columns() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let csv_content =
+        "Value Date,Posting Date,Description,Amount\n2026-07-01,2026-07-02,NEFT CR,5000\n";
+    let resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/bank-reconciliation/import",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .set("Content-Type", "multipart/form-data; boundary=----boundary")
+    .send_string(&format!(
+        "------boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"stmt.csv\"\r\nContent-Type: text/csv\r\n\r\n{}\r\n------boundary--\r\n",
+        csv_content
+    ));
+    assert!(
+        resp.is_err(),
+        "two columns both matching 'date' with no exact match must be rejected"
+    );
+    assert_eq!(resp.unwrap_err().into_response().unwrap().status(), 400);
+}
+
+/// A statement with an exact "Amount" column AND an unrelated "Balance Amount" column
+/// must select "Amount" itself (the exact match), not the first substring hit in
+/// column order — and a "Narration" column (a real bank export's name for the
+/// description field) must be recognized as the description column.
+#[tokio::test]
+async fn test_statement_import_prefers_exact_header_match_over_substring() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    // "Balance Amount" (a substring match for "amount") appears BEFORE the exact
+    // "Amount" column — if substring-first-match were still in play, 25000 (the
+    // running balance) would be imported as the transaction amount instead of 5000.
+    let csv_content =
+        "Date,Narration,Balance Amount,Amount\n2026-07-01,NEFT CR SEEDNEFT001,25000,5000\n";
+    let resp = upload_statement_csv(&url, &admin_auth, csv_content);
+    assert_eq!(resp.status(), 201);
+    let val: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(val["lines_imported"].as_u64().unwrap(), 1);
+    let import_id = val["import_id"].as_str().unwrap().to_string();
+
+    let lines_resp = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/bank-reconciliation/lines/list",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({ "import_id": import_id }))
+    .expect("list lines failed");
+    let lines: serde_json::Value = lines_resp.into_json().unwrap();
+    assert_eq!(
+        lines[0]["amount"].as_str().unwrap(),
+        "5000.00",
+        "must import the exact 'Amount' column, not 'Balance Amount'"
+    );
+    assert_eq!(
+        lines[0]["description"].as_str().unwrap(),
+        "NEFT CR SEEDNEFT001",
+        "must recognize 'Narration' as the description column"
+    );
+}
+
+/// A TDS rate/threshold or fund contribution amount is admin-entered configuration
+/// data that flows straight into resident billing and vendor payables — a negative
+/// rate, a negative threshold, or a percentage over 100 must be rejected outright, not
+/// silently accepted and produce nonsense amounts down the line.
+#[tokio::test]
+async fn test_tds_and_fund_rule_creation_rejects_invalid_rates_and_amounts() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let bad_tds_rate = ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/create", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({
+            "section": "194C", "payment_category": "contractor", "rate_pct": -5,
+            "threshold_single_payment": 30000, "threshold_annual_aggregate": 100000,
+            "effective_from": "2026-04-01"
+        }));
+    assert!(bad_tds_rate.is_err(), "negative rate_pct must be rejected");
+    assert_eq!(
+        bad_tds_rate.unwrap_err().into_response().unwrap().status(),
+        400
+    );
+
+    let bad_tds_rate_over_100 =
+        ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/create", url))
+            .set("Authorization", &admin_auth)
+            .send_json(serde_json::json!({
+                "section": "194C", "payment_category": "contractor", "rate_pct": 150,
+                "threshold_single_payment": 30000, "threshold_annual_aggregate": 100000,
+                "effective_from": "2026-04-01"
+            }));
+    assert!(
+        bad_tds_rate_over_100.is_err(),
+        "rate_pct over 100 must be rejected"
+    );
+
+    let bad_tds_threshold =
+        ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/create", url))
+            .set("Authorization", &admin_auth)
+            .send_json(serde_json::json!({
+                "section": "194C", "payment_category": "contractor", "rate_pct": 2,
+                "threshold_single_payment": -1, "threshold_annual_aggregate": 100000,
+                "effective_from": "2026-04-01"
+            }));
+    assert!(
+        bad_tds_threshold.is_err(),
+        "negative threshold must be rejected"
+    );
+
+    let fund_id = fund_id_for(&env, "SINKING").await;
+    let bad_fund_negative = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/funds/contribution-rules/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "fund_id": fund_id, "contribution_type": "FIXED", "amount_or_pct": -100,
+        "effective_from": "2026-04-01"
+    }));
+    assert!(
+        bad_fund_negative.is_err(),
+        "negative amount_or_pct must be rejected"
+    );
+
+    let bad_fund_pct_over_100 = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/funds/contribution-rules/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "fund_id": fund_id, "contribution_type": "PCT_OF_MAINTENANCE", "amount_or_pct": 150,
+        "effective_from": "2026-04-01"
+    }));
+    assert!(
+        bad_fund_pct_over_100.is_err(),
+        "PCT_OF_MAINTENANCE amount_or_pct over 100 must be rejected"
+    );
+
+    // A FIXED contribution above 100 is legitimate (it's a rupee amount, not a
+    // percentage) and must still be accepted.
+    let good_fund_fixed = ureq::post(&format!(
+        "{}/api/v1/admin/accounting/funds/contribution-rules/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({
+        "fund_id": fund_id, "contribution_type": "FIXED", "amount_or_pct": 500,
+        "effective_from": "2026-04-01"
+    }))
+    .expect("a large FIXED amount must be accepted");
+    assert_eq!(good_fund_fixed.status(), 201);
 }

@@ -1,10 +1,7 @@
 use crate::db::GstRule;
 use rust_decimal::Decimal;
 
-/// Whether GST applies, and the computed amount. RWA maintenance is exempt entirely
-/// below `per_member_monthly_exempt_threshold`; above it, GST applies to the full
-/// billed amount (not just the excess) — see the CA sign-off note on this threshold
-/// and the full-vs-excess interpretation in the design doc.
+/// Whether GST applies, and the amount. Exempt below the threshold; above it, GST applies to the full amount.
 pub fn compute_gst(rule: &GstRule, base_amount: Decimal) -> (bool, Decimal) {
     if base_amount <= rule.per_member_monthly_exempt_threshold {
         return (false, Decimal::ZERO);

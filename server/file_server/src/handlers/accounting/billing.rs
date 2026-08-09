@@ -74,9 +74,9 @@ pub async fn assign_billing_plan(
     State(state): State<AppState>,
     Json(payload): Json<AssignBillingPlanRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
     accounting::db::upsert_flat_billing_assignment(
-        &mut conn,
+        &mut tx,
         payload.flat_id,
         payload.billing_plan_id,
         payload.area_sqft,
@@ -84,11 +84,11 @@ pub async fn assign_billing_plan(
     )
     .await
     .map_err(internal_err)?;
+    tx.commit().await.map_err(internal_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Every flat and whatever billing plan it currently has assigned (or none) — the
-/// "which units haven't been set up yet" view.
+/// Every flat and whatever billing plan it currently has assigned, if any.
 pub async fn list_billing_assignments(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<accounting::db::FlatBillingAssignmentRow>>, ApiError> {
@@ -109,11 +109,8 @@ pub struct BulkAssignBillingPlanResponse {
     pub flats_assigned: u64,
 }
 
-/// Assigns a FLAT_RATE plan to every flat that doesn't already have a billing
-/// assignment, in one batch — the common case where a society bills everyone the same
-/// base amount and doesn't want to click through every flat individually.
-/// PER_SQFT/SLAB plans need a per-flat `area_sqft`, so those still go through
-/// `assign_billing_plan` one flat at a time.
+/// Assigns a FLAT_RATE plan to every unassigned flat in one batch. PER_SQFT/SLAB plans
+/// need a per-flat area, so those still go through `assign_billing_plan`.
 pub async fn bulk_assign_billing_plan(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -221,8 +218,7 @@ pub async fn list_invoices(
     Ok(Json(invoices))
 }
 
-/// Every invoice for a flat the caller actually owns — never takes a flat_id from the
-/// request, so there's no way to substitute someone else's flat.
+/// Every invoice for a flat the caller owns — never takes a flat_id from the request.
 pub async fn list_my_invoices(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -371,8 +367,7 @@ pub struct RunInterestResponse {
     pub charges_posted: usize,
 }
 
-/// Meant to be hit by an external trigger (Cloud Scheduler, or an admin button) — this
-/// codebase has no in-process cron.
+/// Meant to be hit by an external trigger (Cloud Scheduler, or an admin button).
 pub async fn run_interest(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,

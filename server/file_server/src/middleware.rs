@@ -175,6 +175,30 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
     response
 }
 
+/// Rejects the request if accounting isn't enabled for the society — real
+/// server-side enforcement, not just UI hiding. Society Profile is exempt (super
+/// admin needs it before accounting is turned on).
+pub async fn require_accounting_enabled<B>(
+    State(state): State<AppState>,
+    req: Request<B>,
+    next: Next<B>,
+) -> Response
+where
+    B: Send + 'static,
+{
+    if !state.accounting_enabled {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Accounting is not enabled for this society."
+            })),
+        )
+            .into_response();
+    }
+    next.run(req).await
+}
+
 /// Requires the caller to hold at least one permission in `required`.
 pub fn require_any_of<B>(
     required: &'static [authentication::Permission],

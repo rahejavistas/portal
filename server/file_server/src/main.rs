@@ -433,24 +433,12 @@ async fn main() {
                     post(handlers::accounting::create_vendor),
                 )
                 .route(
-                    "/accounting/vendors/list",
-                    post(handlers::accounting::list_vendors),
-                )
-                .route(
                     "/accounting/purchase-orders/create",
                     post(handlers::accounting::create_purchase_order),
                 )
                 .route(
-                    "/accounting/purchase-orders/list",
-                    post(handlers::accounting::list_purchase_orders),
-                )
-                .route(
                     "/accounting/expenses/submit",
                     post(handlers::accounting::submit_expense),
-                )
-                .route(
-                    "/accounting/expenses/list",
-                    post(handlers::accounting::list_expenses),
                 )
                 .route(
                     "/accounting/expenses/:id/approve",
@@ -465,24 +453,12 @@ async fn main() {
                     post(handlers::accounting::create_tds_rule),
                 )
                 .route(
-                    "/accounting/tds-rules/list",
-                    post(handlers::accounting::list_tds_rules),
-                )
-                .route(
-                    "/accounting/tds-summary",
-                    post(handlers::accounting::tds_summary),
-                )
-                .route(
                     "/accounting/bank-reconciliation/import",
                     post(handlers::accounting::import_statement),
                 )
                 .route(
                     "/accounting/bank-reconciliation/:id/auto-match",
                     post(handlers::accounting::auto_match),
-                )
-                .route(
-                    "/accounting/bank-reconciliation/lines/list",
-                    post(handlers::accounting::list_lines),
                 )
                 .route(
                     "/accounting/bank-reconciliation/lines/:id/match-candidates",
@@ -501,10 +477,6 @@ async fn main() {
                     post(handlers::accounting::set_budget),
                 )
                 .route(
-                    "/accounting/budgets/variance",
-                    post(handlers::accounting::variance_report),
-                )
-                .route(
                     "/accounting/fiscal-years/:id/close",
                     post(handlers::accounting::close_fiscal_year),
                 )
@@ -515,6 +487,10 @@ async fn main() {
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[Permission::AccountingManage]),
+                ))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_accounting_enabled,
                 ));
 
             // Reports and generated documents are read-only against the ledger, so
@@ -538,6 +514,10 @@ async fn main() {
                         Permission::AccountingManage,
                         Permission::AccountingView,
                     ]),
+                ))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_accounting_enabled,
                 ));
 
             let accounting_view_routes = Router::new()
@@ -586,12 +566,44 @@ async fn main() {
                     "/accounting/settings/overview",
                     post(handlers::accounting::overview),
                 )
+                .route(
+                    "/accounting/vendors/list",
+                    post(handlers::accounting::list_vendors),
+                )
+                .route(
+                    "/accounting/purchase-orders/list",
+                    post(handlers::accounting::list_purchase_orders),
+                )
+                .route(
+                    "/accounting/expenses/list",
+                    post(handlers::accounting::list_expenses),
+                )
+                .route(
+                    "/accounting/tds-rules/list",
+                    post(handlers::accounting::list_tds_rules),
+                )
+                .route(
+                    "/accounting/tds-summary",
+                    post(handlers::accounting::tds_summary),
+                )
+                .route(
+                    "/accounting/bank-reconciliation/lines/list",
+                    post(handlers::accounting::list_lines),
+                )
+                .route(
+                    "/accounting/budgets/variance",
+                    post(handlers::accounting::variance_report),
+                )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[
                         Permission::AccountingManage,
                         Permission::AccountingView,
                     ]),
+                ))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_accounting_enabled,
                 ));
 
             let accounting_accounts_read_routes = Router::new()
@@ -609,11 +621,13 @@ async fn main() {
                         Permission::AccountingManage,
                         Permission::AccountingView,
                     ]),
+                ))
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_accounting_enabled,
                 ));
 
-            // No permission layer — every handler here checks `user.is_admin()`
-            // itself, restricted to the super_admin designation specifically, tighter
-            // than any accounting.manage/view grant a treasurer-style role might hold.
+            // No permission layer — each handler checks `user.is_admin()` (super_admin only).
             let society_profile_routes = Router::new()
                 .route(
                     "/accounting/society-profile",
@@ -722,26 +736,34 @@ async fn main() {
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),
                 )
-                .route(
-                    "/api/v1/accounting/claims/submit",
-                    post(handlers::accounting::submit_claim),
-                )
-                .route(
-                    "/api/v1/accounting/claims/mine",
-                    post(handlers::accounting::list_my_claims),
-                )
-                .route(
-                    "/api/v1/accounting/invoices/mine",
-                    post(handlers::accounting::list_my_invoices),
-                )
-                .route(
-                    "/api/v1/accounting/documents/pdf",
-                    post(handlers::accounting::member_document_pdf),
-                )
-                .route(
-                    "/api/v1/accounting/payment-instructions",
-                    post(handlers::accounting::get_payment_instructions),
-                )
+                .merge({
+                    let accounting_resident_routes = Router::new()
+                        .route(
+                            "/api/v1/accounting/claims/submit",
+                            post(handlers::accounting::submit_claim),
+                        )
+                        .route(
+                            "/api/v1/accounting/claims/mine",
+                            post(handlers::accounting::list_my_claims),
+                        )
+                        .route(
+                            "/api/v1/accounting/invoices/mine",
+                            post(handlers::accounting::list_my_invoices),
+                        )
+                        .route(
+                            "/api/v1/accounting/documents/pdf",
+                            post(handlers::accounting::member_document_pdf),
+                        )
+                        .route(
+                            "/api/v1/accounting/payment-instructions",
+                            post(handlers::accounting::get_payment_instructions),
+                        )
+                        .layer(axum_middleware::from_fn_with_state(
+                            $state.clone(),
+                            middleware::require_accounting_enabled,
+                        ));
+                    accounting_resident_routes
+                })
                 .nest("/api/v1/admin", admin_routes)
                 // Standard CORS and custom security headers middleware
                 .layer(axum_middleware::from_fn_with_state(

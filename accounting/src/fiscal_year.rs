@@ -36,12 +36,8 @@ impl From<ledger::PostError> for FiscalYearError {
     }
 }
 
-/// Closes a fiscal year: zeroes every INCOME/EXPENSE account's balance for the period
-/// into Retained Earnings (Accumulated Surplus), then locks the period against new
-/// postings (enforced by `ledger::post_transaction`'s own closed-FY check). Asset and
-/// Liability balances need no carry-forward step — the ledger is continuous, so their
-/// balance-to-date already includes everything from prior years automatically; only
-/// the temporary (income-statement) accounts need resetting to zero for the new year.
+/// Closes a fiscal year: zeroes every INCOME/EXPENSE balance into Retained Earnings,
+/// then locks the period against new postings.
 pub async fn close_fiscal_year(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
@@ -63,35 +59,39 @@ pub async fn close_fiscal_year(
     let mut total_income = Decimal::ZERO;
     let mut total_expense = Decimal::ZERO;
     for (account_id, account_type, balance) in &balances {
-        if *account_type == "INCOME" {
+        let is_income = *account_type == "INCOME";
+        if is_income {
             total_income += balance;
-            entries.push(EntryLine {
-                account_id: *account_id,
-                flat_id: None,
-                debit: *balance,
-                credit: Decimal::ZERO,
-            });
         } else {
             total_expense += balance;
-            entries.push(EntryLine {
-                account_id: *account_id,
-                flat_id: None,
-                debit: Decimal::ZERO,
-                credit: *balance,
-            });
         }
+        // Zero the account by posting the opposite of its balance; flip sides if the
+        // balance came back negative, since debit/credit must stay non-negative.
+        let (debit, credit) = match (is_income, balance.is_sign_negative()) {
+            (true, false) => (*balance, Decimal::ZERO),
+            (true, true) => (Decimal::ZERO, -balance),
+            (false, false) => (Decimal::ZERO, *balance),
+            (false, true) => (-balance, Decimal::ZERO),
+        };
+        entries.push(EntryLine {
+            account_id: *account_id,
+            flat_id: None,
+            debit,
+            credit,
+        });
     }
 
     let retained_earnings = db::get_account_id_by_code(conn, accounts::RETAINED_EARNINGS).await?;
     let net = total_income - total_expense;
-    if net >= Decimal::ZERO {
+    // A zero net must not post a (0, 0) line — one side has to be positive.
+    if net > Decimal::ZERO {
         entries.push(EntryLine {
             account_id: retained_earnings,
             flat_id: None,
             debit: Decimal::ZERO,
             credit: net,
         });
-    } else {
+    } else if net < Decimal::ZERO {
         entries.push(EntryLine {
             account_id: retained_earnings,
             flat_id: None,
@@ -118,8 +118,7 @@ pub async fn close_fiscal_year(
     Ok(Some(transaction_id))
 }
 
-/// A fiscal year with zero income/expense activity has nothing to close into Retained
-/// Earnings — still locks the period, just without posting an empty transaction.
+/// No income/expense activity to close — just locks the period, no transaction posted.
 async fn close_with_no_activity(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
@@ -134,9 +133,7 @@ async fn close_with_no_activity(
     Ok(None)
 }
 
-/// Reopens a closed fiscal year: reverses the closing entry (if one was posted, i.e.
-/// the year had activity), unlocks the period, and logs who did it and why — a closed
-/// period is never silently mutable again, this is the only door back in.
+/// Reopens a closed fiscal year: reverses the closing entry, unlocks the period, logs why.
 pub async fn reopen_fiscal_year(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,

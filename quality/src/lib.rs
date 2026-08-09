@@ -222,6 +222,13 @@ pub async fn setup_api_test_env() -> TestEnv {
     setup_api_test_env_inner(&[]).await
 }
 
+/// Same as `setup_api_test_env`, but with accounting turned OFF for the society — for
+/// testing that the accounting API refuses every request outright when the module
+/// isn't enabled, regardless of what permissions the caller holds.
+pub async fn setup_api_test_env_with_accounting_disabled() -> TestEnv {
+    setup_api_test_env_inner(&[("ACCOUNTING_ENABLED", "false")]).await
+}
+
 /// Same as `setup_api_test_env`, but with the SignYu provider pointed at a local mock
 /// server (`signyu_base_url`, e.g. `http://127.0.0.1:PORT`) instead of the real API —
 /// lets tests exercise the SignYu request/response path against canned responses.
@@ -302,6 +309,7 @@ super_admin_email = "superadmin@vistas.com"
 jwt_secret = "modular_integration_test_secret_signing_key"
 jwt_expiry = "1h"
 forgot_password_expiry = "5m"
+accounting_enabled = true
 
 [postgres]
 host = "localhost"

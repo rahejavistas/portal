@@ -8,6 +8,41 @@ use axum::{http::StatusCode, Json};
 
 use super::not_found;
 
+/// Prefers an exact header match; falls back to substring only if exactly one qualifies.
+fn find_column(
+    headers: &csv::StringRecord,
+    exact_names: &[&str],
+    substr: &str,
+    column_label: &str,
+) -> Result<usize, String> {
+    let normalized: Vec<String> = headers.iter().map(|h| h.trim().to_lowercase()).collect();
+    for exact in exact_names {
+        if let Some(idx) = normalized.iter().position(|h| h == exact) {
+            return Ok(idx);
+        }
+    }
+    let matches: Vec<usize> = normalized
+        .iter()
+        .enumerate()
+        .filter(|(_, h)| h.contains(substr))
+        .map(|(i, _)| i)
+        .collect();
+    match matches.as_slice() {
+        [idx] => Ok(*idx),
+        [] => Err(format!("CSV must contain a {column_label} column")),
+        _ => Err(format!(
+            "CSV has multiple columns that could be {column_label} ({}) — rename the \
+             intended one to an exact match like \"{}\"",
+            matches
+                .iter()
+                .map(|i| headers[*i].to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            exact_names.first().unwrap_or(&column_label)
+        )),
+    }
+}
+
 fn parse_statement_csv(
     bytes: &[u8],
 ) -> Result<Vec<accounting::bank_reconciliation::StatementLine>, String> {
@@ -19,18 +54,14 @@ fn parse_statement_csv(
         .map_err(|_| "Failed to read CSV headers")?
         .clone();
 
-    let date_idx = headers
-        .iter()
-        .position(|h| h.to_lowercase().contains("date"));
-    let desc_idx = headers
-        .iter()
-        .position(|h| h.to_lowercase().contains("desc"));
-    let amount_idx = headers
-        .iter()
-        .position(|h| h.to_lowercase().contains("amount"));
-    let (Some(d), Some(desc), Some(a)) = (date_idx, desc_idx, amount_idx) else {
-        return Err("CSV must contain Date, Description, and Amount columns".to_string());
-    };
+    let d = find_column(&headers, &["date", "transaction date"], "date", "Date")?;
+    let desc = find_column(
+        &headers,
+        &["description", "narration"],
+        "desc",
+        "Description",
+    )?;
+    let a = find_column(&headers, &["amount"], "amount", "Amount")?;
 
     let mut lines = Vec::new();
     for result in reader.records() {
@@ -59,6 +90,9 @@ pub struct ImportStatementResponse {
     pub lines_imported: usize,
 }
 
+/// Well above any legitimate statement CSV, well under the app-wide body limit.
+const MAX_STATEMENT_CSV_BYTES: usize = 10 * 1024 * 1024;
+
 pub async fn import_statement(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -78,6 +112,15 @@ pub async fn import_statement(
                 .await
                 .map_err(|e| bad_request(e.to_string()))?
                 .to_vec();
+            if file_bytes.len() > MAX_STATEMENT_CSV_BYTES {
+                return Err(bad_request(format!(
+                    "Statement file is too large — {} MB, max {} MB",
+                    file_bytes.len() / (1024 * 1024),
+                    MAX_STATEMENT_CSV_BYTES / (1024 * 1024)
+                )));
+            }
+            // Don't let a second "file" field override the first.
+            break;
         }
     }
     if file_bytes.is_empty() {
@@ -89,15 +132,16 @@ pub async fn import_statement(
         return Err(bad_request("CSV contained no parseable rows"));
     }
 
-    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
     let (import_id, count) = accounting::bank_reconciliation::import_statement(
-        &mut conn,
+        &mut tx,
         user.user_id,
         filename.as_deref(),
         lines,
     )
     .await
     .map_err(internal_err)?;
+    tx.commit().await.map_err(internal_err)?;
 
     Ok((
         StatusCode::CREATED,
@@ -149,8 +193,7 @@ pub async fn list_lines(
     Ok(Json(lines))
 }
 
-/// Candidate ledger transactions to manually match a statement line against, so an
-/// admin can pick from a real list instead of having to already know a transaction ID.
+/// Candidate ledger transactions to manually match a statement line against.
 pub async fn match_candidates(
     State(state): State<AppState>,
     axum::extract::Path(line_id): axum::extract::Path<BankLineId>,

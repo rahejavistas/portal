@@ -263,19 +263,27 @@ pub async fn defaulters(
     as_of: NaiveDate,
     min_days_overdue: i32,
 ) -> Result<Vec<DefaulterRow>, sqlx::Error> {
+    // Aggregate per flat before joining the owner email, so the owner join can't duplicate rows.
     sqlx::query_as::<_, DefaulterRow>(
-        "SELECT f.flat_id, f.wing, f.flat_number, u.email AS owner_email, \
-                SUM(i.total_amount - i.amount_paid) AS total_outstanding, \
-                MAX(GREATEST(($1::DATE - i.due_date), 0)) AS max_days_overdue, \
-                COUNT(*) AS unpaid_invoice_count \
-         FROM invoices i \
-         JOIN flats f ON f.flat_id = i.flat_id \
-         LEFT JOIN flat_ownerships fo ON fo.flat_id = f.flat_id AND fo.is_active = TRUE \
-         LEFT JOIN users u ON u.user_id = fo.user_id \
-         WHERE i.status IN ('UNPAID', 'PARTIALLY_PAID') \
-         GROUP BY f.flat_id, f.wing, f.flat_number, u.email \
-         HAVING MAX(GREATEST(($1::DATE - i.due_date), 0)) >= $2 \
-         ORDER BY max_days_overdue DESC",
+        "WITH per_flat AS ( \
+             SELECT i.flat_id, \
+                    SUM(i.total_amount - i.amount_paid) AS total_outstanding, \
+                    MAX(GREATEST(($1::DATE - i.due_date), 0)) AS max_days_overdue, \
+                    COUNT(*) AS unpaid_invoice_count \
+             FROM invoices i \
+             WHERE i.status IN ('UNPAID', 'PARTIALLY_PAID') \
+             GROUP BY i.flat_id \
+         ) \
+         SELECT f.flat_id, f.wing, f.flat_number, \
+                (SELECT u.email FROM flat_ownerships fo \
+                   JOIN users u ON u.user_id = fo.user_id \
+                  WHERE fo.flat_id = f.flat_id AND fo.is_active = TRUE \
+                  ORDER BY fo.user_id LIMIT 1) AS owner_email, \
+                p.total_outstanding, p.max_days_overdue, p.unpaid_invoice_count \
+         FROM per_flat p \
+         JOIN flats f ON f.flat_id = p.flat_id \
+         WHERE p.max_days_overdue >= $2 \
+         ORDER BY p.max_days_overdue DESC",
     )
     .bind(as_of)
     .bind(min_days_overdue)

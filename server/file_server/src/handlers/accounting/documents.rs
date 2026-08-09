@@ -161,10 +161,8 @@ async fn build_noc_pdf(conn: &mut sqlx::PgConnection, flat_id: i32) -> Result<Ve
     ))
 }
 
-/// Every generated PDF the module produces, dispatched off `kind` — one route instead
-/// of four, with an admin variant (no ownership check) and a member variant (must own
-/// the flat the document belongs to). The four `build_*_pdf` helpers above are
-/// unchanged; only how a caller reaches them collapsed.
+/// Every generated PDF, dispatched off `kind` — one route for both the admin (no
+/// ownership check) and member (must own the flat) variants.
 #[derive(serde::Deserialize)]
 pub struct PdfRequest {
     pub kind: String,
@@ -181,8 +179,7 @@ fn require_flat_id(payload: &PdfRequest) -> Result<i32, ApiError> {
         .ok_or_else(|| bad_request("flat_id is required for this kind"))
 }
 
-/// Returns the rendered PDF plus the flat_id it belongs to, so the member-facing
-/// caller can check ownership uniformly regardless of which kind was requested.
+/// Returns the rendered PDF plus the flat_id it belongs to, for the member-facing ownership check.
 async fn dispatch_pdf(
     conn: &mut sqlx::PgConnection,
     payload: &PdfRequest,
@@ -257,18 +254,59 @@ pub async fn admin_document_pdf(
     Ok(pdf_response(&filename, bytes))
 }
 
+/// One generic error for every way a member's PDF request can fail — "doesn't exist"
+/// and "not yours" must look identical, or the error leaks which ids are real.
+fn not_yours() -> ApiError {
+    forbidden("This document does not belong to your flat")
+}
+
+/// Resolves which flat a PDF request is about, without running any business logic
+/// that could itself leak info (e.g. the NOC dues check) before ownership is checked.
+async fn resolve_flat_id_for_pdf(
+    conn: &mut sqlx::PgConnection,
+    payload: &PdfRequest,
+) -> Result<i32, ApiError> {
+    match payload.kind.as_str() {
+        "invoice" => {
+            let invoice_id = payload.invoice_id.ok_or_else(not_yours)?;
+            let invoice = accounting::db::get_invoice(conn, invoice_id)
+                .await
+                .map_err(internal_err)?
+                .ok_or_else(not_yours)?;
+            Ok(invoice.flat_id)
+        }
+        "receipt" => {
+            let payment_id = payload.payment_id.ok_or_else(not_yours)?;
+            let payment = accounting::db::get_payment(conn, payment_id)
+                .await
+                .map_err(internal_err)?
+                .ok_or_else(not_yours)?;
+            let invoice = accounting::db::get_invoice(conn, payment.invoice_id)
+                .await
+                .map_err(internal_err)?
+                .ok_or_else(not_yours)?;
+            Ok(invoice.flat_id)
+        }
+        "statement" | "noc" => payload.flat_id.ok_or_else(not_yours),
+        // Not tied to any flat — flat_id 0 never exists, so ownership always fails.
+        "sample_invoice" | "sample_receipt" => Ok(0),
+        _ => Err(not_yours()),
+    }
+}
+
 pub async fn member_document_pdf(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
     axum::Json(payload): axum::Json<PdfRequest>,
 ) -> Result<axum::response::Response, ApiError> {
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
-    let (filename, bytes, flat_id) = dispatch_pdf(&mut conn, &payload).await?;
+    let flat_id = resolve_flat_id_for_pdf(&mut conn, &payload).await?;
     if !accounting::db::user_owns_flat(&mut conn, user.user_id, flat_id)
         .await
         .map_err(internal_err)?
     {
-        return Err(forbidden("This document does not belong to your flat"));
+        return Err(not_yours());
     }
+    let (filename, bytes, _flat_id) = dispatch_pdf(&mut conn, &payload).await?;
     Ok(pdf_response(&filename, bytes))
 }

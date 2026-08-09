@@ -3,9 +3,7 @@ use crate::{BankImportId, BankLineId, TransactionId};
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 
-/// One parsed row from an uploaded bank statement CSV. Parsing itself stays in the
-/// handler (this crate has no CSV dependency) — this is what the handler hands over
-/// after parsing.
+/// One parsed row from an uploaded bank statement CSV (parsing itself lives in the handler).
 pub struct StatementLine {
     pub transaction_date: NaiveDate,
     pub description: String,
@@ -31,10 +29,8 @@ pub struct AutoMatchResult {
     pub unmatched: usize,
 }
 
-/// Auto-matches every UNMATCHED line in `import_id` against ledger transactions on the
-/// bank account: same date, same signed amount, not already claimed by another line.
-/// Ambiguous matches (more than one candidate) are left UNMATCHED for manual review
-/// rather than guessed at.
+/// Auto-matches every UNMATCHED line against ledger transactions (same date/amount).
+/// Ambiguous matches are left UNMATCHED for manual review.
 pub async fn auto_match_import(
     conn: &mut sqlx::PgConnection,
     import_id: BankImportId,
@@ -60,8 +56,7 @@ pub async fn auto_match_import(
     Ok(AutoMatchResult { matched, unmatched })
 }
 
-/// Returns `false` if the line wasn't in UNMATCHED state (already matched/ignored) —
-/// the caller should surface that as a client error, not silently succeed.
+/// Returns `false` if the line wasn't in UNMATCHED state.
 pub async fn match_line_manually(
     conn: &mut sqlx::PgConnection,
     line_id: BankLineId,

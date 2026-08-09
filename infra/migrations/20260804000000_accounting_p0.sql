@@ -102,7 +102,6 @@ CREATE TABLE IF NOT EXISTS billing_plans (
 CREATE TABLE IF NOT EXISTS flat_billing_assignments (
     flat_id INT PRIMARY KEY REFERENCES flats(flat_id),
     billing_plan_id INT NOT NULL REFERENCES billing_plans(billing_plan_id),
-    area_sqft NUMERIC(10,2),
     effective_from DATE NOT NULL DEFAULT CURRENT_DATE,
     assigned_by INT NOT NULL REFERENCES users(user_id)
 );
@@ -237,6 +236,10 @@ CREATE TABLE IF NOT EXISTS payment_claims (
 
 CREATE INDEX IF NOT EXISTS idx_payment_claims_invoice ON payment_claims(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_payment_claims_status ON payment_claims(status) WHERE status = 'PENDING';
+
+-- Prevents duplicate PENDING claims for the same reference; reviewed claims free it up.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_claims_pending_reference
+    ON payment_claims(payment_method, reference_number) WHERE status = 'PENDING';
 
 -- Society's own bank account details, printed on generated invoice/bill PDFs so
 -- residents know where to NEFT/transfer payment. Single current row; admin-editable,

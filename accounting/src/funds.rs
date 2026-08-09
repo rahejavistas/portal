@@ -1,8 +1,7 @@
 use crate::db::FundContributionRule;
 use rust_decimal::Decimal;
 
-/// A fund contribution is either a fixed amount, or a percentage of the flat's base
-/// maintenance charge for the period — the two conventions actual society bylaws use.
+/// A fund contribution is either a fixed amount or a percentage of base maintenance.
 pub fn compute_fund_contribution(
     rule: &FundContributionRule,
     base_maintenance_amount: Decimal,

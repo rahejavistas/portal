@@ -22,8 +22,7 @@ pub struct SubmitClaimResponse {
     pub claim_id: ClaimId,
 }
 
-/// Resident-facing: "I paid this, here's my transaction reference." Creates a PENDING
-/// claim only — never posts to the ledger. An admin must separately confirm it.
+/// Resident-facing: creates a PENDING claim only, never posts to the ledger.
 pub async fn submit_claim(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -146,12 +145,13 @@ pub async fn reject_claim(
             "A review note is required when rejecting a claim",
         ));
     }
-    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
-    accounting::claims::reject_claim(&mut conn, claim_id, user.user_id, &payload.review_note)
+    let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
+    accounting::claims::reject_claim(&mut tx, claim_id, user.user_id, &payload.review_note)
         .await
         .map_err(|e| match &e {
             accounting::claims::ClaimError::NotFound => not_found("Claim not found"),
             _ => bad_request(e.to_string()),
         })?;
+    tx.commit().await.map_err(internal_err)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
 }

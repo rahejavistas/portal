@@ -135,10 +135,11 @@ impl SimpleDoc {
         let mut rows = Vec::new();
         let mut current = String::new();
         for word in text.split(' ') {
+            let word_chars = word.chars().count();
             let candidate_len = if current.is_empty() {
-                word.len()
+                word_chars
             } else {
-                current.len() + 1 + word.len()
+                current.chars().count() + 1 + word_chars
             };
             if candidate_len > max_chars && !current.is_empty() {
                 rows.push(std::mem::take(&mut current));
@@ -734,8 +735,9 @@ pub fn render_noc_pdf(
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() > max {
-        format!("{}…", &s[..max.saturating_sub(1)])
+    if s.chars().count() > max {
+        let keep = max.saturating_sub(1);
+        format!("{}…", s.chars().take(keep).collect::<String>())
     } else {
         s.to_string()
     }
@@ -1055,6 +1057,22 @@ mod tests {
             text.contains("Closing Balance"),
             "missing closing balance: {text}"
         );
+    }
+
+    /// A non-ASCII description must not panic PDF generation (used to slice by byte index).
+    #[test]
+    fn statement_pdf_survives_a_non_ascii_multi_byte_description() {
+        // `truncate` cuts at 34 chars; this é lands right on the old byte-33 cut point.
+        let description = format!("{}é{}", "A".repeat(32), "x".repeat(20));
+        let rows = vec![StatementRow {
+            date: chrono::NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
+            description,
+            debit: dec!(5000),
+            credit: dec!(0),
+            running_balance: dec!(5000),
+        }];
+        let bytes = render_statement_pdf("K", "0302", "August 2026", &rows);
+        assert!(!bytes.is_empty(), "PDF must render without panicking");
     }
 
     #[test]

@@ -9,6 +9,7 @@ use rust_decimal::Decimal;
 pub enum PaymentError {
     InvoiceNotFound,
     InvoiceVoid,
+    DuplicateReferenceAmountMismatch,
     Post(ledger::PostError),
     Db(sqlx::Error),
 }
@@ -20,6 +21,11 @@ impl std::fmt::Display for PaymentError {
             PaymentError::InvoiceVoid => {
                 write!(f, "Cannot record a payment against a void invoice")
             }
+            PaymentError::DuplicateReferenceAmountMismatch => write!(
+                f,
+                "This payment_method + reference_number was already recorded with a \
+                 different amount — check the reference number and amount before retrying"
+            ),
             PaymentError::Post(e) => write!(f, "{}", e),
             PaymentError::Db(e) => write!(f, "{}", e),
         }
@@ -38,19 +44,14 @@ impl From<ledger::PostError> for PaymentError {
     }
 }
 
-/// How close together two reference-less (cash) payments with identical
-/// invoice/amount/method/recorder have to be to be treated as a duplicate submission
-/// rather than a genuine second payment. Deliberately short — long enough to absorb a
-/// double-click or a retried request, short enough not to block a real same-day repeat
-/// cash payment made minutes apart.
+/// Window for treating two reference-less cash payments as a duplicate submission.
 const DUPLICATE_CASH_PAYMENT_WINDOW_SECONDS: i64 = 30;
 
 pub struct RecordPaymentResult {
     pub payment_id: PaymentId,
     pub receipt_id: ReceiptId,
     pub receipt_number: String,
-    /// `false` when `reference_number` was already recorded for this `payment_method`
-    /// — nothing new was posted, the original receipt is returned as-is.
+    /// `false` if this reference was already recorded — the original receipt is returned as-is.
     pub newly_recorded: bool,
 }
 
@@ -63,8 +64,7 @@ pub struct RecordPaymentRequest<'a> {
     pub recorded_by: i32,
 }
 
-/// How much of a payment applies to the invoice it's recorded against vs. how much is
-/// an overpayment that becomes a credit balance instead of over-crediting the invoice.
+/// Splits a payment into the amount applied to the invoice vs. the overpayment credited as advance.
 fn split_payment(amount: Decimal, outstanding: Decimal) -> (Decimal, Decimal) {
     if amount <= outstanding {
         (amount, Decimal::ZERO)
@@ -73,16 +73,8 @@ fn split_payment(amount: Decimal, outstanding: Decimal) -> (Decimal, Decimal) {
     }
 }
 
-/// Records a manually-confirmed payment (from a bank statement, cheque, UPI reference,
-/// or cash — there is no payment gateway integration): Dr. Bank / Cr. Member Dues
-/// Receivable (up to the invoice's outstanding balance), applies it to the invoice's
-/// running balance, and issues a receipt. Any amount paid beyond the invoice's
-/// outstanding balance is credited to the flat's advance/credit balance (Cr. Member
-/// Advance) instead of silently over-crediting the invoice past 100% paid — see
-/// `apply_credit_to_invoice` for spending that credit against a future bill.
-///
-/// Idempotent on (payment_method, reference_number) when a reference is given, checked
-/// BEFORE any ledger write, so re-submitting the same bank line never double-posts.
+/// Records a manually-confirmed payment: Dr. Bank / Cr. Receivable, with any excess
+/// credited to the flat's advance balance. Idempotent on (payment_method, reference_number).
 pub async fn record_payment(
     conn: &mut sqlx::PgConnection,
     req: RecordPaymentRequest<'_>,
@@ -91,6 +83,10 @@ pub async fn record_payment(
         if let Some(existing) =
             db::find_payment_by_reference(conn, req.payment_method, reference).await?
         {
+            // A different amount on the same reference is not a retry — reject it.
+            if existing.amount != req.amount {
+                return Err(PaymentError::DuplicateReferenceAmountMismatch);
+            }
             let receipt = db::get_receipt_by_payment(conn, existing.payment_id)
                 .await?
                 .expect("payment always has a receipt — inserted in the same transaction");
@@ -187,8 +183,10 @@ pub async fn record_payment(
     )
     .await?;
 
-    if applied > Decimal::ZERO {
-        db::apply_payment_to_invoice(conn, req.invoice_id, applied).await?;
+    if applied > Decimal::ZERO
+        && !db::apply_payment_to_invoice(conn, req.invoice_id, applied).await?
+    {
+        return Err(PaymentError::InvoiceVoid);
     }
 
     let receipt_number = db::next_receipt_number(conn).await?;
@@ -249,10 +247,7 @@ impl From<ledger::PostError> for CreditApplicationError {
     }
 }
 
-/// Spends (part of) a flat's advance/credit balance against a specific invoice: Dr.
-/// Member Advance / Cr. Member Dues Receivable. `amount` is capped at both the flat's
-/// available credit and the invoice's outstanding balance by the caller checking first
-/// — this function itself still re-validates both rather than trusting the caller.
+/// Spends a flat's advance/credit balance against an invoice: Dr. Advance / Cr. Receivable.
 pub async fn apply_credit_to_invoice(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
@@ -310,7 +305,9 @@ pub async fn apply_credit_to_invoice(
     )
     .await?;
 
-    db::apply_payment_to_invoice(conn, invoice_id, amount).await?;
+    if !db::apply_payment_to_invoice(conn, invoice_id, amount).await? {
+        return Err(CreditApplicationError::InvoiceVoid);
+    }
     Ok(transaction_id)
 }
 

@@ -53,9 +53,7 @@ pub struct SubmitExpenseRequest<'a> {
     pub created_by: i32,
 }
 
-/// Submits a vendor bill for approval — computes TDS (if applicable) up front so the
-/// approver sees the real net payable, but posts nothing to the ledger yet. Only
-/// `approve_expense` ever posts.
+/// Submits a vendor bill for approval, computing TDS up front. Posts nothing yet.
 pub async fn submit_expense(
     conn: &mut sqlx::PgConnection,
     req: SubmitExpenseRequest<'_>,
@@ -115,10 +113,7 @@ pub async fn submit_expense(
     Ok(expense_id)
 }
 
-/// Approves a pending expense and posts it: Dr. Expense account (full gross amount) /
-/// Cr. Vendor Payables (net_payable) / Cr. TDS Payable (tds_amount, if any). The
-/// expense account debited is whichever the submitter chose (security, housekeeping,
-/// electricity, repairs, admin, ...).
+/// Approves a pending expense: Dr. Expense / Cr. Vendor Payables / Cr. TDS Payable (if any).
 pub async fn approve_expense(
     conn: &mut sqlx::PgConnection,
     expense_id: ExpenseId,
@@ -190,6 +185,8 @@ pub async fn reject_expense(
     if expense.status != "PENDING_APPROVAL" {
         return Err(ExpenseError::NotPending);
     }
+    // A rejected expense never incurred the TDS liability `submit_expense` speculatively recorded.
+    db::delete_tds_record_for_expense(conn, expense_id).await?;
     db::mark_expense_rejected(conn, expense_id, reviewed_by, reason).await?;
     Ok(())
 }

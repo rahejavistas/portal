@@ -45,13 +45,19 @@ pub struct SubmitClaimRequest<'a> {
     pub note: Option<&'a str>,
 }
 
-/// A resident reporting "I paid this, here's my transaction reference" for an offline
-/// payment. Only ever creates a PENDING claim row — never touches the ledger. An admin
-/// must separately confirm (`confirm_claim`) before it becomes a real, posted payment.
+/// Creates a PENDING claim row; never touches the ledger. Idempotent on
+/// (payment_method, reference_number) while PENDING — reviewed claims free up the
+/// reference for resubmission.
 pub async fn submit_claim(
     conn: &mut sqlx::PgConnection,
     req: SubmitClaimRequest<'_>,
 ) -> Result<ClaimId, ClaimError> {
+    if let Some(existing) =
+        db::find_pending_claim_by_reference(conn, req.payment_method, req.reference_number).await?
+    {
+        return Ok(existing);
+    }
+
     let claim_id = db::insert_payment_claim(
         conn,
         db::NewPaymentClaim {
@@ -67,19 +73,21 @@ pub async fn submit_claim(
     Ok(claim_id)
 }
 
-/// Confirms a pending claim: posts the actual payment (Dr. Bank / Cr. Receivable) via
-/// the same path an admin-entered payment takes, then links the claim to it. The claim
-/// itself is never the thing that moves money — this call is.
+/// Confirms a pending claim and posts the payment. Row-locks the claim so a
+/// concurrent `reject_claim` can't race it. Repeated confirm of an already-CONFIRMED
+/// claim returns the same payment instead of double-posting.
 pub async fn confirm_claim(
     conn: &mut sqlx::PgConnection,
     claim_id: ClaimId,
     reviewed_by: i32,
 ) -> Result<PaymentId, ClaimError> {
-    let claim = db::get_payment_claim(conn, claim_id)
+    let claim = db::get_payment_claim_for_update(conn, claim_id)
         .await?
         .ok_or(ClaimError::NotFound)?;
-    if claim.status != "PENDING" {
-        return Err(ClaimError::NotPending);
+    match claim.status.as_str() {
+        "PENDING" => {}
+        "CONFIRMED" => return claim.payment_id.ok_or(ClaimError::NotFound),
+        _ => return Err(ClaimError::NotPending),
     }
 
     let result = payments::record_payment(
@@ -95,22 +103,30 @@ pub async fn confirm_claim(
     )
     .await?;
 
-    db::mark_claim_confirmed(conn, claim_id, reviewed_by, result.payment_id).await?;
+    if !db::mark_claim_confirmed(conn, claim_id, reviewed_by, result.payment_id).await? {
+        return Err(ClaimError::NotPending);
+    }
     Ok(result.payment_id)
 }
 
+/// Row-locks the claim like `confirm_claim`. Repeated rejection is a no-op; an
+/// already-CONFIRMED claim can never be rejected.
 pub async fn reject_claim(
     conn: &mut sqlx::PgConnection,
     claim_id: ClaimId,
     reviewed_by: i32,
     review_note: &str,
 ) -> Result<(), ClaimError> {
-    let claim = db::get_payment_claim(conn, claim_id)
+    let claim = db::get_payment_claim_for_update(conn, claim_id)
         .await?
         .ok_or(ClaimError::NotFound)?;
-    if claim.status != "PENDING" {
+    match claim.status.as_str() {
+        "PENDING" => {}
+        "REJECTED" => return Ok(()),
+        _ => return Err(ClaimError::NotPending),
+    }
+    if !db::mark_claim_rejected(conn, claim_id, reviewed_by, review_note).await? {
         return Err(ClaimError::NotPending);
     }
-    db::mark_claim_rejected(conn, claim_id, reviewed_by, review_note).await?;
     Ok(())
 }

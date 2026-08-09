@@ -1,5 +1,5 @@
 use crate::extractors::SessionUser;
-use crate::handlers::error::{internal_err, ApiError};
+use crate::handlers::error::{bad_request, internal_err, ApiError};
 use crate::state::AppState;
 use accounting::db::{TdsRule, TdsSummaryRow};
 use accounting::{FiscalYearId, VendorId};
@@ -22,6 +22,14 @@ pub async fn create_tds_rule(
     State(state): State<AppState>,
     Json(payload): Json<CreateTdsRuleRequest>,
 ) -> Result<StatusCode, ApiError> {
+    if payload.rate_pct < Decimal::ZERO || payload.rate_pct > Decimal::from(100) {
+        return Err(bad_request("rate_pct must be between 0 and 100"));
+    }
+    if payload.threshold_single_payment < Decimal::ZERO
+        || payload.threshold_annual_aggregate < Decimal::ZERO
+    {
+        return Err(bad_request("thresholds cannot be negative"));
+    }
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     accounting::db::insert_tds_rule(
         &mut conn,
@@ -48,8 +56,7 @@ pub async fn list_tds_rules(State(state): State<AppState>) -> Result<Json<Vec<Td
     Ok(Json(rules))
 }
 
-/// Form 16A source data for one vendor's fiscal year — never e-files, only assembles
-/// the numbers a CA needs to file it.
+/// Form 16A source data for one vendor's fiscal year.
 #[derive(serde::Deserialize)]
 pub struct TdsSummaryRequest {
     pub vendor_id: VendorId,

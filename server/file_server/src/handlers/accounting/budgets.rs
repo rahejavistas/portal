@@ -23,16 +23,17 @@ pub async fn set_budget(
     State(state): State<AppState>,
     Json(payload): Json<SetBudgetRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
     let budget_id =
-        accounting::db::get_or_create_budget(&mut conn, payload.fiscal_year_id, user.user_id)
+        accounting::db::get_or_create_budget(&mut tx, payload.fiscal_year_id, user.user_id)
             .await
             .map_err(internal_err)?;
     let account_ids: Vec<AccountId> = payload.lines.iter().map(|l| l.account_id).collect();
     let budgeted_amounts: Vec<Decimal> = payload.lines.iter().map(|l| l.budgeted_amount).collect();
-    accounting::db::set_budget_lines(&mut conn, budget_id, &account_ids, &budgeted_amounts)
+    accounting::db::set_budget_lines(&mut tx, budget_id, &account_ids, &budgeted_amounts)
         .await
         .map_err(internal_err)?;
+    tx.commit().await.map_err(internal_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

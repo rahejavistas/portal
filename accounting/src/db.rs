@@ -7,8 +7,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-/// Namespace for `pg_advisory_xact_lock(namespace, flat_id)` calls guarding a flat's
-/// credit balance — keeps this lock keyspace separate from any other advisory lock use.
+/// Namespace for the advisory lock guarding a flat's credit balance.
 const ADVISORY_LOCK_NAMESPACE_FLAT_CREDIT: i32 = 1;
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -110,12 +109,14 @@ pub async fn resolve_fiscal_year_id(
     .await
 }
 
+/// Row-locks the fiscal year (`FOR SHARE`) so a concurrent `close_fiscal_year`
+/// (`FOR UPDATE`) can't race a posting past this check.
 pub async fn is_fiscal_year_closed(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
 ) -> Result<bool, sqlx::Error> {
     let status: String =
-        sqlx::query_scalar("SELECT status FROM fiscal_years WHERE fiscal_year_id = $1")
+        sqlx::query_scalar("SELECT status FROM fiscal_years WHERE fiscal_year_id = $1 FOR SHARE")
             .bind(fiscal_year_id)
             .fetch_one(conn)
             .await?;
@@ -141,7 +142,10 @@ pub async fn get_billing_assignment(
     flat_id: i32,
 ) -> Result<Option<FlatBillingAssignment>, sqlx::Error> {
     sqlx::query_as::<_, FlatBillingAssignment>(
-        "SELECT flat_id, billing_plan_id, area_sqft FROM flat_billing_assignments WHERE flat_id = $1",
+        "SELECT fba.flat_id, fba.billing_plan_id, f.area_sqft \
+         FROM flat_billing_assignments fba \
+         JOIN flats f ON f.flat_id = fba.flat_id \
+         WHERE fba.flat_id = $1",
     )
     .bind(flat_id)
     .fetch_optional(conn)
@@ -229,6 +233,7 @@ pub async fn list_billing_plans(
     .await
 }
 
+/// `area_sqft`, when given, updates the flat's own area. Callers should wrap this in a transaction.
 pub async fn upsert_flat_billing_assignment(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -237,16 +242,22 @@ pub async fn upsert_flat_billing_assignment(
     assigned_by: i32,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO flat_billing_assignments (flat_id, billing_plan_id, area_sqft, assigned_by) \
-         VALUES ($1, $2, $3, $4) \
-         ON CONFLICT (flat_id) DO UPDATE SET billing_plan_id = $2, area_sqft = $3, assigned_by = $4",
+        "INSERT INTO flat_billing_assignments (flat_id, billing_plan_id, assigned_by) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (flat_id) DO UPDATE SET billing_plan_id = $2, assigned_by = $3",
     )
     .bind(flat_id)
     .bind(billing_plan_id)
-    .bind(area_sqft)
     .bind(assigned_by)
-    .execute(conn)
+    .execute(&mut *conn)
     .await?;
+    if let Some(area) = area_sqft {
+        sqlx::query("UPDATE flats SET area_sqft = $1 WHERE flat_id = $2")
+            .bind(area)
+            .bind(flat_id)
+            .execute(conn)
+            .await?;
+    }
     Ok(())
 }
 
@@ -258,17 +269,15 @@ pub async fn list_flats_with_billing_assignment(
         .await
 }
 
-/// Assigns `billing_plan_id` (with no `area_sqft`, so callers must restrict this to
-/// FLAT_RATE plans) to every flat that doesn't already have a billing assignment.
-/// Existing assignments are left untouched. Returns how many flats were newly assigned.
+/// Assigns `billing_plan_id` (FLAT_RATE only) to every unassigned flat. Returns how many were newly assigned.
 pub async fn bulk_assign_flat_rate_plan_to_unassigned(
     conn: &mut sqlx::PgConnection,
     billing_plan_id: BillingPlanId,
     assigned_by: i32,
 ) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
-        "INSERT INTO flat_billing_assignments (flat_id, billing_plan_id, area_sqft, assigned_by) \
-         SELECT f.flat_id, $1, NULL, $2 FROM flats f \
+        "INSERT INTO flat_billing_assignments (flat_id, billing_plan_id, assigned_by) \
+         SELECT f.flat_id, $1, $2 FROM flats f \
          LEFT JOIN flat_billing_assignments fba ON fba.flat_id = f.flat_id \
          WHERE fba.flat_id IS NULL",
     )
@@ -291,16 +300,13 @@ pub struct FlatBillingAssignmentRow {
     pub assigned_by: Option<i32>,
 }
 
-/// Every flat with whatever billing plan it has assigned, if any — a flat with no
-/// assignment yet still appears, with the plan columns null, so "which units haven't
-/// been set up yet" is visible at a glance instead of only showing up as a skip reason
-/// the next time invoices are generated.
+/// Every flat with whatever billing plan it has assigned, if any (null columns if unassigned).
 pub async fn list_all_flat_billing_assignments(
     conn: &mut sqlx::PgConnection,
 ) -> Result<Vec<FlatBillingAssignmentRow>, sqlx::Error> {
     sqlx::query_as::<_, FlatBillingAssignmentRow>(
         "SELECT f.flat_id, f.wing, f.flat_number, bp.billing_plan_id, bp.name AS billing_plan_name, \
-                bp.billing_type, fba.area_sqft, fba.assigned_by \
+                bp.billing_type, f.area_sqft, fba.assigned_by \
          FROM flats f \
          LEFT JOIN flat_billing_assignments fba ON fba.flat_id = f.flat_id \
          LEFT JOIN billing_plans bp ON bp.billing_plan_id = fba.billing_plan_id \
@@ -499,10 +505,7 @@ pub async fn get_invoice(
     .await
 }
 
-/// Same as `get_invoice`, but row-locks it for the rest of the transaction. Required
-/// before reading `amount_paid`/`total_amount` to decide how much of a payment or
-/// credit application to apply — without the lock, two concurrent calls against the
-/// same invoice both read the same stale balance and can jointly overpay it.
+/// Same as `get_invoice`, but row-locks it — required before applying a payment or credit.
 pub async fn get_invoice_for_update(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
@@ -539,8 +542,7 @@ pub struct InvoiceListRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// The admin-facing invoice list — enriched with wing/flat_number so the UI never has
-/// to show a bare internal flat_id.
+/// The admin-facing invoice list, enriched with wing/flat_number.
 pub async fn list_invoices(
     conn: &mut sqlx::PgConnection,
     flat_id: Option<i32>,
@@ -562,9 +564,7 @@ pub async fn list_invoices(
     .await
 }
 
-/// Every invoice for any of `flat_ids` — the resident-facing "my bills" query, always
-/// called with the caller's own owned flat_ids so it never needs a separate ownership
-/// check the way admin routes taking a raw `flat_id` do.
+/// Every invoice for any of `flat_ids` — the resident-facing "my bills" query.
 pub async fn list_invoices_for_flats(
     conn: &mut sqlx::PgConnection,
     flat_ids: &[i32],
@@ -596,8 +596,7 @@ pub async fn void_invoice(
     Ok(())
 }
 
-/// UNPAID/PARTIALLY_PAID invoices past due as of `as_of`, with no interest charge
-/// already posted today (idempotent — safe to re-run the interest job same-day).
+/// Overdue invoices with no interest charge posted today yet (safe to re-run same-day).
 pub async fn find_chargeable_overdue_invoices(
     conn: &mut sqlx::PgConnection,
     as_of: NaiveDate,
@@ -620,9 +619,7 @@ pub async fn find_chargeable_overdue_invoices(
     .await
 }
 
-/// Total interest already posted for this invoice across all prior charge runs —
-/// used to charge only the newly-accrued delta on each run instead of re-charging
-/// the full period-to-date every time (see `billing::charge_interest_for_invoice`).
+/// Total interest already posted for this invoice across all prior charge runs.
 pub async fn sum_interest_charged(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
@@ -632,6 +629,19 @@ pub async fn sum_interest_charged(
     )
     .bind(invoice_id)
     .fetch_one(conn)
+    .await
+}
+
+/// Every ledger transaction a prior interest run posted for this invoice.
+pub async fn get_interest_charge_transaction_ids(
+    conn: &mut sqlx::PgConnection,
+    invoice_id: InvoiceId,
+) -> Result<Vec<TransactionId>, sqlx::Error> {
+    sqlx::query_scalar::<_, TransactionId>(
+        "SELECT ledger_transaction_id FROM interest_charges WHERE invoice_id = $1 ORDER BY charged_date",
+    )
+    .bind(invoice_id)
+    .fetch_all(conn)
     .await
 }
 
@@ -667,11 +677,7 @@ pub async fn insert_interest_charge(
     Ok(())
 }
 
-/// Cash (or any other reference-less) payments have no reference_number to de-duplicate
-/// on, so a double-click/retried request would otherwise post twice with no defense at
-/// any layer. This narrowly catches that case — an identical-looking payment recorded
-/// in the last `window_seconds` — without blocking a genuine second same-day cash
-/// payment recorded minutes apart, which does happen in practice.
+/// Catches a duplicate reference-less (cash) payment: an identical-looking one recorded within `window_seconds`.
 pub async fn find_recent_similar_reference_less_payment(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
@@ -741,25 +747,26 @@ pub async fn insert_payment(
     .await
 }
 
+/// Guarded on `status <> 'VOID'` as defense-in-depth. Returns whether a row was updated.
 pub async fn apply_payment_to_invoice(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
     amount: Decimal,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
         "UPDATE invoices SET \
             amount_paid = amount_paid + $1, \
             status = CASE \
                 WHEN amount_paid + $1 >= total_amount THEN 'PAID' \
                 ELSE 'PARTIALLY_PAID' \
             END \
-         WHERE invoice_id = $2",
+         WHERE invoice_id = $2 AND status <> 'VOID'",
     )
     .bind(amount)
     .bind(invoice_id)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn insert_receipt(
@@ -876,6 +883,22 @@ pub async fn insert_payment_claim(
     .await
 }
 
+/// Looks up an already-PENDING claim with the same reference, for `submit_claim`'s idempotency check.
+pub async fn find_pending_claim_by_reference(
+    conn: &mut sqlx::PgConnection,
+    payment_method: &str,
+    reference_number: &str,
+) -> Result<Option<ClaimId>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT claim_id FROM payment_claims \
+         WHERE payment_method = $1 AND reference_number = $2 AND status = 'PENDING'",
+    )
+    .bind(payment_method)
+    .bind(reference_number)
+    .fetch_optional(conn)
+    .await
+}
+
 pub async fn get_payment_claim(
     conn: &mut sqlx::PgConnection,
     claim_id: ClaimId,
@@ -890,8 +913,22 @@ pub async fn get_payment_claim(
     .await
 }
 
-/// `claimed_by` scopes to one resident's own claims (member-facing "my claims" view);
-/// `None` lists across everyone (admin review queue).
+/// Same as `get_payment_claim`, but row-locks it — required before a confirm/reject decision.
+pub async fn get_payment_claim_for_update(
+    conn: &mut sqlx::PgConnection,
+    claim_id: ClaimId,
+) -> Result<Option<PaymentClaim>, sqlx::Error> {
+    sqlx::query_as::<_, PaymentClaim>(&format!(
+        "SELECT {PAYMENT_CLAIM_COLUMNS} FROM payment_claims c \
+         JOIN invoices i ON i.invoice_id = c.invoice_id \
+         JOIN flats f ON f.flat_id = i.flat_id WHERE c.claim_id = $1 FOR UPDATE OF c",
+    ))
+    .bind(claim_id)
+    .fetch_optional(conn)
+    .await
+}
+
+/// `claimed_by` scopes to one resident's claims; `None` lists everyone's (admin queue).
 pub async fn list_payment_claims(
     conn: &mut sqlx::PgConnection,
     status: Option<&str>,
@@ -911,42 +948,44 @@ pub async fn list_payment_claims(
     .await
 }
 
+/// Guarded on `status = 'PENDING'` as defense-in-depth. Returns whether it updated a row.
 pub async fn mark_claim_confirmed(
     conn: &mut sqlx::PgConnection,
     claim_id: ClaimId,
     reviewed_by: i32,
     payment_id: PaymentId,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
         "UPDATE payment_claims SET status = 'CONFIRMED', reviewed_by = $1, reviewed_at = NOW(), \
             payment_id = $2 \
-         WHERE claim_id = $3",
+         WHERE claim_id = $3 AND status = 'PENDING'",
     )
     .bind(reviewed_by)
     .bind(payment_id)
     .bind(claim_id)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
+/// Guarded on `status = 'PENDING'` — see `mark_claim_confirmed`.
 pub async fn mark_claim_rejected(
     conn: &mut sqlx::PgConnection,
     claim_id: ClaimId,
     reviewed_by: i32,
     review_note: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
         "UPDATE payment_claims SET status = 'REJECTED', reviewed_by = $1, reviewed_at = NOW(), \
             review_note = $2 \
-         WHERE claim_id = $3",
+         WHERE claim_id = $3 AND status = 'PENDING'",
     )
     .bind(reviewed_by)
     .bind(review_note)
     .bind(claim_id)
     .execute(conn)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -1126,8 +1165,7 @@ pub async fn has_outstanding_dues(
     .await
 }
 
-/// The current active owner's email for a flat, if it has one — used only for
-/// display on generated documents (NOC), never for access control.
+/// The current active owner's email for a flat, for display on documents (NOC).
 pub async fn get_flat_owner_email(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -1205,9 +1243,7 @@ pub async fn assign_flat_to_fund(
     Ok(())
 }
 
-/// The active contribution rule for whichever fund(s) `flat_id` is assigned to, as of
-/// `as_of`. A flat is assigned to at most a handful of funds in practice (sinking +
-/// repair), so this returns all applicable rules rather than assuming exactly one.
+/// Active contribution rules for whichever fund(s) `flat_id` is assigned to, as of `as_of`.
 pub async fn get_fund_contribution_rules_for_flat(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -1227,9 +1263,7 @@ pub async fn get_fund_contribution_rules_for_flat(
     .await
 }
 
-/// Every active fund contribution rule, regardless of which flats it's assigned to —
-/// the full-settings view (`list_funds` + this) rather than the per-flat resolution
-/// `get_fund_contribution_rules_for_flat` does at billing time.
+/// Every active fund contribution rule, regardless of which flats it's assigned to.
 pub async fn list_all_fund_contribution_rules(
     conn: &mut sqlx::PgConnection,
 ) -> Result<Vec<FundContributionRule>, sqlx::Error> {
@@ -1241,9 +1275,7 @@ pub async fn list_all_fund_contribution_rules(
     .await
 }
 
-/// The income account a fund's contributions post to — one dedicated account per
-/// fund, code `"6" || fund_id` (e.g. sinking fund with fund_id 2 -> "62"), created
-/// lazily the first time it's needed rather than pre-seeded for every possible fund.
+/// The income account a fund's contributions post to (code `"6" || fund_id`), created lazily.
 pub async fn get_or_create_fund_income_account(
     conn: &mut sqlx::PgConnection,
     fund_id: FundId,
@@ -1328,8 +1360,7 @@ pub async fn insert_tds_rule(
     Ok(())
 }
 
-/// Sum of gross vendor-expense amounts already recorded against this vendor in this
-/// fiscal year — the "annual aggregate" side of a TDS threshold check.
+/// Sum of gross vendor-expense amounts already recorded against this vendor this fiscal year.
 pub async fn ytd_vendor_amount(
     conn: &mut sqlx::PgConnection,
     vendor_id: VendorId,
@@ -1373,6 +1404,18 @@ pub async fn insert_tds_record(
     .bind(record.deducted_on)
     .execute(conn)
     .await?;
+    Ok(())
+}
+
+/// Deletes the TDS record `submit_expense` speculatively created, if the expense is rejected.
+pub async fn delete_tds_record_for_expense(
+    conn: &mut sqlx::PgConnection,
+    expense_id: ExpenseId,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM tds_records WHERE expense_id = $1")
+        .bind(expense_id)
+        .execute(conn)
+        .await?;
     Ok(())
 }
 
@@ -1590,10 +1633,7 @@ pub async fn get_vendor_expense(
     .await
 }
 
-/// Same as `get_vendor_expense`, but row-locks it for the rest of the transaction —
-/// required before checking/flipping `status`, so two concurrent approve/reject calls
-/// (a double-click) on the same expense can't both pass the PENDING_APPROVAL check and
-/// each post their own ledger entry.
+/// Same as `get_vendor_expense`, but row-locks it — required before flipping `status`.
 pub async fn get_vendor_expense_for_update(
     conn: &mut sqlx::PgConnection,
     expense_id: ExpenseId,
@@ -1624,8 +1664,7 @@ pub struct VendorExpenseListRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// The admin-facing expense list — enriched with the vendor's name so the UI never has
-/// to show a bare internal vendor_id.
+/// The admin-facing expense list, enriched with the vendor's name.
 pub async fn list_vendor_expenses(
     conn: &mut sqlx::PgConnection,
     status: Option<&str>,
@@ -1763,9 +1802,7 @@ pub async fn get_bank_statement_line(
     .await
 }
 
-/// Ledger transactions on `date` whose total (signed by account normal-balance, from
-/// the bank account's point of view) equals `amount` and aren't already matched to a
-/// bank line — candidates for auto-matching one statement line.
+/// Ledger transactions on `date` totaling `amount` on the bank account, not yet matched.
 pub async fn find_unmatched_ledger_transactions_for_amount(
     conn: &mut sqlx::PgConnection,
     transaction_date: NaiveDate,
@@ -1796,10 +1833,7 @@ pub struct BankMatchCandidate {
     pub amount: Decimal,
 }
 
-/// Unmatched bank-account ledger transactions within 10 days of `near_date`, closest
-/// date first — the picker a manual "Match…" click shows, so an admin can recognize the
-/// right entry by date/description/amount instead of having to already know its raw
-/// transaction ID.
+/// Unmatched bank-account ledger transactions within 10 days of `near_date`, closest date first.
 pub async fn list_bank_match_candidates(
     conn: &mut sqlx::PgConnection,
     near_date: NaiveDate,
@@ -1824,10 +1858,7 @@ pub async fn list_bank_match_candidates(
     .await
 }
 
-/// Only ever moves a line out of UNMATCHED — re-matching an already-matched/ignored
-/// line (double-submit, or an admin acting on a stale UI list) is a silent no-op
-/// rather than overwriting a prior match with no trace of what it was matched to
-/// before. Returns whether it actually changed anything.
+/// Only moves a line out of UNMATCHED — a no-op if already matched/ignored. Returns whether it changed anything.
 pub async fn mark_line_matched(
     conn: &mut sqlx::PgConnection,
     line_id: BankLineId,
@@ -1844,8 +1875,7 @@ pub async fn mark_line_matched(
     Ok(result.rows_affected() > 0)
 }
 
-/// Same UNMATCHED-only guard as `mark_line_matched`. Returns whether it actually
-/// changed anything.
+/// Same UNMATCHED-only guard as `mark_line_matched`.
 pub async fn mark_line_ignored(
     conn: &mut sqlx::PgConnection,
     line_id: BankLineId,
@@ -1915,11 +1945,7 @@ pub struct BudgetVarianceRow {
     pub actual_amount: Decimal,
 }
 
-/// Budgeted vs. actual per account for a fiscal year. `actual_amount` is signed by the
-/// account's own normal balance (so an expense account's actual is its debit total,
-/// an income account's actual is its credit total) — always a comparable, same-sign
-/// number against `budgeted_amount`, not a raw ledger debit/credit that would need the
-/// caller to know which side to read.
+/// Budgeted vs. actual per account for a fiscal year, `actual_amount` signed by the account's normal balance.
 pub async fn budget_variance(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
@@ -1955,11 +1981,7 @@ pub async fn budget_variance(
 // Member advance / credit balance (flat-scoped, ledger-derived)
 // ===========================================================================
 
-/// Held for the rest of the transaction. `get_flat_credit_balance` is a `SUM` over
-/// `ledger_entries`, not a single row a `FOR UPDATE` could lock, so two concurrent
-/// credit applications against different invoices for the same flat need this instead
-/// to serialize on the flat rather than both reading the same balance and jointly
-/// overspending it.
+/// Advisory lock held for the rest of the transaction, since credit balance is a `SUM` with no row to lock.
 pub async fn lock_flat_credit(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
@@ -2027,10 +2049,7 @@ pub async fn get_fiscal_year(
     .await
 }
 
-/// Same as `get_fiscal_year`, but row-locks it for the rest of the transaction —
-/// required before checking/flipping `status`, so two concurrent close/reopen calls on
-/// the same fiscal year can't both pass the status check and each post their own
-/// closing/reversal entry.
+/// Same as `get_fiscal_year`, but row-locks it — required before flipping `status`.
 pub async fn get_fiscal_year_for_update(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
@@ -2044,8 +2063,7 @@ pub async fn get_fiscal_year_for_update(
     .await
 }
 
-/// Net INCOME/EXPENSE account balances for the fiscal year, signed by each account's
-/// own normal balance — the raw material for the year-end closing entry.
+/// Net INCOME/EXPENSE account balances for the fiscal year, signed by normal balance.
 pub async fn income_expense_balances_for_fy(
     conn: &mut sqlx::PgConnection,
     fiscal_year_id: FiscalYearId,
@@ -2117,9 +2135,7 @@ pub struct LedgerEntryRow {
     pub credit: Decimal,
 }
 
-/// Reads back a posted transaction's own entries — used only to build a reversing
-/// transaction (e.g. undoing a fiscal-year closing entry on reopen), never to mutate
-/// them (ledger_entries has no UPDATE/DELETE path at all, enforced at the DB level).
+/// Reads back a posted transaction's entries, to build a reversing transaction.
 pub async fn get_ledger_entries_for_transaction(
     conn: &mut sqlx::PgConnection,
     transaction_id: TransactionId,
@@ -2149,6 +2165,7 @@ pub struct Account {
     pub created_by: Option<i32>,
 }
 
+/// `account_type` must be `"INCOME"` or `"EXPENSE"` — the caller already rejects anything else.
 pub async fn insert_account(
     conn: &mut sqlx::PgConnection,
     code: &str,
@@ -2205,8 +2222,7 @@ pub async fn get_account(
     .await
 }
 
-/// `false` if the account is a protected system account (never deactivatable) or
-/// didn't exist — the caller should treat that as a client error, not a silent no-op.
+/// `false` if the account is a protected system account or didn't exist.
 pub async fn set_account_active(
     conn: &mut sqlx::PgConnection,
     account_id: AccountId,
@@ -2222,9 +2238,7 @@ pub async fn set_account_active(
     Ok(result.rows_affected() > 0)
 }
 
-/// Resolves a flat's numeric id from wing + flat_number — every other page in this app
-/// only ever works with wing/flat_number strings, so the accounting UI needs this to
-/// turn what an admin types into the `flat_id` every accounting endpoint expects.
+/// Resolves a flat's numeric id from wing + flat_number.
 pub async fn resolve_flat_id(
     conn: &mut sqlx::PgConnection,
     wing: &str,
