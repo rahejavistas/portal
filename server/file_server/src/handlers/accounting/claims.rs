@@ -62,7 +62,10 @@ pub async fn submit_claim(
         },
     )
     .await
-    .map_err(internal_err)?;
+    .map_err(|e| match &e {
+        accounting::claims::ClaimError::ReferenceInUse => bad_request(e.to_string()),
+        _ => internal_err(e),
+    })?;
 
     Ok((
         axum::http::StatusCode::CREATED,
@@ -123,6 +126,7 @@ pub async fn confirm_claim(
         .await
         .map_err(|e| match &e {
             accounting::claims::ClaimError::NotFound => not_found("Claim not found"),
+            accounting::claims::ClaimError::Db(_) => internal_err(e),
             _ => bad_request(e.to_string()),
         })?;
     tx.commit().await.map_err(internal_err)?;
@@ -150,6 +154,7 @@ pub async fn reject_claim(
         .await
         .map_err(|e| match &e {
             accounting::claims::ClaimError::NotFound => not_found("Claim not found"),
+            accounting::claims::ClaimError::Db(_) => internal_err(e),
             _ => bad_request(e.to_string()),
         })?;
     tx.commit().await.map_err(internal_err)?;

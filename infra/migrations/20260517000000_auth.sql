@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS flats (
     wing VARCHAR(255) NOT NULL,
     flat_number VARCHAR(255) NOT NULL,
     -- Property of the flat, not of whichever billing plan is assigned.
-    area_sqft NUMERIC(10,2),
+    area_sqft NUMERIC(10,2) CHECK (area_sqft > 0),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     UNIQUE (wing, flat_number)
 );

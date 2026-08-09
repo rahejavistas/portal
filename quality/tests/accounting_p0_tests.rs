@@ -712,6 +712,104 @@ async fn test_duplicate_pending_claim_submission_is_idempotent() {
     );
 }
 
+/// Reusing another flat's pending reference must be rejected, not silently handed
+/// back the first resident's claim_id — that would let a claim submission for
+/// one invoice quietly resolve to someone else's claim.
+#[tokio::test]
+async fn test_reusing_a_pending_reference_on_a_different_invoice_is_rejected() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let email_a = "claimcross_a@vistas.com";
+    let email_b = "claimcross_b@vistas.com";
+    let _ = quick_create_user(&env, &admin_jwt, email_a, "F", "0801");
+    let _ = quick_create_user(&env, &admin_jwt, email_b, "F", "0802");
+    let flat_a = flat_id_for(&env, "F", "0801").await;
+    let flat_b = flat_id_for(&env, "F", "0802").await;
+    let plan_id = create_flat_rate_plan(&url, &admin_auth, 4000);
+    assign_plan(&url, &admin_auth, flat_a, plan_id);
+    assign_plan(&url, &admin_auth, flat_b, plan_id);
+    let gen_a = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_a,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let gen_b = generate_invoice(
+        &url,
+        &admin_auth,
+        flat_b,
+        "2026-07-01",
+        "2026-07-31",
+        "2026-07-10",
+    );
+    let invoice_a = gen_a["invoices_created"][0].as_str().unwrap().to_string();
+    let invoice_b = gen_b["invoices_created"][0].as_str().unwrap().to_string();
+
+    let resident_a = auth(&quality::quick_onboard_user(
+        &env,
+        email_a,
+        "resident_pass_secure_123",
+    ));
+    let resident_b = auth(&quality::quick_onboard_user(
+        &env,
+        email_b,
+        "resident_pass_secure_123",
+    ));
+
+    let claim_a = ureq::post(&format!("{}/api/v1/accounting/claims/submit", url))
+        .set("Authorization", &resident_a)
+        .send_json(serde_json::json!({
+            "invoice_id": invoice_a, "amount": 4000, "payment_method": "upi",
+            "reference_number": "UPI-CLAIM-CROSS-1"
+        }))
+        .expect("first claim submission failed")
+        .into_json::<serde_json::Value>()
+        .unwrap();
+
+    let claim_b_attempt = ureq::post(&format!("{}/api/v1/accounting/claims/submit", url))
+        .set("Authorization", &resident_b)
+        .send_json(serde_json::json!({
+            "invoice_id": invoice_b, "amount": 4000, "payment_method": "upi",
+            "reference_number": "UPI-CLAIM-CROSS-1"
+        }));
+    assert!(
+        claim_b_attempt.is_err(),
+        "a second resident reusing another flat's pending reference must be rejected"
+    );
+    assert_eq!(
+        claim_b_attempt
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        400
+    );
+
+    let list_resp = ureq::post(&format!("{}/api/v1/admin/accounting/claims/list", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({ "status": "PENDING" }))
+        .expect("list claims failed");
+    let claims: serde_json::Value = list_resp.into_json().unwrap();
+    let matching: Vec<&serde_json::Value> = claims
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["reference_number"] == "UPI-CLAIM-CROSS-1")
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "the rejected attempt must not have created a claim"
+    );
+    assert_eq!(matching[0]["claim_id"], claim_a["claim_id"]);
+    assert_eq!(matching[0]["invoice_id"], invoice_a);
+}
+
 /// Voiding an invoice that already has money against it would silently corrupt the
 /// books — must be blocked outright, not just discouraged.
 #[tokio::test]

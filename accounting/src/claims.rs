@@ -8,6 +8,7 @@ pub enum ClaimError {
     NotFound,
     NotPending,
     NotOwnClaim,
+    ReferenceInUse,
     Payment(payments::PaymentError),
     Db(sqlx::Error),
 }
@@ -18,6 +19,10 @@ impl std::fmt::Display for ClaimError {
             ClaimError::NotFound => write!(f, "Payment claim not found"),
             ClaimError::NotPending => write!(f, "This claim has already been reviewed"),
             ClaimError::NotOwnClaim => write!(f, "This claim does not belong to you"),
+            ClaimError::ReferenceInUse => write!(
+                f,
+                "This payment reference is already pending review on another claim"
+            ),
             ClaimError::Payment(e) => write!(f, "{}", e),
             ClaimError::Db(e) => write!(f, "{}", e),
         }
@@ -46,16 +51,21 @@ pub struct SubmitClaimRequest<'a> {
 }
 
 /// Creates a PENDING claim row; never touches the ledger. Idempotent on
-/// (payment_method, reference_number) while PENDING — reviewed claims free up the
-/// reference for resubmission.
+/// (payment_method, reference_number, invoice_id) while PENDING — reviewed claims
+/// free up the reference for resubmission. The same reference on a different
+/// invoice is rejected rather than silently handed the first claim's ID.
 pub async fn submit_claim(
     conn: &mut sqlx::PgConnection,
     req: SubmitClaimRequest<'_>,
 ) -> Result<ClaimId, ClaimError> {
-    if let Some(existing) =
+    if let Some((existing_claim_id, existing_invoice_id)) =
         db::find_pending_claim_by_reference(conn, req.payment_method, req.reference_number).await?
     {
-        return Ok(existing);
+        return if existing_invoice_id == req.invoice_id {
+            Ok(existing_claim_id)
+        } else {
+            Err(ClaimError::ReferenceInUse)
+        };
     }
 
     let claim_id = db::insert_payment_claim(

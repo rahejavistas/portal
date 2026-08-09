@@ -222,9 +222,9 @@ pub async fn setup_api_test_env() -> TestEnv {
     setup_api_test_env_inner(&[]).await
 }
 
-/// Same as `setup_api_test_env`, but with accounting turned OFF for the society — for
-/// testing that the accounting API refuses every request outright when the module
-/// isn't enabled, regardless of what permissions the caller holds.
+/// Same as `setup_api_test_env`, but with accounting turned OFF — module-gated
+/// accounting endpoints are rejected regardless of permissions; Society Profile
+/// stays reachable since it's exempt (needed to turn accounting on).
 pub async fn setup_api_test_env_with_accounting_disabled() -> TestEnv {
     setup_api_test_env_inner(&[("ACCOUNTING_ENABLED", "false")]).await
 }

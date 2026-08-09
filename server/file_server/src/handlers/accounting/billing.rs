@@ -74,6 +74,9 @@ pub async fn assign_billing_plan(
     State(state): State<AppState>,
     Json(payload): Json<AssignBillingPlanRequest>,
 ) -> Result<StatusCode, ApiError> {
+    if payload.area_sqft.is_some_and(|a| a <= Decimal::ZERO) {
+        return Err(bad_request("area_sqft must be positive"));
+    }
     let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
     accounting::db::upsert_flat_billing_assignment(
         &mut tx,

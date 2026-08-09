@@ -1254,10 +1254,8 @@ fn upload_statement_csv(url: &str, admin_auth: &str, csv_content: &str) -> ureq:
     .expect("import statement request failed")
 }
 
-/// A statement with both "Value Date" and "Transaction Date" columns (both containing
-/// "date") must be rejected as ambiguous rather than silently picking whichever comes
-/// first — the two columns can hold genuinely different dates for the same line, and
-/// guessing wrong means every imported line is misdated.
+/// "Value Date" + "Posting Date" is ambiguous (both contain "date") and must be
+/// rejected, not silently resolved to whichever comes first.
 #[tokio::test]
 async fn test_statement_import_rejects_ambiguous_date_columns() {
     let env = setup_api_test_env().await;
@@ -1362,6 +1360,14 @@ async fn test_tds_and_fund_rule_creation_rejects_invalid_rates_and_amounts() {
         bad_tds_rate_over_100.is_err(),
         "rate_pct over 100 must be rejected"
     );
+    assert_eq!(
+        bad_tds_rate_over_100
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        400
+    );
 
     let bad_tds_threshold =
         ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/create", url))
@@ -1374,6 +1380,14 @@ async fn test_tds_and_fund_rule_creation_rejects_invalid_rates_and_amounts() {
     assert!(
         bad_tds_threshold.is_err(),
         "negative threshold must be rejected"
+    );
+    assert_eq!(
+        bad_tds_threshold
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        400
     );
 
     let fund_id = fund_id_for(&env, "SINKING").await;
@@ -1390,6 +1404,14 @@ async fn test_tds_and_fund_rule_creation_rejects_invalid_rates_and_amounts() {
         bad_fund_negative.is_err(),
         "negative amount_or_pct must be rejected"
     );
+    assert_eq!(
+        bad_fund_negative
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        400
+    );
 
     let bad_fund_pct_over_100 = ureq::post(&format!(
         "{}/api/v1/admin/accounting/funds/contribution-rules/create",
@@ -1403,6 +1425,14 @@ async fn test_tds_and_fund_rule_creation_rejects_invalid_rates_and_amounts() {
     assert!(
         bad_fund_pct_over_100.is_err(),
         "PCT_OF_MAINTENANCE amount_or_pct over 100 must be rejected"
+    );
+    assert_eq!(
+        bad_fund_pct_over_100
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        400
     );
 
     // A FIXED contribution above 100 is legitimate (it's a rupee amount, not a

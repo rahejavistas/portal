@@ -888,9 +888,9 @@ pub async fn find_pending_claim_by_reference(
     conn: &mut sqlx::PgConnection,
     payment_method: &str,
     reference_number: &str,
-) -> Result<Option<ClaimId>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT claim_id FROM payment_claims \
+) -> Result<Option<(ClaimId, InvoiceId)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT claim_id, invoice_id FROM payment_claims \
          WHERE payment_method = $1 AND reference_number = $2 AND status = 'PENDING'",
     )
     .bind(payment_method)
