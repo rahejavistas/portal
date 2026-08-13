@@ -1099,6 +1099,9 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         const initialTab = urlParams.get('tab') || 'profile';
 
         function switchTab(tabName) {
+            if (tabName === 'billing' && !(user && user.accounting_enabled)) {
+                tabName = 'profile';
+            }
             document.documentElement.setAttribute('data-tab', tabName);
 
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
