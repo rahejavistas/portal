@@ -467,21 +467,24 @@ fn cascade_completion_one_level(
 
     if let Some(info) = info_map.get(&step_id) {
         if let Some(parent_id) = info.parent_id {
-            if parent_id != template.step_id {
-                if let Some(parent_info) = info_map.get(&parent_id) {
-                    let all_siblings_completed = parent_info.substep_ids.iter().all(|&sub_id| {
-                        if sub_id == step_id {
-                            target_completed
-                        } else {
-                            state
-                                .steps
-                                .get(&sub_id)
-                                .map(|s| s.is_completed)
-                                .unwrap_or(false)
-                        }
-                    });
-                    steps_to_update.push((parent_id, all_siblings_completed));
-                }
+            if parent_id != template.step_id && info_map.contains_key(&parent_id) {
+                // Overlay this save's not-yet-persisted completion onto a copy of
+                // `state`, so a parent with fields of its own (not just substeps)
+                // is only marked complete when those fields are filled too.
+                let mut overlaid_steps = state.steps.clone();
+                overlaid_steps.insert(
+                    step_id,
+                    StepStateDb {
+                        is_completed: target_completed,
+                        started_at: None,
+                    },
+                );
+                let overlaid_state = ProcessStateInput {
+                    steps: overlaid_steps,
+                    ..state.clone()
+                };
+                let parent_completed = check_step_completed(parent_id, info_map, &overlaid_state);
+                steps_to_update.push((parent_id, parent_completed));
             }
         }
     }
@@ -624,6 +627,75 @@ mod tests {
 
         assert_eq!(result.new_status, StepStatus::Open);
         assert!(result.steps_to_update.contains(&(2, false)));
+    }
+
+    #[test]
+    fn completing_the_last_substep_does_not_complete_a_parent_with_its_own_unfilled_field() {
+        let field = |field_id: i32| crate::ProcessFieldTemplate {
+            field_id,
+            name: "Note".to_string(),
+            r#type: "text".to_string(),
+            is_optional: false,
+            filled_by: "user".to_string(),
+            requirements: None,
+            requires_signature: false,
+            required_signs_from_designations: Vec::new(),
+        };
+        let template = crate::ProcessTemplate {
+            name: "Mixed step".to_string(),
+            description: None,
+            step_id: 1,
+            is_optional: false,
+            is_review_required: false,
+            fields: None,
+            substeps: Some(vec![crate::ProcessStepTemplate {
+                step_id: 2,
+                name: "Parent with its own field and a substep".to_string(),
+                description: None,
+                is_optional: false,
+                is_review_required: false,
+                fields: Some(vec![field(201)]),
+                substeps: Some(vec![crate::ProcessStepTemplate {
+                    step_id: 3,
+                    name: "Substep".to_string(),
+                    description: None,
+                    is_optional: false,
+                    is_review_required: false,
+                    fields: Some(vec![field(301)]),
+                    substeps: None,
+                }]),
+            }]),
+        };
+
+        // Fill only the substep's field, not the parent's own field.
+        let mut state = ProcessStateInput::default();
+        state.fields.insert(
+            301,
+            FieldState {
+                text_value: Some("done".to_string()),
+                document_id: None,
+            },
+        );
+
+        let result = validate_save(
+            &template,
+            &state,
+            3,
+            &[SaveFieldInput {
+                template_field_id: 301,
+                text_value: Some("done".to_string()),
+                document_id: None,
+            }],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(result.new_status, StepStatus::Completed);
+        assert!(result.steps_to_update.contains(&(3, true)));
+        assert!(
+            result.steps_to_update.contains(&(2, false)),
+            "parent must stay incomplete while its own field is unfilled, even though its only substep just completed"
+        );
     }
 
     #[test]

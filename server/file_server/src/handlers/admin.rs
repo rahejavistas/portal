@@ -140,25 +140,29 @@ pub struct LookupFlatOwnersPayload {
 
 /// Previews who owns a flat before mapping a document to it. Invalid/incomplete input
 /// returns an empty list rather than an error — a soft preview, not a validated write.
-/// Restricted to callers with some document-management capability — this leaks owner
-/// email addresses, and the route it lives under has no blanket permission layer.
+/// Only used for resident-specific document registration, so scoped to that category
+/// specifically — managing an unrelated category (e.g. notices) isn't enough to look up
+/// owner emails for an arbitrary flat.
 pub async fn lookup_flat_owners(
     State(state): State<AppState>,
     SessionUser(user): SessionUser,
     Json(payload): Json<LookupFlatOwnersPayload>,
 ) -> impl IntoResponse {
-    let can_manage_any_documents = match state.document_manager.manageable_categories(&user).await {
-        Ok(None) => true,
-        Ok(Some(categories)) => !categories.is_empty(),
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "status": "error", "message": e })),
-            )
-                .into_response()
-        }
-    };
-    if !can_manage_any_documents {
+    let can_manage_resident_specific =
+        match state.document_manager.manageable_categories(&user).await {
+            Ok(None) => true,
+            Ok(Some(categories)) => {
+                categories.contains(crate::document::RESIDENT_SPECIFIC_CATEGORY)
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "status": "error", "message": e })),
+                )
+                    .into_response()
+            }
+        };
+    if !can_manage_resident_specific {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({

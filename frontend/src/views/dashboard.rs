@@ -863,6 +863,10 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             return raw;
         }
 
+        function userHasFlat(user) {
+            return !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+        }
+
         function isAdminUser(user) {
             return !!(user && (
                 user.can_view_users || user.can_manage_users ||
@@ -897,7 +901,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 rolesContainer.innerHTML = '<span style="color: var(--muted-foreground); font-size: 13px; font-weight: 600;">Standard Resident</span>';
             }
 
-            const hasFlat = user.wing !== 'TBD' && user.flat_number !== 'TBD';
+            const hasFlat = userHasFlat(user);
 
             if (!hasFlat && isAdmin) {
                 window.location.replace('/admin');
@@ -1101,7 +1105,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         const initialTab = urlParams.get('tab') || 'profile';
 
         function switchTab(tabName) {
-            if (tabName === 'billing' && !(currentUser && currentUser.accounting_enabled)) {
+            if (tabName === 'billing' && !(currentUser && currentUser.accounting_enabled && userHasFlat(currentUser))) {
                 tabName = 'profile';
             }
             document.documentElement.setAttribute('data-tab', tabName);

@@ -45,13 +45,22 @@ pub async fn process_admin_upload_url(
 
     let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
 
-    let mut flat_id: Option<i32> = None;
-    if let Some(oid) = info.ownership_id {
-        flat_id = get_flat_info_for_ownership(&mut conn, oid)
-            .await
-            .unwrap_or(None)
-            .map(|f| f.flat_id);
-    }
+    let Some(oid) = info.ownership_id else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("This process has no associated flat to attach the document to".to_string()),
+        ));
+    };
+    let Some(flat_id) = get_flat_info_for_ownership(&mut conn, oid)
+        .await
+        .internal_err()?
+        .map(|f| f.flat_id)
+    else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("This process has no associated flat to attach the document to".to_string()),
+        ));
+    };
 
     // Validate file extension
     let ext = payload
@@ -84,7 +93,7 @@ pub async fn process_admin_upload_url(
                 content_type: &content_type,
                 uploaded_by: Some(user.user_id),
             },
-            flat_id,
+            Some(flat_id),
         )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e)))?;
@@ -123,7 +132,7 @@ pub async fn process_admin_confirm_upload(
     let flat_id = match info.ownership_id {
         Some(oid) => get_flat_info_for_ownership(&mut conn, oid)
             .await
-            .unwrap_or(None)
+            .internal_err()?
             .map(|f| f.flat_id),
         None => None,
     };
