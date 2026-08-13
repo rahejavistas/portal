@@ -1826,8 +1826,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
             handleCategoryChange();
         }
 
-        loadUploadCategories();
-
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab');
         if (initialTab === 'documents' && (canManageDocuments || canManageCategories)) {
@@ -1881,7 +1879,10 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const societyPanel = document.getElementById('suite-society');
             if (societyPanel) societyPanel.style.display = suiteName === 'society' ? 'block' : 'none';
 
-            if (suiteName === 'documents') {
+            if (suiteName === 'residents') {
+                loadUsers();
+                loadUploadCategories();
+            } else if (suiteName === 'documents') {
                 switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
             } else if (suiteName === 'roles') {
                 switchSubtab(defaultRolesSubtab);
@@ -4305,8 +4306,6 @@ function openDesignationPicker(field) {
                 docFeedback.style.display = 'block';
             }
         });
-
-        loadUsers();
     </script>
 </body>
 </html>
