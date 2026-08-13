@@ -420,10 +420,14 @@ pub async fn replace_confirm_upload(
 /// the same time), so this can't itself exhaust the pool; if the unlock can't be
 /// confirmed to have run, the connection is closed instead of returned to the pool,
 /// so a held lock can never get silently recycled into a future request.
+///
+/// Returns whether this call actually ran the check — `false` means another call
+/// already holds the lock, so callers must not report success on that basis alone
+/// (the in-flight call owns whatever outcome there is).
 async fn reconcile_external_document(
     state: &AppState,
     external_document_id: &str,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     let mut lock_conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let (got_lock,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock(hashtext($1)::bigint)")
         .bind(external_document_id)
@@ -431,7 +435,7 @@ async fn reconcile_external_document(
         .await
         .map_err(internal_err)?;
     if !got_lock {
-        return Ok(());
+        return Ok(false);
     }
 
     let result =
@@ -447,7 +451,7 @@ async fn reconcile_external_document(
         _ => lock_conn.close().await.unwrap_or(()),
     }
 
-    result
+    result.map(|()| true)
 }
 
 async fn reconcile_external_document_locked(
@@ -594,9 +598,9 @@ pub async fn refresh_status(
         ));
     };
 
-    reconcile_external_document(&state, &external_document_id).await?;
+    let reconciled = reconcile_external_document(&state, &external_document_id).await?;
     Ok(Json(
-        serde_json::json!({ "status": "ok", "reconciled": true }),
+        serde_json::json!({ "status": "ok", "reconciled": reconciled }),
     ))
 }
 
