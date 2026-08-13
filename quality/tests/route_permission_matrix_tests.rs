@@ -7,7 +7,7 @@
 
 use quality::{
     quick_assign_designation, quick_create_user, quick_onboard_user, quick_setup_admin,
-    setup_api_test_env, TestEnv,
+    setup_api_test_env, setup_api_test_env_with_accounting_disabled, TestEnv,
 };
 
 fn auth(jwt: &str) -> String {
@@ -402,5 +402,384 @@ async fn test_documents_signatures_all_reachable_by_process_permissions() {
             .set("Authorization", &a)
             .send_json(serde_json::json!({"document_id": uuid::Uuid::new_v4()})),
         "documents/signatures/all with process.view",
+    );
+}
+
+// ===========================================================================
+// Accounting module — exactly 2 permissions (see server/file_server/src/main.rs's
+// accounting_* router blocks): `accounting.manage` reaches every write route
+// (billing/invoicing/payments/vendors/bank-reconciliation/budgets/fiscal-year-close),
+// `accounting.view` reaches read-only listing and report/document routes only.
+// ===========================================================================
+
+/// `accounting.manage` reaches billing/invoicing/payments AND vendors/bank-recon/
+/// budgets/fiscal-year-close (all collapsed under this one permission), but not an
+/// unrelated domain (`process.review`).
+#[tokio::test]
+async fn test_accounting_manage_only() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "acctmgr", "810", &["accounting.manage"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/create",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({
+            "name": "Matrix Plan", "billing_type": "FLAT_RATE",
+            "config": {"amount": 1000}, "frequency": "MONTHLY"
+        })),
+        "accounting/billing-plans/create with accounting.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/payments/record", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({
+                "invoice_id": uuid::Uuid::new_v4(), "amount": 100,
+                "payment_method": "cash", "reference_number": null, "payment_date": "2026-07-01"
+            })),
+        "accounting/payments/record with accounting.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/vendors/create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"name": "Matrix Vendor", "category": "misc"})),
+        "accounting/vendors/create with accounting.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/assign-bulk",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"billing_plan_id": 999999})),
+        "accounting/billing-plans/assign-bulk with accounting.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/bank-reconciliation/lines/list",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/bank-reconciliation/lines/list with accounting.manage",
+    );
+    // A nonexistent line id still proves the permission gate passed — the business-logic
+    // 404 that follows is not a 403.
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/bank-reconciliation/lines/{}/match-candidates",
+            url, 999999
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/bank-reconciliation/lines/:id/match-candidates with accounting.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/budgets/variance", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/budgets/variance with accounting.manage",
+    );
+    // A nonexistent fiscal_year_id still proves the permission gate passed — the
+    // business-logic 404 that follows is not a 403.
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/fiscal-years/{}/close",
+            url, 999999
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/fiscal-years/:id/close with accounting.manage",
+    );
+
+    // Society Profile is restricted to the super_admin designation itself, not any
+    // designation holding accounting.manage — a treasurer role has no business editing
+    // the society's legal identity.
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/society-profile/set",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"name": "Matrix Society", "address": "Somewhere"})),
+        "accounting/society-profile/set requires super_admin, not just accounting.manage",
+    );
+
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/process/review", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "template_step_id": 1, "is_approved": true})),
+        "process/review with only accounting.manage",
+    );
+}
+
+/// `accounting.view` reaches the read-only listing/report/document routes (also
+/// reachable by `accounting.manage`, since those routers accept either), but not any
+/// write/manage route.
+#[tokio::test]
+async fn test_accounting_view_only() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "acctview", "811", &["accounting.view"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/invoices/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/assignments",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/billing-plans/assignments with accounting.view",
+    );
+    // Read-only routes that used to sit under accounting.manage only, contradicting the
+    // documented view/manage split — an auditor-style accounting.view holder must be
+    // able to read this data even though they can't submit/approve/reconcile anything.
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/vendors/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/vendors/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/purchase-orders/list",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/purchase-orders/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/expenses/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/expenses/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/tds-rules/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/tds-rules/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/bank-reconciliation/lines/list",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/bank-reconciliation/lines/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/budgets/variance", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({ "fiscal_year_id": 999999 })),
+        "accounting/budgets/variance with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/tds-summary", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({ "vendor_id": 999999, "fiscal_year_id": 999999 })),
+        "accounting/tds-summary with accounting.view",
+    );
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/funds/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/funds/list with accounting.view",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/reports/run", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"report_type": "outstanding_dues"})),
+        "accounting/reports/run with accounting.view",
+    );
+    // Society Profile is restricted to super_admin, not reachable by accounting.view
+    // either — it's not an accounting-permission-gated route at all.
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/society-profile", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/society-profile requires super_admin, not accounting.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/society-profile/set",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"name": "X", "address": "Y"})),
+        "accounting/society-profile/set requires super_admin, not accounting.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/invoices/generate", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({
+                "flat_id": 1, "period_start": "2026-07-01", "period_end": "2026-07-31", "due_date": "2026-07-10"
+            })),
+        "accounting/invoices/generate requires accounting.manage, not accounting.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/vendors/create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"name": "X", "category": "Y"})),
+        "accounting/vendors/create requires accounting.manage, not accounting.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/assign-bulk",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"billing_plan_id": 999999})),
+        "accounting/billing-plans/assign-bulk requires accounting.manage, not accounting.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/fiscal-years/{}/close",
+            url, 999999
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({})),
+        "accounting/fiscal-years/:id/close requires accounting.manage, not accounting.view",
+    );
+}
+
+/// The resident-facing `/api/v1/accounting/*` routes sit outside the `/admin` nest and
+/// have no router-level permission layer at all — any authenticated resident (zero
+/// special permissions) can reach them, self-scoped internally. But they still require
+/// a valid session: this is exactly the gap a prior review found and fixed on
+/// `payment-instructions` (it previously had no `SessionUser` extractor at all).
+#[tokio::test]
+async fn test_accounting_resident_self_service_routes() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "acctresident", "816", &[]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/accounting/claims/mine", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/claims/mine needs only a valid session",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/accounting/payment-instructions", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/payment-instructions needs only a valid session",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/accounting/invoices/mine", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "accounting/invoices/mine needs only a valid session",
+    );
+
+    // No Authorization header at all must be rejected — this is a 401 (unauthenticated),
+    // not a 403 (authenticated but lacking permission), so it's checked directly rather
+    // than via assert_forbidden.
+    let unauthenticated = ureq::post(&format!("{}/api/v1/accounting/payment-instructions", url))
+        .send_json(serde_json::json!({}));
+    assert!(
+        unauthenticated.is_err(),
+        "payment-instructions must require authentication"
+    );
+    assert_eq!(
+        unauthenticated
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        401,
+        "payment-instructions without any token must be 401, not silently succeed",
+    );
+
+    // Admin-only accounting routes must still be out of reach for a bare resident.
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/invoices/generate", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({
+                "flat_id": 1, "period_start": "2026-07-01", "period_end": "2026-07-31", "due_date": "2026-07-10"
+            })),
+        "accounting/invoices/generate requires accounting.manage, not just any session",
+    );
+}
+
+/// The UI hides accounting entirely when the society hasn't turned it on, but that is
+/// not access control by itself — the API must also refuse every accounting route
+/// outright when `accounting_enabled` is off, even for a caller holding
+/// `accounting.manage`/`accounting.view`, and even for a resident's own self-service
+/// routes. Society Profile is the one deliberate exception (super_admin needs it
+/// regardless of whether accounting is enabled yet).
+#[tokio::test]
+async fn test_accounting_disabled_blocks_every_accounting_route_regardless_of_permission() {
+    let env = setup_api_test_env_with_accounting_disabled().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let manage_jwt = seeded_resident(
+        &env,
+        &admin_jwt,
+        "acctdisabled-mgr",
+        "820",
+        &["accounting.manage"],
+    );
+    let manage_auth = auth(&manage_jwt);
+
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/accounting/billing-plans/create",
+            url
+        ))
+        .set("Authorization", &manage_auth)
+        .send_json(serde_json::json!({
+            "name": "X", "billing_type": "FLAT_RATE", "config": {"amount": 1000}, "frequency": "MONTHLY"
+        })),
+        "billing-plans/create must be blocked when accounting is disabled, even with accounting.manage",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/invoices/list", url))
+            .set("Authorization", &manage_auth)
+            .send_json(serde_json::json!({})),
+        "invoices/list must be blocked when accounting is disabled, even with accounting.manage",
+    );
+
+    let _ = quick_create_user(&env, &admin_jwt, "acctdisabled-res@vistas.com", "Z", "0909");
+    let resident_jwt = quick_onboard_user(
+        &env,
+        "acctdisabled-res@vistas.com",
+        "resident_pass_secure_123",
+    );
+    let resident_auth = auth(&resident_jwt);
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/accounting/invoices/mine", url))
+            .set("Authorization", &resident_auth)
+            .send_json(serde_json::json!({})),
+        "invoices/mine must be blocked when accounting is disabled",
+    );
+
+    // Society Profile stays reachable regardless — a super admin needs it even before
+    // accounting is turned on.
+    let admin_auth = auth(&admin_jwt);
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/accounting/society-profile", url))
+            .set("Authorization", &admin_auth)
+            .send_json(serde_json::json!({})),
+        "society-profile must remain reachable even when accounting is disabled",
     );
 }

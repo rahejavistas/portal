@@ -48,6 +48,8 @@ pub enum Permission {
     ProcessView,
     ProcessReviewer,
     ProcessTemplatesManage,
+    AccountingManage,
+    AccountingView,
 }
 
 impl Permission {
@@ -63,6 +65,8 @@ impl Permission {
             Permission::ProcessView => "process.view",
             Permission::ProcessReviewer => "process.reviewer",
             Permission::ProcessTemplatesManage => "process.templates.manage",
+            Permission::AccountingManage => "accounting.manage",
+            Permission::AccountingView => "accounting.view",
         }
     }
 
@@ -78,6 +82,8 @@ impl Permission {
             "process.view" => Some(Permission::ProcessView),
             "process.reviewer" => Some(Permission::ProcessReviewer),
             "process.templates.manage" => Some(Permission::ProcessTemplatesManage),
+            "accounting.manage" => Some(Permission::AccountingManage),
+            "accounting.view" => Some(Permission::AccountingView),
             _ => None,
         }
     }
@@ -119,6 +125,9 @@ pub struct Capabilities {
     pub can_view_all_processes: bool,
     /// Can create/edit process templates (the versioned builder) and activate versions.
     pub can_manage_process_templates: bool,
+    pub can_manage_accounting: bool,
+    /// Read-only: ledger/invoices/reports (implied by `can_manage_accounting` too).
+    pub can_view_accounting: bool,
 }
 
 impl User {
@@ -206,6 +215,7 @@ fn derived_capabilities(permissions: &[String]) -> Capabilities {
     let has = |p: Permission| permissions.iter().any(|c| c == p.code());
     let can_manage_roles = has(Permission::UsersRolesManage);
     let can_review_process = has(Permission::ProcessReviewer);
+    let can_manage_accounting = has(Permission::AccountingManage);
     Capabilities {
         can_manage_roles,
         can_manage_designations: has(Permission::DesignationsManage),
@@ -217,6 +227,8 @@ fn derived_capabilities(permissions: &[String]) -> Capabilities {
         can_manage_documents: false,
         can_view_all_processes: can_review_process || has(Permission::ProcessView),
         can_manage_process_templates: has(Permission::ProcessTemplatesManage),
+        can_manage_accounting,
+        can_view_accounting: can_manage_accounting || has(Permission::AccountingView),
     }
 }
 

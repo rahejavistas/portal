@@ -25,6 +25,8 @@ pub struct LoginResponse {
     mfa_required: bool,
     #[serde(default)]
     pending_token: Option<String>,
+    #[serde(default)]
+    accounting_enabled: bool,
 }
 
 const MFA_OTP_EXPIRY_SECONDS: i64 = 10 * 60;
@@ -88,6 +90,7 @@ pub async fn login(
                             message: Some(format!("Database error: {}", e)),
                             mfa_required: false,
                             pending_token: None,
+                            accounting_enabled: false,
                         }),
                     )
                         .into_response();
@@ -116,6 +119,7 @@ pub async fn login(
                             message: Some(format!("Database error: {}", e)),
                             mfa_required: false,
                             pending_token: None,
+                            accounting_enabled: false,
                         }),
                     )
                         .into_response();
@@ -132,6 +136,7 @@ pub async fn login(
                         ),
                         mfa_required: true,
                         pending_token: Some(pending_token),
+                        accounting_enabled: false,
                     }),
                 )
                     .into_response();
@@ -147,6 +152,7 @@ pub async fn login(
                         message: None,
                         mfa_required: false,
                         pending_token: None,
+                        accounting_enabled: state.accounting_enabled,
                     }),
                 )
                     .into_response(),
@@ -159,6 +165,7 @@ pub async fn login(
                         message: Some(format!("Token generation failed: {}", e)),
                         mfa_required: false,
                         pending_token: None,
+                        accounting_enabled: false,
                     }),
                 )
                     .into_response(),
@@ -173,6 +180,7 @@ pub async fn login(
                 message: Some("Invalid email or password".to_string()),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -188,6 +196,7 @@ pub async fn login(
                 ),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -200,6 +209,7 @@ pub async fn login(
                 message: Some(format!("Database error: {}", e)),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -232,6 +242,7 @@ pub async fn mfa_verify(
                         message: None,
                         mfa_required: false,
                         pending_token: None,
+                        accounting_enabled: state.accounting_enabled,
                     }),
                 )
                     .into_response(),
@@ -244,6 +255,7 @@ pub async fn mfa_verify(
                         message: Some(format!("Token generation failed: {}", e)),
                         mfa_required: false,
                         pending_token: None,
+                        accounting_enabled: false,
                     }),
                 )
                     .into_response(),
@@ -258,6 +270,7 @@ pub async fn mfa_verify(
                 message: Some("Incorrect code. Please try again.".to_string()),
                 mfa_required: true,
                 pending_token: Some(payload.pending_token),
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -273,6 +286,7 @@ pub async fn mfa_verify(
                 ),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -287,6 +301,7 @@ pub async fn mfa_verify(
                 ),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -299,6 +314,7 @@ pub async fn mfa_verify(
                 message: Some(format!("Database error: {}", e)),
                 mfa_required: false,
                 pending_token: None,
+                accounting_enabled: false,
             }),
         )
             .into_response(),
@@ -546,6 +562,13 @@ pub async fn reset_password(
     }
 }
 
+#[derive(serde::Serialize)]
+struct ProfileResponse {
+    #[serde(flatten)]
+    user: authentication::User,
+    accounting_enabled: bool,
+}
+
 pub async fn profile(
     State(state): State<AppState>,
     crate::extractors::SessionUser(session_user): crate::extractors::SessionUser,
@@ -555,7 +578,14 @@ pub async fn profile(
         .get_user_by_id(session_user.user_id)
         .await
     {
-        Ok(Some(user)) => (StatusCode::OK, Json(user)).into_response(),
+        Ok(Some(user)) => (
+            StatusCode::OK,
+            Json(ProfileResponse {
+                user,
+                accounting_enabled: state.accounting_enabled,
+            }),
+        )
+            .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "User not found").into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

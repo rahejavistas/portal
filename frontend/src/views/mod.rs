@@ -1,3 +1,4 @@
+pub(crate) mod accounting;
 pub(crate) mod admin;
 pub(crate) mod dashboard;
 pub(crate) mod forgot_password;

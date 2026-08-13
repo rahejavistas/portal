@@ -62,6 +62,8 @@ pub struct AppConfig {
     pub rate_limit: RateLimitConfig,
     #[serde(default)]
     pub signyu: SignYuConfig,
+    #[serde(default)]
+    pub accounting_enabled: bool,
 }
 
 impl AppConfig {
@@ -123,6 +125,9 @@ impl AppConfig {
             if !signyu_base_url.is_empty() {
                 config.signyu.base_url = signyu_base_url;
             }
+        }
+        if let Ok(accounting_enabled) = std::env::var("ACCOUNTING_ENABLED") {
+            config.accounting_enabled = accounting_enabled == "true";
         }
 
         config

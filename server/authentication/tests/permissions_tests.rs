@@ -380,7 +380,7 @@ async fn test_designations_and_permissions() {
     assert!(super_admin_perms.contains(&"users.manage".to_string()));
     assert!(super_admin_perms.contains(&"documents.all.manage".to_string()));
     assert!(super_admin_perms.contains(&"process.reviewer".to_string()));
-    assert_eq!(super_admin_perms.len(), 10);
+    assert_eq!(super_admin_perms.len(), 12);
 
     let custodian_perms = pm.get_designation_permissions("custodian").await.unwrap();
     assert!(custodian_perms.is_empty());

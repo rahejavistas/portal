@@ -1268,6 +1268,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const myFlatDashboardLink = hasFlat
                     ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>`
                     : '';
+                const accountingLink = (user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting))
+                    ? `<a href="/admin-accounting" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Accounting &amp; Billing</a>`
+                    : '';
+                const societyProfileLink = (user && user.designations && user.designations.includes('super_admin'))
+                    ? `<a href="/admin?tab=society" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Society Profile</a>`
+                    : '';
                 const processesLink = IS_ADMIN_PROCESS_PAGE
                     ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
                     : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
@@ -1295,6 +1301,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         ${residentsGroup}
                         ${documentsLink}
                         ${processesGroup}
+                        ${accountingLink}
+                        ${societyProfileLink}
                         ${myFlatDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
@@ -1303,6 +1311,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const adminDashboardLink = isAdmin
                     ? `<a href="/admin" class="admin-btn" style="text-decoration: none;">Admin Dashboard &rarr;</a>`
                     : '';
+                const residentHasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+                const billingLink = (user && user.accounting_enabled && residentHasFlat)
+                    ? `<a href="/dashboard?tab=billing" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Billing</a>`
+                    : '';
                 sidebarBrandContainer.innerHTML = `
                     <h1>Vistas</h1>
                     <p>Resident Portal</p>
@@ -1310,6 +1322,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        ${billingLink}
                         ${adminDashboardLink}
                         <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>

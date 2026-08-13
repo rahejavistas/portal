@@ -413,6 +413,30 @@ pub(crate) const ADMIN_HTML: &str = r#"
             min-width: 0;
             overflow: hidden;
         }
+        .profile-table {
+            width: 100%;
+        }
+        .profile-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .profile-row:last-child {
+            border-bottom: none;
+        }
+        .profile-label {
+            color: var(--muted-foreground);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        }
+        .profile-value {
+            font-weight: 700;
+            font-size: 1.125rem;
+        }
         .split-grid {
             display: grid;
             grid-template-columns: 1fr 2fr;
@@ -829,6 +853,12 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             </button>
                         </div>
                     </div>
+                    <a href="/admin-accounting" class="nav-item" id="suite-btn-accounting" style="display:none; text-decoration: none;" onclick="closeSidebar()">
+                        Accounting &amp; Billing
+                    </a>
+                    <button class="nav-item" id="suite-btn-society" style="display:none;" onclick="switchSuite('society'); closeSidebar()">
+                        Society Profile
+                    </button>
                     <a href="/dashboard" class="admin-btn" id="my-flat-dashboard-link" style="display:none;">
                         My Flat Dashboard &rarr;
                     </a>
@@ -1186,6 +1216,39 @@ pub(crate) const ADMIN_HTML: &str = r#"
                                 <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </section>
+            <section class="suite-panel" id="suite-society">
+                <h2>Society Profile</h2>
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Identity</h3>
+                    <div id="society-profile-summary" class="empty-state">Loading…</div>
+                    <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Society Name</label><input id="sp-name" placeholder="Raheja Vistas CHS"></div>
+                            <div class="form-group"><label>Registration Number (optional)</label><input id="sp-reg" placeholder="Reg No"></div>
+                        </div>
+                        <div class="form-row-2">
+                            <div class="form-group"><label>Address</label><input id="sp-address" placeholder="Chandivali"></div>
+                            <div class="form-group"><label>State (optional)</label><select id="sp-state"><option value="">Select state...</option></select></div>
+                        </div>
+                        <div class="form-group" style="max-width:260px;"><label>Phone (optional)</label><input id="sp-phone"></div>
+                        <div class="feedback-box" id="sp-feedback"></div>
+                        <button type="button" class="submit-btn" style="width:auto;" onclick="submitSocietyProfile()">Save</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Account</h3>
+                    <div class="profile-table">
+                        <div class="profile-row">
+                            <span class="profile-label">Super Admin Email</span>
+                            <span class="profile-value" id="society-admin-email">Loading...</span>
+                        </div>
+                        <div class="profile-row">
+                            <span class="profile-label">Account Created</span>
+                            <span class="profile-value" id="society-admin-created">Loading...</span>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1565,6 +1628,14 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const templatesBtn = document.getElementById('suite-btn-templates');
             if (templatesBtn) templatesBtn.style.display = 'block';
         }
+        if (user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) {
+            const accountingBtn = document.getElementById('suite-btn-accounting');
+            if (accountingBtn) accountingBtn.style.display = 'block';
+        }
+        if (user && user.designations && user.designations.includes('super_admin')) {
+            const societyBtn = document.getElementById('suite-btn-society');
+            if (societyBtn) societyBtn.style.display = 'block';
+        }
         const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
         const canManageSignerDirectory = !!(user && user.can_review_process);
         if (canSignDocuments || canManageSignerDirectory) {
@@ -1755,8 +1826,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
             handleCategoryChange();
         }
 
-        loadUploadCategories();
-
         const urlParams = new URLSearchParams(window.location.search);
         const initialTab = urlParams.get('tab');
         if (initialTab === 'documents' && (canManageDocuments || canManageCategories)) {
@@ -1769,6 +1838,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             switchSuite('templates');
         } else if (initialTab === 'signatures' && (canSignDocuments || canManageSignerDirectory)) {
             switchSuite('signatures');
+        } else if (initialTab === 'society' && user && user.designations && user.designations.includes('super_admin')) {
+            switchSuite('society');
         } else if (defaultSuite) {
             switchSuite(defaultSuite);
         }
@@ -1805,8 +1876,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
             if (templatesPanel) templatesPanel.style.display = suiteName === 'templates' ? 'block' : 'none';
             const signaturesPanel = document.getElementById('suite-signatures');
             if (signaturesPanel) signaturesPanel.style.display = suiteName === 'signatures' ? 'block' : 'none';
+            const societyPanel = document.getElementById('suite-society');
+            if (societyPanel) societyPanel.style.display = suiteName === 'society' ? 'block' : 'none';
 
-            if (suiteName === 'documents') {
+            if (suiteName === 'residents') {
+                loadUsers();
+                loadUploadCategories();
+            } else if (suiteName === 'documents') {
                 switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
             } else if (suiteName === 'roles') {
                 switchSubtab(defaultRolesSubtab);
@@ -1822,6 +1898,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     document.getElementById('signer-directory-card').style.display = 'block';
                     loadSignerDirectory();
                 }
+            } else if (suiteName === 'society') {
+                loadSocietyProfile();
             }
         }
 
@@ -2096,6 +2174,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             'users.view', 'users.manage', 'users.roles.view', 'users.roles.manage',
             'designations.manage', 'documents.all.manage', 'documents.categories.manage',
             'process.view', 'process.reviewer', 'process.templates.manage',
+            'accounting.view', 'accounting.manage',
         ];
         const PERMISSION_INFO = {
             'users.view': { title: 'View Residents', desc: 'View all residents.' },
@@ -2108,6 +2187,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
             'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
             'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions. Also allows changing which designations are required to sign a document field.' },
+            'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report — GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
+            'accounting.manage': { title: 'Manage Accounting', desc: 'Full control of the accounting module: create billing plans and generate invoices, record payments, run the interest job, manage vendors/expenses and TDS, reconcile bank statements, set budgets, edit GST/interest rules and the chart of accounts, and close or reopen fiscal years. Includes everything View Accounting allows.' },
         };
 
         function sortPermissionsForDisplay(permissions) {
@@ -2804,6 +2885,106 @@ function openDesignationPicker(field) {
             }
         }
 
+        const INDIAN_STATES_AND_UTS = [
+            'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
+            'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
+            'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab',
+            'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
+            'West Bengal', 'Andaman and Nicobar Islands', 'Chandigarh',
+            'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Jammu and Kashmir', 'Ladakh',
+            'Lakshadweep', 'Puducherry',
+        ];
+
+        function populateStateOptions() {
+            const select = document.getElementById('sp-state');
+            if (!select || select.options.length > 1) return;
+            for (const s of INDIAN_STATES_AND_UTS) {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.textContent = s;
+                select.appendChild(opt);
+            }
+        }
+
+        function fmtProfileDate(v) {
+            if (!v) return '—';
+            const d = new Date(v);
+            if (Number.isNaN(d.getTime())) return v;
+            return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        }
+
+        async function loadSocietyProfile() {
+            populateStateOptions();
+            const summary = document.getElementById('society-profile-summary');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/accounting/society-profile`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!resp.ok) {
+                    summary.textContent = 'Failed to load society profile.';
+                    return;
+                }
+                const data = await resp.json();
+                const p = data.profile;
+                if (p) {
+                    summary.innerHTML = `<strong>${escapeHtml(p.name)}</strong>${p.registration_number ? ' — ' + escapeHtml(p.registration_number) : ''}<br>${escapeHtml(p.address)}${p.state ? ', ' + escapeHtml(p.state) : ''}${p.phone ? ' — Tel: ' + escapeHtml(p.phone) : ''}`;
+                    summary.className = '';
+                    document.getElementById('sp-name').value = p.name || '';
+                    document.getElementById('sp-reg').value = p.registration_number || '';
+                    document.getElementById('sp-address').value = p.address || '';
+                    document.getElementById('sp-state').value = p.state || '';
+                    document.getElementById('sp-phone').value = p.phone || '';
+                } else {
+                    summary.textContent = 'Not set yet — invoices will be generated without a society letterhead.';
+                    summary.className = 'empty-state';
+                }
+                document.getElementById('society-admin-email').textContent = data.super_admin_email;
+                document.getElementById('society-admin-created').textContent = fmtProfileDate(data.account_created_at);
+            } catch (err) {
+                summary.textContent = 'Database connection offline.';
+            }
+        }
+
+        async function submitSocietyProfile() {
+            const feedback = document.getElementById('sp-feedback');
+            feedback.style.display = 'none';
+            const name = document.getElementById('sp-name').value.trim();
+            const address = document.getElementById('sp-address').value.trim();
+            if (!name || !address) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Name and address are required.';
+                return;
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/accounting/society-profile/set`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        registration_number: document.getElementById('sp-reg').value.trim() || null,
+                        address,
+                        state: document.getElementById('sp-state').value || null,
+                        phone: document.getElementById('sp-phone').value.trim() || null,
+                    })
+                });
+                if (!resp.ok) {
+                    const data = await resp.json().catch(() => ({}));
+                    throw new Error(data.message || 'Failed to save society profile.');
+                }
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box success';
+                feedback.textContent = 'Saved.';
+                loadSocietyProfile();
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = err.message;
+            }
+        }
+
         async function loadCategoriesTabData() {
             await loadNonSystemDesignations();
             await loadNonSystemCategories();
@@ -3444,7 +3625,11 @@ function openDesignationPicker(field) {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (resp.ok) {
-                    allPermissions = sortPermissionsForDisplay(await resp.json());
+                    const permissions = await resp.json();
+                    const visible = (user && user.accounting_enabled)
+                        ? permissions
+                        : permissions.filter(p => !p.code.startsWith('accounting.'));
+                    allPermissions = sortPermissionsForDisplay(visible);
                 }
             } catch (err) {
                 console.error('Failed to load permissions catalog:', err);
@@ -4121,8 +4306,6 @@ function openDesignationPicker(field) {
                 docFeedback.style.display = 'block';
             }
         });
-
-        loadUsers();
     </script>
 </body>
 </html>

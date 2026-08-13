@@ -17,6 +17,9 @@ chrono = { version = "0.4", features = ["serde"] }
 infra = { path = "../infra" }
 base = { path = "../base" }
 process = { path = "../process" }
+accounting = { path = "../accounting" }
+rust_decimal = { version = "1.35", features = ["serde"] }
+rust_decimal_macros = "1.35"
 
 [dev-dependencies]
 authentication = { path = "../server/authentication" }
@@ -25,3 +28,4 @@ axum = "0.6"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+printpdf = "0.12"
