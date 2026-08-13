@@ -412,7 +412,35 @@ pub async fn replace_confirm_upload(
 
 /// Polls the provider for `external_document_id`; if COMPLETED, ingests the signed PDF
 /// and unblocks the field. Shared by "Refresh Status" and the webhook handler.
+///
+/// SignYu redelivers webhooks and the manual refresh can race a webhook, so the whole
+/// body runs under a session-level advisory lock keyed on `external_document_id` — a
+/// concurrent call just no-ops instead of double-ingesting the signed PDF.
 async fn reconcile_external_document(
+    state: &AppState,
+    external_document_id: &str,
+) -> Result<(), ApiError> {
+    let mut lock_conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let (got_lock,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock(hashtext($1)::bigint)")
+        .bind(external_document_id)
+        .fetch_one(&mut *lock_conn)
+        .await
+        .map_err(internal_err)?;
+    if !got_lock {
+        return Ok(());
+    }
+
+    let result = reconcile_external_document_locked(state, external_document_id).await;
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock(hashtext($1)::bigint)")
+        .bind(external_document_id)
+        .execute(&mut *lock_conn)
+        .await;
+
+    result
+}
+
+async fn reconcile_external_document_locked(
     state: &AppState,
     external_document_id: &str,
 ) -> Result<(), ApiError> {

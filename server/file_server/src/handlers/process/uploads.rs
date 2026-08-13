@@ -118,7 +118,29 @@ pub async fn process_admin_confirm_upload(
     Json(payload): Json<ProcessAdminConfirmUploadRequest>,
 ) -> Result<Json<ProcessAdminConfirmUploadResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+    let (info, _) = load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+
+    let flat_id = match info.ownership_id {
+        Some(oid) => get_flat_info_for_ownership(&mut conn, oid)
+            .await
+            .unwrap_or(None)
+            .map(|f| f.flat_id),
+        None => None,
+    };
+    let belongs = match flat_id {
+        Some(fid) => state
+            .document_manager
+            .document_belongs_to_flat(payload.document_id, fid)
+            .await
+            .internal_err()?,
+        None => false,
+    };
+    if !belongs {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Document is not attached to this process".to_string()),
+        ));
+    }
 
     state
         .document_manager

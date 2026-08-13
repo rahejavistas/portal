@@ -140,11 +140,35 @@ pub struct LookupFlatOwnersPayload {
 
 /// Previews who owns a flat before mapping a document to it. Invalid/incomplete input
 /// returns an empty list rather than an error — a soft preview, not a validated write.
+/// Restricted to callers with some document-management capability — this leaks owner
+/// email addresses, and the route it lives under has no blanket permission layer.
 pub async fn lookup_flat_owners(
     State(state): State<AppState>,
-    _session_user: SessionUser,
+    SessionUser(user): SessionUser,
     Json(payload): Json<LookupFlatOwnersPayload>,
 ) -> impl IntoResponse {
+    let can_manage_any_documents = match state.document_manager.manageable_categories(&user).await {
+        Ok(None) => true,
+        Ok(Some(categories)) => !categories.is_empty(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "status": "error", "message": e })),
+            )
+                .into_response()
+        }
+    };
+    if !can_manage_any_documents {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "You do not have permission to look up flat owners."
+            })),
+        )
+            .into_response();
+    }
+
     let emails = match FlatIdentifier::new(&payload.wing, &payload.flat_number) {
         Ok(flat) => state
             .permissions_manager

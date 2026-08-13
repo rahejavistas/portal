@@ -50,9 +50,11 @@ Everything below serves these four. When two rules pull in different directions,
 ## Security
 
 - Correctness here is non-negotiable. Every new route needs a real ownership/ID-scoping check, not just a permission check — holding a permission must never imply access to an arbitrary resource unless that's the documented, intentional scope.
+- This applies retroactively, not just to new code: any time a handler is opened for any reason — a bug fix, an unrelated refactor, "can you check X" — verify it actually has a real ownership check, not just a permission check, regardless of how old the route is or who wrote it. Old code doesn't get a pass just because it predates this rule.
 - Nothing that shouldn't be visible to a given user's role/permissions gets sent to the frontend, ever — not in a response body, not in an error message, not behind a hidden UI element. Client-side hiding is not access control.
 - All server API routes are POST, no exceptions.
 - New routes need permission-matrix coverage in `quality/tests/route_permission_matrix_tests.rs`, plus tests for the specific IDOR/ownership edge cases relevant to that route (wrong user's ID, wrong flat's ID, cross-resource substitution), not just the 403/not-403 permission check.
+- Diff-scoped AI review (CodeRabbit on a PR) only ever sees new/changed lines — it will never catch a bug sitting in code nobody's touched. Periodically trigger a full-repo review (a PR whose base is the repo's root commit, so the diff is the whole codebase) rather than assuming diff reviews add up to full coverage over time. This is on whoever's driving the session to ask for — it doesn't happen on its own.
 
 ## Documentation
 
@@ -88,3 +90,4 @@ Everything below serves these four. When two rules pull in different directions,
 
 - **Always run `python frontend/build.py` after touching anything under `frontend/src/views/*.rs`.** The generated `dist/*.html` files are what actually ships — edits to the `.rs` source alone don't take effect until this runs.
 - All UI must be mobile-friendly, always. Check this, don't assume it.
+- There is no JS tooling in this repo — no linter, no type checker, nothing in `run_checks.sh` or `build.py` looks at the embedded `<script>` blocks at all. `cargo check`/clippy cannot see JavaScript. A scoping bug (referencing a `const`/`let` from outside the block it's declared in) will compile fine and only fail at runtime in a browser. When touching JS inside `frontend/src/views/*.rs`, manually trace variable scope for anything referenced across function boundaries — don't rely on any check catching it, because none currently can.

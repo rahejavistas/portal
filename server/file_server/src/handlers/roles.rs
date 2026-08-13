@@ -351,6 +351,23 @@ pub async fn toggle_designation_permission(
         );
     }
 
+    // Same guard as assigning the designation itself: can't grant a permission you
+    // don't hold — otherwise anyone already holding that designation gains it too.
+    if payload.enabled
+        && !caller
+            .permissions
+            .iter()
+            .any(|p| p == &payload.permission_code)
+    {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            format!(
+                "You cannot grant '{}' as you don't hold it yourself.",
+                payload.permission_code
+            ),
+        );
+    }
+
     match state
         .permissions_manager
         .toggle_designation_permission(

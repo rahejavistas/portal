@@ -760,4 +760,20 @@ impl DocumentManager {
 
         Ok(())
     }
+
+    pub async fn document_belongs_to_flat(
+        &self,
+        document_id: Uuid,
+        flat_id: i32,
+    ) -> Result<bool, String> {
+        let row: Option<(i32,)> = sqlx::query_as(
+            "SELECT flat_id FROM document_flats WHERE document_id = $1 AND flat_id = $2",
+        )
+        .bind(document_id)
+        .bind(flat_id)
+        .fetch_optional(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.is_some())
+    }
 }
