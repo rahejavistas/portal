@@ -412,9 +412,52 @@ pub async fn replace_confirm_upload(
 
 /// Polls the provider for `external_document_id`; if COMPLETED, ingests the signed PDF
 /// and unblocks the field. Shared by "Refresh Status" and the webhook handler.
+///
+/// SignYu redelivers webhooks and the manual refresh can race a webhook, so the whole
+/// body runs under a session-level advisory lock keyed on `external_document_id` — a
+/// concurrent call just no-ops instead of double-ingesting the signed PDF. Everything
+/// runs on the single connection holding the lock (never a second pool connection at
+/// the same time), so this can't itself exhaust the pool; if the unlock can't be
+/// confirmed to have run, the connection is closed instead of returned to the pool,
+/// so a held lock can never get silently recycled into a future request.
+///
+/// Returns whether this call actually ran the check — `false` means another call
+/// already holds the lock, so callers must not report success on that basis alone
+/// (the in-flight call owns whatever outcome there is).
 async fn reconcile_external_document(
     state: &AppState,
     external_document_id: &str,
+) -> Result<bool, ApiError> {
+    let mut lock_conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let (got_lock,): (bool,) = sqlx::query_as("SELECT pg_try_advisory_lock(hashtext($1)::bigint)")
+        .bind(external_document_id)
+        .fetch_one(&mut *lock_conn)
+        .await
+        .map_err(internal_err)?;
+    if !got_lock {
+        return Ok(false);
+    }
+
+    let result =
+        reconcile_external_document_locked(state, external_document_id, &mut lock_conn).await;
+
+    let unlocked: Result<(bool,), _> =
+        sqlx::query_as("SELECT pg_advisory_unlock(hashtext($1)::bigint)")
+            .bind(external_document_id)
+            .fetch_one(&mut *lock_conn)
+            .await;
+    match unlocked {
+        Ok((true,)) => {}
+        _ => lock_conn.close().await.unwrap_or(()),
+    }
+
+    result.map(|()| true)
+}
+
+async fn reconcile_external_document_locked(
+    state: &AppState,
+    external_document_id: &str,
+    conn: &mut sqlx::PgConnection,
 ) -> Result<(), ApiError> {
     let signyu = state
         .signyu_client
@@ -464,18 +507,17 @@ async fn reconcile_external_document(
         .await
         .map_err(internal_err)?;
 
-    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
-    let template = load_template(&mut conn, process_id).await?;
+    let template = load_template(conn, process_id).await?;
 
     let still_current =
-        process::db::is_current_field_value(&mut conn, process_id, template_field_id, document_id)
+        process::db::is_current_field_value(conn, process_id, template_field_id, document_id)
             .await
             .map_err(internal_err)?;
 
     if still_current {
         if let Some(signed_document_id) = updated.iter().find_map(|r| r.signed_document_id) {
             process::db::attach_signed_replacement(
-                &mut conn,
+                conn,
                 process_id,
                 template_step_id,
                 template_field_id,
@@ -486,24 +528,24 @@ async fn reconcile_external_document(
         }
     }
 
-    let statuses_before = process::db::get_statuses(&mut conn, process_id, &template)
+    let statuses_before = process::db::get_statuses(conn, process_id, &template)
         .await
         .map_err(internal_err)?;
     let was_completed = statuses_before.get(&template_step_id)
         == Some(&process::state_machine::StepStatus::Completed);
 
-    process::db::recompute_gating_for_step(&mut conn, &template, process_id, template_step_id)
+    process::db::recompute_gating_for_step(conn, &template, process_id, template_step_id)
         .await
         .map_err(internal_err)?;
 
     if !was_completed {
-        let statuses_after = process::db::get_statuses(&mut conn, process_id, &template)
+        let statuses_after = process::db::get_statuses(conn, process_id, &template)
             .await
             .map_err(internal_err)?;
         if statuses_after.get(&template_step_id)
             == Some(&process::state_machine::StepStatus::Completed)
         {
-            if let Ok(Some(info)) = process::db::get_process_info(&mut conn, process_id).await {
+            if let Ok(Some(info)) = process::db::get_process_info(conn, process_id).await {
                 if let Some(ctx) = crate::handlers::process::build_notification_ctx(
                     &state.pg_pool,
                     info.user_id,
@@ -556,9 +598,9 @@ pub async fn refresh_status(
         ));
     };
 
-    reconcile_external_document(&state, &external_document_id).await?;
+    let reconciled = reconcile_external_document(&state, &external_document_id).await?;
     Ok(Json(
-        serde_json::json!({ "status": "ok", "reconciled": true }),
+        serde_json::json!({ "status": "ok", "reconciled": reconciled }),
     ))
 }
 

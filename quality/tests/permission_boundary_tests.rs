@@ -664,10 +664,10 @@ async fn test_cannot_toggle_permissions_for_system_designation() {
 }
 
 /// A holder of `designations.manage` can never toggle permissions on a designation they
-/// themselves currently hold — otherwise they could grant that designation (and
-/// therefore themselves) any other permission, a self-escalation path entirely separate
-/// from the assign/revoke self-edit guard. They CAN still edit a different designation's
-/// permissions, proving the block is scoped to "held by the caller", not a blanket denial.
+/// themselves currently hold, and can never grant a permission they don't hold
+/// themselves to any designation — both are two-hop self-escalation paths, separate
+/// from the assign/revoke self-edit guard. They CAN still grant a different
+/// designation a permission they already hold.
 #[tokio::test]
 async fn test_cannot_edit_permissions_of_own_designation() {
     let env = setup_api_test_env().await;
@@ -694,16 +694,31 @@ async fn test_cannot_edit_permissions_of_own_designation() {
         "toggling a permission on a designation held by the caller",
     );
 
-    // Allowed: a different designation, not held by the caller.
+    // Blocked: a different designation, not held by the caller, but the permission
+    // being granted (users.manage) is one the caller doesn't hold themselves either —
+    // the same two-hop escalation the assign/revoke path already guards against.
+    let escalate = ureq::post(&format!(
+        "{}/api/v1/admin/roles/designations/permissions/toggle",
+        url
+    ))
+    .set("Authorization", &res_auth)
+    .send_json(serde_json::json!({"designation_code": "other_designation", "permission_code": "users.manage", "enabled": true}));
+    assert_forbidden(
+        escalate,
+        "granting a permission the caller doesn't hold themselves",
+    );
+
+    // Allowed: a different designation, not held by the caller, granted a permission
+    // (designations.manage) the caller does already hold via self_edit_tester.
     let other_edit = ureq::post(&format!(
         "{}/api/v1/admin/roles/designations/permissions/toggle",
         url
     ))
     .set("Authorization", &res_auth)
-    .send_json(serde_json::json!({"designation_code": "other_designation", "permission_code": "users.view", "enabled": true}));
+    .send_json(serde_json::json!({"designation_code": "other_designation", "permission_code": "designations.manage", "enabled": true}));
     assert!(
         other_edit.is_ok(),
-        "editing a designation not held by the caller should still succeed"
+        "editing a different designation, granting a permission the caller already holds, should still succeed"
     );
 }
 

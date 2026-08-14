@@ -863,6 +863,10 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             return raw;
         }
 
+        function userHasFlat(user) {
+            return !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
+        }
+
         function isAdminUser(user) {
             return !!(user && (
                 user.can_view_users || user.can_manage_users ||
@@ -875,6 +879,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
+        let currentUser = null;
 
         function renderProfile(user) {
             document.getElementById('user-email').textContent = user.email;
@@ -896,7 +901,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 rolesContainer.innerHTML = '<span style="color: var(--muted-foreground); font-size: 13px; font-weight: 600;">Standard Resident</span>';
             }
 
-            const hasFlat = user.wing !== 'TBD' && user.flat_number !== 'TBD';
+            const hasFlat = userHasFlat(user);
 
             if (!hasFlat && isAdmin) {
                 window.location.replace('/admin');
@@ -1064,8 +1069,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             localStorage.clear();
             window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         } else {
-            const user = JSON.parse(userStr);
-            renderProfile(user);
+            currentUser = JSON.parse(userStr);
+            renderProfile(currentUser);
 
             async function refreshProfile() {
                 try {
@@ -1078,6 +1083,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     if (response.ok) {
                         const freshUser = await response.json();
                         localStorage.setItem('vfs_user', JSON.stringify(freshUser));
+                        currentUser = freshUser;
                         renderProfile(freshUser);
                     } else if (response.status === 401) {
                         localStorage.clear();
@@ -1099,7 +1105,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         const initialTab = urlParams.get('tab') || 'profile';
 
         function switchTab(tabName) {
-            if (tabName === 'billing' && !(user && user.accounting_enabled)) {
+            if (tabName === 'billing' && !(currentUser && currentUser.accounting_enabled && userHasFlat(currentUser))) {
                 tabName = 'profile';
             }
             document.documentElement.setAttribute('data-tab', tabName);
