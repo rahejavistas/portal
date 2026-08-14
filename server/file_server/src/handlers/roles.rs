@@ -190,13 +190,15 @@ pub async fn revoke_designation(
         )
         .await
     {
-        Ok(_) => {
-            if let Ok(Some(user)) = state
-                .permissions_manager
-                .get_user_by_id(payload.user_id)
-                .await
-            {
-                notify_designation_change(&user.email, &payload.designation_code, false).await;
+        Ok(changed) => {
+            if changed {
+                if let Ok(Some(user)) = state
+                    .permissions_manager
+                    .get_user_by_id(payload.user_id)
+                    .await
+                {
+                    notify_designation_change(&user.email, &payload.designation_code, false).await;
+                }
             }
             (
                 StatusCode::OK,

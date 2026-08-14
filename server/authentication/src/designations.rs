@@ -303,13 +303,14 @@ impl PermissionsManager {
     }
 
     /// A no-op revoke (never held, or already revoked) is a success, not an error —
-    /// callers can always retry a revoke safely. Only a real change gets audit-logged.
+    /// callers can always retry a revoke safely. Returns whether a row actually
+    /// changed, so callers only audit-log/notify on a real change.
     pub async fn revoke_designation(
         &self,
         user_id: i32,
         designation_code: &str,
         revoked_by: Option<i32>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let result = sqlx::query(
             "UPDATE user_designations SET is_active = FALSE, updated_at = NOW() \
              WHERE user_id = $1 AND is_active = TRUE \
@@ -321,7 +322,8 @@ impl PermissionsManager {
         .await
         .map_err(|e| e.to_string())?;
 
-        if result.rows_affected() > 0 {
+        let changed = result.rows_affected() > 0;
+        if changed {
             let _ = log_permission_change(
                 &self.pool,
                 format!(
@@ -332,6 +334,6 @@ impl PermissionsManager {
             )
             .await;
         }
-        Ok(())
+        Ok(changed)
     }
 }

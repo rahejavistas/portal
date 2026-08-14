@@ -209,7 +209,17 @@ pub async fn generate_invoices(
                         );
                         "Internal error — see server logs".to_string()
                     }
-                    _ => e.to_string(),
+                    accounting::billing::BillingError::NoBillingPlanAssigned(_)
+                    | accounting::billing::BillingError::MissingAreaForPlan(_)
+                    | accounting::billing::BillingError::InvalidSlabConfig(_)
+                    | accounting::billing::BillingError::AlreadyBilledForPeriod
+                    | accounting::billing::BillingError::FundNotFound(_)
+                    | accounting::billing::BillingError::Post(
+                        accounting::ledger::PostError::TooFewEntries
+                        | accounting::ledger::PostError::Unbalanced { .. }
+                        | accounting::ledger::PostError::NoFiscalYearForDate(_)
+                        | accounting::ledger::PostError::FiscalYearClosed,
+                    ) => e.to_string(),
                 };
                 skipped.push((flat_id, reason));
             }
