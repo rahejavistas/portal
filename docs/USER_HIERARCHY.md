@@ -34,8 +34,10 @@ The full permission catalog is a compile-time enum (`authentication::Permission`
 | `process.view` | View all existing processes |
 | `process.reviewer` | Review processes |
 | `process.templates.manage` | Create/edit process templates (the versioned builder) and activate versions |
+| `accounting.view` | View accounting/billing data (read-only) |
+| `accounting.manage` | Manage accounting/billing — invoices, payments, ledger, settings |
 
-`super_admin` is seeded with all ten; `staff` with `users.manage`/`process.view`/`process.reviewer` only. Any admin-created designation starts with none and gets permissions toggled on individually via `POST /api/v1/admin/roles/designations/permissions/toggle`.
+`super_admin` is seeded with all twelve; `staff` with `users.manage`/`process.view`/`process.reviewer` only. Any admin-created designation starts with none and gets permissions toggled on individually via `POST /api/v1/admin/roles/designations/permissions/toggle`.
 
 ## Document access resolution
 
@@ -86,4 +88,4 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 
 ## Frontend
 
-`frontend/src/views/{dashboard,admin,process}.rs` each embed a standalone `<script>` block (no shared JS bundle in this pipeline). `process.rs` renders both `/process` (resident) and `/admin-process` (reviewer queue) from one shared template, swapping a mode flag and title at render time. All three files define an identical `isAdminUser(user)` helper checking `user.designations.includes('super_admin')` — kept in sync manually across the three files.
+`frontend/src/views/{dashboard,admin,process}.rs` each embed a standalone `<script>` block (no shared JS bundle in this pipeline). `process.rs` renders both `/process` (resident) and `/admin-process` (reviewer queue) from one shared template, swapping a mode flag and title at render time. All three files define an identical `isAdminUser(user)` helper checking whether the user holds any admin-capability permission flag (`can_view_users`, `can_manage_documents`, `can_review_process`, etc.) — kept in sync manually across the three files.

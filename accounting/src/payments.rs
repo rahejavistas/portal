@@ -205,6 +205,7 @@ pub enum CreditApplicationError {
     InvoiceNotFound,
     InvoiceVoid,
     NoOutstandingBalance,
+    ExceedsOutstanding(Decimal),
     InsufficientCredit,
     Post(ledger::PostError),
     Db(sqlx::Error),
@@ -221,6 +222,13 @@ impl std::fmt::Display for CreditApplicationError {
                 write!(
                     f,
                     "This invoice has no outstanding balance to apply credit against"
+                )
+            }
+            CreditApplicationError::ExceedsOutstanding(max) => {
+                write!(
+                    f,
+                    "Amount exceeds the invoice's outstanding balance of {}",
+                    max
                 )
             }
             CreditApplicationError::InsufficientCredit => {
@@ -266,7 +274,7 @@ pub async fn apply_credit_to_invoice(
         return Err(CreditApplicationError::NoOutstandingBalance);
     }
     if amount > outstanding {
-        return Err(CreditApplicationError::NoOutstandingBalance);
+        return Err(CreditApplicationError::ExceedsOutstanding(outstanding));
     }
     db::lock_flat_credit(conn, invoice.flat_id).await?;
     let available_credit = db::get_flat_credit_balance(conn, invoice.flat_id).await?;

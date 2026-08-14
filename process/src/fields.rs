@@ -7,14 +7,16 @@ pub fn validate_field(
     document_id: Option<Uuid>,
     is_optional: bool,
 ) -> Result<(), String> {
+    match field_type {
+        "document" | "text" => {}
+        _ => return Err(format!("Unknown field type: {}", field_type)),
+    }
+
     if !is_optional && !is_field_filled(field_type, text_value, document_id) {
         return Err("This field is mandatory and cannot be empty".to_string());
     }
 
-    match field_type {
-        "document" | "text" => Ok(()),
-        _ => Err(format!("Unknown field type: {}", field_type)),
-    }
+    Ok(())
 }
 
 /// Checks if the field is considered complete (filled).

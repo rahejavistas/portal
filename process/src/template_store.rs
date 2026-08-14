@@ -6,6 +6,36 @@
 use serde::Deserialize;
 use sqlx::Connection;
 
+#[derive(Debug)]
+pub enum TemplateStoreError {
+    /// A referenced template/version id doesn't exist — safe to show the caller.
+    NotFound(String),
+    Db(sqlx::Error),
+    Serialize(serde_json::Error),
+}
+
+impl std::fmt::Display for TemplateStoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TemplateStoreError::NotFound(msg) => write!(f, "{}", msg),
+            TemplateStoreError::Db(e) => write!(f, "{}", e),
+            TemplateStoreError::Serialize(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl From<sqlx::Error> for TemplateStoreError {
+    fn from(e: sqlx::Error) -> Self {
+        TemplateStoreError::Db(e)
+    }
+}
+
+impl From<serde_json::Error> for TemplateStoreError {
+    fn from(e: serde_json::Error) -> Self {
+        TemplateStoreError::Serialize(e)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct FieldDraft {
     pub name: String,
@@ -125,25 +155,23 @@ pub async fn load_template_version(
     version_id: i32,
 ) -> Result<crate::ProcessTemplate, String> {
     get_template_version_detail(conn, version_id)
-        .await?
+        .await
+        .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("Unknown template version_id: {}", version_id))
 }
 
 pub async fn get_template_version_detail(
     conn: &mut sqlx::PgConnection,
     version_id: i32,
-) -> Result<Option<crate::ProcessTemplate>, String> {
+) -> Result<Option<crate::ProcessTemplate>, TemplateStoreError> {
     let row: Option<(serde_json::Value,)> =
         sqlx::query_as("SELECT definition FROM process_template_versions WHERE version_id = $1")
             .bind(version_id)
             .fetch_optional(&mut *conn)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
     match row {
-        Some((def,)) => Ok(Some(
-            serde_json::from_value(def).map_err(|e| e.to_string())?,
-        )),
+        Some((def,)) => Ok(Some(serde_json::from_value(def)?)),
         None => Ok(None),
     }
 }
@@ -213,8 +241,8 @@ pub async fn save_template_version(
     conn: &mut sqlx::PgConnection,
     draft: TemplateDraft,
     created_by: i32,
-) -> Result<i32, String> {
-    let mut tx = conn.begin().await.map_err(|e| e.to_string())?;
+) -> Result<i32, TemplateStoreError> {
+    let mut tx = conn.begin().await?;
 
     let (template_id, new_version): (i32, i32) = match draft.template_id {
         Some(id) => {
@@ -222,16 +250,16 @@ pub async fn save_template_version(
                 sqlx::query_as("SELECT template_id FROM process_templates WHERE template_id = $1")
                     .bind(id)
                     .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            exists.ok_or_else(|| format!("Unknown template_id: {}", id))?;
+                    .await?;
+            exists.ok_or_else(|| {
+                TemplateStoreError::NotFound(format!("Unknown template_id: {}", id))
+            })?;
             let max_version: Option<i32> = sqlx::query_scalar(
                 "SELECT MAX(version_number) FROM process_template_versions WHERE template_id = $1",
             )
             .bind(id)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
             (id, max_version.unwrap_or(0) + 1)
         }
         None => {
@@ -240,8 +268,7 @@ pub async fn save_template_version(
             )
             .bind(&draft.name)
             .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| format!("Could not create template: {}", e))?;
+            .await?;
             (id, 1)
         }
     };
@@ -273,7 +300,7 @@ pub async fn save_template_version(
         fields,
     };
 
-    let definition = serde_json::to_value(&template).map_err(|e| e.to_string())?;
+    let definition = serde_json::to_value(&template)?;
 
     let version_id: i32 = sqlx::query_scalar(
         "INSERT INTO process_template_versions (template_id, version_number, definition, created_by) \
@@ -284,8 +311,7 @@ pub async fn save_template_version(
     .bind(&definition)
     .bind(created_by)
     .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
 
     sqlx::query(
         "UPDATE process_templates SET name = $1, updated_at = NOW() WHERE template_id = $2",
@@ -293,10 +319,9 @@ pub async fn save_template_version(
     .bind(&name)
     .bind(template_id)
     .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
 
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit().await?;
 
     Ok(version_id)
 }
@@ -305,7 +330,7 @@ pub async fn activate_template_version(
     conn: &mut sqlx::PgConnection,
     template_id: i32,
     version_id: i32,
-) -> Result<(), String> {
+) -> Result<(), TemplateStoreError> {
     let exists: Option<(i32,)> = sqlx::query_as(
         "SELECT version_id FROM process_template_versions \
          WHERE version_id = $1 AND template_id = $2",
@@ -313,14 +338,13 @@ pub async fn activate_template_version(
     .bind(version_id)
     .bind(template_id)
     .fetch_optional(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
 
     if exists.is_none() {
-        return Err(format!(
+        return Err(TemplateStoreError::NotFound(format!(
             "version_id {} does not belong to template {}",
             version_id, template_id
-        ));
+        )));
     }
 
     sqlx::query(
@@ -330,8 +354,7 @@ pub async fn activate_template_version(
     .bind(version_id)
     .bind(template_id)
     .execute(&mut *conn)
-    .await
-    .map_err(|e| e.to_string())?;
+    .await?;
 
     Ok(())
 }

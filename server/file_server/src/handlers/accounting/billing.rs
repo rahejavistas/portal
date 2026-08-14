@@ -192,7 +192,26 @@ pub async fn generate_invoices(
             }
             Err(e) => {
                 tx.rollback().await.map_err(internal_err)?;
-                skipped.push((flat_id, e.to_string()));
+                let reason = match &e {
+                    accounting::billing::BillingError::Db(db_err) => {
+                        eprintln!(
+                            "Billing flat {} failed with a DB error: {}",
+                            flat_id, db_err
+                        );
+                        "Internal error — see server logs".to_string()
+                    }
+                    accounting::billing::BillingError::Post(accounting::ledger::PostError::Db(
+                        db_err,
+                    )) => {
+                        eprintln!(
+                            "Billing flat {} failed with a DB error: {}",
+                            flat_id, db_err
+                        );
+                        "Internal error — see server logs".to_string()
+                    }
+                    _ => e.to_string(),
+                };
+                skipped.push((flat_id, reason));
             }
         }
     }

@@ -56,7 +56,13 @@ fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize
 
         let row = match result {
             Ok(r) => r,
-            Err(_) => continue,
+            Err(e) => {
+                failed_users.push(FailedUser {
+                    email: format!("(row {})", total_rows),
+                    reason: format!("Could not parse this CSV row: {}", e),
+                });
+                continue;
+            }
         };
 
         let email = row.get(e_idx).unwrap_or_default().trim().to_lowercase();

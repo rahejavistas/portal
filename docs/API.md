@@ -32,9 +32,9 @@ a grantable permission; a plain resident with no designation can't register.
 `super_admin` doesn't count on its own: it's an abstract "holds every permission" role,
 not a real person realistically picked as a document signer, so a bare super_admin
 account (no other designation) is not sign-eligible either. Signer directory oversight
-(viewing everyone/deactivating/deleting) and full signature visibility are covered by
-`process.reviewer`, since that's already who attaches signers to documents in the
-first place.
+(viewing everyone/deactivating — there is no delete, only deactivation) and full
+signature visibility are covered by `process.reviewer`, since that's already who
+attaches signers to documents in the first place.
 
 ---
 

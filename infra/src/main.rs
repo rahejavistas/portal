@@ -16,8 +16,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_name = format!("config_{}.toml", app_env);
 
     let config_str = std::fs::read_to_string(&file_name)
-        .unwrap_or_else(|_| panic!("Failed to read configuration file: {}", file_name));
-    let config: Config = toml::from_str(&config_str).expect("Failed to parse configuration");
+        .map_err(|e| format!("Failed to read configuration file {}: {}", file_name, e))?;
+    let config: Config = toml::from_str(&config_str)
+        .map_err(|e| format!("Failed to parse configuration file {}: {}", file_name, e))?;
 
     // Parse arguments manually (if --host, etc. are passed, use them, otherwise use config)
     let mut args = env::args().skip(1);

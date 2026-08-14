@@ -255,7 +255,7 @@ impl PermissionsManager {
              JOIN user_designations ud ON ud.user_id = u.user_id AND ud.is_active = TRUE \
              JOIN designation_permissions dp ON dp.designation_id = ud.designation_id \
              JOIN permissions p ON p.permission_id = dp.permission_id \
-             WHERE p.code = $1",
+             WHERE p.code = $1 AND u.is_active = TRUE",
         )
         .bind(permission_code)
         .fetch_all(&self.pool)
@@ -302,13 +302,15 @@ impl PermissionsManager {
         Ok(())
     }
 
+    /// A no-op revoke (never held, or already revoked) is a success, not an error —
+    /// callers can always retry a revoke safely. Only a real change gets audit-logged.
     pub async fn revoke_designation(
         &self,
         user_id: i32,
         designation_code: &str,
         revoked_by: Option<i32>,
     ) -> Result<(), String> {
-        sqlx::query(
+        let result = sqlx::query(
             "UPDATE user_designations SET is_active = FALSE, updated_at = NOW() \
              WHERE user_id = $1 AND is_active = TRUE \
                AND designation_id = (SELECT designation_id FROM designations WHERE code = $2)",
@@ -319,15 +321,17 @@ impl PermissionsManager {
         .await
         .map_err(|e| e.to_string())?;
 
-        let _ = log_permission_change(
-            &self.pool,
-            format!(
-                "Revoked designation '{}' from user #{}",
-                designation_code, user_id
-            ),
-            revoked_by,
-        )
-        .await;
+        if result.rows_affected() > 0 {
+            let _ = log_permission_change(
+                &self.pool,
+                format!(
+                    "Revoked designation '{}' from user #{}",
+                    designation_code, user_id
+                ),
+                revoked_by,
+            )
+            .await;
+        }
         Ok(())
     }
 }

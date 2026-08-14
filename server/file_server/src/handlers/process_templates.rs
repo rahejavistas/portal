@@ -5,8 +5,15 @@ use crate::extractors::SessionUser;
 use crate::handlers::error::{bad_request, internal_err, ApiError};
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
-use process::template_store::TemplateDraft;
+use process::template_store::{TemplateDraft, TemplateStoreError};
 use serde::{Deserialize, Serialize};
+
+fn map_store_err(e: TemplateStoreError) -> ApiError {
+    match e {
+        TemplateStoreError::NotFound(msg) => bad_request(msg),
+        TemplateStoreError::Db(_) | TemplateStoreError::Serialize(_) => internal_err(e),
+    }
+}
 
 /// POST /api/v1/admin/process-templates/list
 pub async fn list(
@@ -36,7 +43,7 @@ pub async fn get_version(
     let template =
         process::template_store::get_template_version_detail(&mut conn, payload.version_id)
             .await
-            .map_err(bad_request)?
+            .map_err(map_store_err)?
             .ok_or_else(|| (StatusCode::NOT_FOUND, Json("Version not found".to_string())))?;
     Ok(Json(template))
 }
@@ -57,7 +64,7 @@ pub async fn save(
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let version_id = process::template_store::save_template_version(&mut conn, draft, user.user_id)
         .await
-        .map_err(bad_request)?;
+        .map_err(map_store_err)?;
     Ok(Json(SaveResponse { version_id }))
 }
 
@@ -80,7 +87,7 @@ pub async fn activate(
         payload.version_id,
     )
     .await
-    .map_err(bad_request)?;
+    .map_err(map_store_err)?;
     Ok(Json(serde_json::json!({ "status": "ok" })))
 }
 
