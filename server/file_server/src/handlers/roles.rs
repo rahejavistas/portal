@@ -190,13 +190,15 @@ pub async fn revoke_designation(
         )
         .await
     {
-        Ok(_) => {
-            if let Ok(Some(user)) = state
-                .permissions_manager
-                .get_user_by_id(payload.user_id)
-                .await
-            {
-                notify_designation_change(&user.email, &payload.designation_code, false).await;
+        Ok(changed) => {
+            if changed {
+                if let Ok(Some(user)) = state
+                    .permissions_manager
+                    .get_user_by_id(payload.user_id)
+                    .await
+                {
+                    notify_designation_change(&user.email, &payload.designation_code, false).await;
+                }
             }
             (
                 StatusCode::OK,
@@ -245,6 +247,10 @@ pub async fn create_designation(
         .await
     {
         Ok(designation) => (StatusCode::CREATED, Json(designation)).into_response(),
+        Err(e) if e.contains("designations_code_key") => error_response(
+            StatusCode::CONFLICT,
+            format!("Designation code '{}' is already in use.", code),
+        ),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }
@@ -470,6 +476,10 @@ pub async fn create_document_category(
         .await
     {
         Ok(category) => (StatusCode::CREATED, Json(category)).into_response(),
+        Err(e) if e.contains("document_categories_pkey") => error_response(
+            StatusCode::CONFLICT,
+            format!("Category code '{}' is already in use.", code),
+        ),
         Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }

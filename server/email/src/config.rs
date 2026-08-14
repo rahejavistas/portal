@@ -1,12 +1,24 @@
 use std::env;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct EmailConfig {
     pub smtp_server: String,
     pub smtp_port: u16,
     pub smtp_username: String,
     pub smtp_password: String,
     pub sender_email: String,
+}
+
+impl std::fmt::Debug for EmailConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmailConfig")
+            .field("smtp_server", &self.smtp_server)
+            .field("smtp_port", &self.smtp_port)
+            .field("smtp_username", &self.smtp_username)
+            .field("smtp_password", &"[redacted]")
+            .field("sender_email", &self.sender_email)
+            .finish()
+    }
 }
 
 impl EmailConfig {

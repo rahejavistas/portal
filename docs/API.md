@@ -24,6 +24,8 @@ There is no blanket admin guard. Every `/api/v1/admin/*` route group is gated by
 | `process.view` | Read-only: view every resident's processes and attached files, no write/review access |
 | `process.reviewer` | Approve/reject process steps, upload documents as a reviewer, add internal notes |
 | `process.templates.manage` | Create/edit process templates (the versioned builder) and activate versions |
+| `accounting.view` | View accounting/billing data (read-only) |
+| `accounting.manage` | Manage accounting/billing — invoices, payments, ledger, settings |
 
 There is no signatures-specific permission at all. Signing eligibility (self-registering
 as a signer on the Profile page, viewing/acting on your own signing queue) is gated on
@@ -32,9 +34,9 @@ a grantable permission; a plain resident with no designation can't register.
 `super_admin` doesn't count on its own: it's an abstract "holds every permission" role,
 not a real person realistically picked as a document signer, so a bare super_admin
 account (no other designation) is not sign-eligible either. Signer directory oversight
-(viewing everyone/deactivating/deleting) and full signature visibility are covered by
-`process.reviewer`, since that's already who attaches signers to documents in the
-first place.
+(viewing everyone/deactivating — there is no delete, only deactivation) and full
+signature visibility are covered by `process.reviewer`, since that's already who
+attaches signers to documents in the first place.
 
 ---
 
@@ -494,9 +496,9 @@ signer themselves can even **view** their own phone/email either — the admin-f
 `SignerDirectoryEntry` shape (below) deliberately omits both; a reviewer only ever
 sees name + login email, enough to pick the right person without browsing their
 private contact details. Signer directory oversight (viewing everyone incl. inactive,
-deactivating, deleting) and full signature visibility are covered by
-`process.reviewer`, since that's already who attaches signers to documents in the
-first place.
+deactivating — there is no delete, only deactivation) and full signature visibility
+are covered by `process.reviewer`, since that's already who attaches signers to
+documents in the first place.
 
 ### POST `/api/v1/profile/signer-info`
 Any authenticated user. Returns the caller's own `Signer` row (full shape, incl. phone/email), or `null` if they've never registered.

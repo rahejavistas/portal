@@ -11,6 +11,7 @@ pub fn init_telemetry(
     password: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let endpoint = endpoint.unwrap_or_default();
+    let endpoint = endpoint.trim_end_matches('/').to_string();
     let username = username.unwrap_or_default();
     let password = password.unwrap_or_default();
 

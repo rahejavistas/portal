@@ -503,7 +503,13 @@ pub async fn admin_delete_document(
         .document_manager
         .admin_soft_delete_document(document_id)
         .await
-        .map_err(internal_err)?;
+        .map_err(|e| {
+            if e == "Document not found" {
+                not_found(&e)
+            } else {
+                internal_err(e)
+            }
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -622,11 +622,14 @@ impl DocumentManager {
 
     /// Soft deletes a document by toggling is_deleted = TRUE.
     pub async fn admin_soft_delete_document(&self, document_id: Uuid) -> Result<(), String> {
-        sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = $1")
+        let result = sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = $1")
             .bind(document_id)
             .execute(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
+        if result.rows_affected() == 0 {
+            return Err("Document not found".to_string());
+        }
         Ok(())
     }
 

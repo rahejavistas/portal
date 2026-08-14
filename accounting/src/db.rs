@@ -455,12 +455,12 @@ pub async fn get_invoice_ledger_transaction_id(
     conn: &mut sqlx::PgConnection,
     invoice_id: InvoiceId,
 ) -> Result<Option<TransactionId>, sqlx::Error> {
-    sqlx::query_scalar::<_, Option<TransactionId>>(
-        "SELECT ledger_transaction_id FROM invoices WHERE invoice_id = $1",
-    )
-    .bind(invoice_id)
-    .fetch_one(conn)
-    .await
+    let row: Option<Option<TransactionId>> =
+        sqlx::query_scalar("SELECT ledger_transaction_id FROM invoices WHERE invoice_id = $1")
+            .bind(invoice_id)
+            .fetch_optional(conn)
+            .await?;
+    Ok(row.flatten())
 }
 
 #[allow(clippy::too_many_arguments)]
