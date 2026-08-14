@@ -462,6 +462,17 @@ async fn test_duplicate_designation_code_rejected() {
         .set("Authorization", &admin_auth)
         .send_json(serde_json::json!({"code": "auditor", "label": "Auditor Again"}));
     assert_error(dup, "duplicate designation code");
+    let status = ureq::post(&format!("{}/api/v1/admin/roles/designations/create", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({"code": "auditor", "label": "Auditor Again"}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status();
+    assert_eq!(
+        status, 409,
+        "duplicate designation code must be a 409 CONFLICT"
+    );
 
     let designations: Vec<serde_json::Value> =
         ureq::post(&format!("{}/api/v1/admin/roles/designations", url))
@@ -496,6 +507,20 @@ async fn test_duplicate_category_code_rejected() {
     .set("Authorization", &admin_auth)
     .send_json(serde_json::json!({"code": "NOTICES", "label": "Notices Again"}));
     assert_error(dup, "duplicate category code");
+    let status = ureq::post(&format!(
+        "{}/api/v1/admin/roles/document-categories/create",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({"code": "NOTICES", "label": "Notices Again"}))
+    .unwrap_err()
+    .into_response()
+    .unwrap()
+    .status();
+    assert_eq!(
+        status, 409,
+        "duplicate category code must be a 409 CONFLICT"
+    );
 }
 
 /// Assigning a designation code that doesn't exist is rejected with a clear error,

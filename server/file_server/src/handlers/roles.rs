@@ -247,7 +247,7 @@ pub async fn create_designation(
         .await
     {
         Ok(designation) => (StatusCode::CREATED, Json(designation)).into_response(),
-        Err(e) if e.contains("duplicate key value violates unique constraint") => error_response(
+        Err(e) if e.contains("designations_code_key") => error_response(
             StatusCode::CONFLICT,
             format!("Designation code '{}' is already in use.", code),
         ),
@@ -476,7 +476,7 @@ pub async fn create_document_category(
         .await
     {
         Ok(category) => (StatusCode::CREATED, Json(category)).into_response(),
-        Err(e) if e.contains("duplicate key value violates unique constraint") => error_response(
+        Err(e) if e.contains("document_categories_pkey") => error_response(
             StatusCode::CONFLICT,
             format!("Category code '{}' is already in use.", code),
         ),
