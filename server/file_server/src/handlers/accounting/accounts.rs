@@ -26,7 +26,7 @@ pub async fn create_account(
 ) -> Result<(StatusCode, Json<AccountId>), ApiError> {
     if !["INCOME", "EXPENSE"].contains(&payload.account_type.as_str()) {
         return Err(bad_request(
-            "account_type must be INCOME or EXPENSE — asset/liability/equity accounts are structural and can't be created here",
+            "account_type must be INCOME or EXPENSE - asset/liability/equity accounts are structural and can't be created here",
         ));
     }
     if payload.code.trim().is_empty() || payload.name.trim().is_empty() {

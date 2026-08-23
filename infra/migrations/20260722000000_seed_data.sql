@@ -41,5 +41,8 @@ ON CONFLICT DO NOTHING;
 
 INSERT INTO document_categories (code, label, is_public_read, is_flat_scoped, is_system) VALUES
     ('PUBLIC', 'Public', TRUE, FALSE, TRUE),
-    ('RESIDENT_SPECIFIC', 'Resident Specific', FALSE, TRUE, TRUE)
+    ('RESIDENT_SPECIFIC', 'Resident Specific', FALSE, TRUE, TRUE),
+    -- A whole-society dues snapshot the admin uploads periodically (not tied to any
+    -- one flat) so it can be reviewed without configuring the full accounting module.
+    ('DUES_STATEMENTS', 'Dues Statements', FALSE, FALSE, TRUE)
 ON CONFLICT (code) DO NOTHING;

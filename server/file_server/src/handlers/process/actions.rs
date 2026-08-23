@@ -155,6 +155,7 @@ pub async fn save_process_step(
         payload.template_step_id,
         &fields_submitted,
         is_admin,
+        user.user_id,
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;

@@ -86,15 +86,22 @@ pub async fn save_step(
     step_id: i32,
     fields: &[state_machine::SaveFieldInput],
     is_admin: bool,
+    actor_user_id: i32,
 ) -> Result<SaveStepOutcome, String> {
     let state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
     let result = state_machine::validate_save(template, &state, step_id, fields, is_admin)?;
 
-    persist_fields(&mut *conn, process_id, step_id, &result.fields_to_save)
-        .await
-        .map_err(|e| e.to_string())?;
+    persist_fields(
+        &mut *conn,
+        process_id,
+        step_id,
+        &result.fields_to_save,
+        Some(actor_user_id),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     // Fresh load, not result.steps_to_update — a newly-introduced requires_signature
     // document can't be seen as blocking until it's actually persisted.
@@ -135,6 +142,27 @@ pub async fn save_step(
         }
     }
     persist_start_times_and_turn(&mut *conn, process_id, template, &post_save_state)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if matches!(status, StepStatus::Completed | StepStatus::PendingReview) {
+        crate::audit::insert_audit_event(
+            &mut *conn,
+            process_id,
+            Some(step_id),
+            crate::audit::AuditEventType::StepCompleted,
+            None,
+            Some(actor_user_id),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    resume_sla_clock_if_paused(&mut *conn, process_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let post_save_turn = state_machine::determine_turn(template, &post_save_state);
+    maybe_start_sla_clock(&mut *conn, process_id, template, post_save_turn)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -278,6 +306,9 @@ pub struct ProcessInfo {
     pub user_id: i32,
     pub template_version_id: i32,
     pub ownership_id: Option<i32>,
+    pub sla_due_date: Option<chrono::NaiveDate>,
+    pub sla_paused_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub sla_paused_working_days: i32,
 }
 
 pub async fn get_process_info(
@@ -285,7 +316,8 @@ pub async fn get_process_info(
     process_id: Uuid,
 ) -> Result<Option<ProcessInfo>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT user_id, template_version_id, ownership_id \
+        "SELECT user_id, template_version_id, ownership_id, \
+                sla_due_date, sla_paused_at, sla_paused_working_days \
          FROM processes WHERE process_id = $1",
     )
     .bind(process_id)
@@ -342,6 +374,7 @@ pub struct ProcessFieldHistoryRow {
     pub text_value: Option<String>,
     pub document_id: Option<Uuid>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub actor_email: Option<String>,
 }
 
 pub async fn get_field_history(
@@ -349,9 +382,10 @@ pub async fn get_field_history(
     process_id: Uuid,
 ) -> Result<Vec<ProcessFieldHistoryRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT pf.template_field_id, pf.text_value, pf.document_id, pf.updated_at \
+        "SELECT pf.template_field_id, pf.text_value, pf.document_id, pf.updated_at, u.email AS actor_email \
          FROM process_fields pf \
          JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
+         LEFT JOIN users u ON u.user_id = pf.updated_by \
          WHERE ps.process_id = $1 \
          ORDER BY pf.template_field_id, pf.updated_at DESC, pf.field_instance_id DESC",
     )
@@ -373,12 +407,18 @@ pub struct ProcessListItem {
     pub flat_label: Option<String>,
     pub user_email: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
     pub steps_total: i64,
     pub steps_completed: i64,
     /// NULL for a process that predates this column.
     pub current_turn: Option<String>,
     #[sqlx(default)]
     pub status: Option<String>,
+    pub tat_working_days: Option<i32>,
+    pub sla_started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub sla_due_date: Option<chrono::NaiveDate>,
+    pub sla_paused_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub sla_paused_working_days: i32,
 }
 
 const PROCESS_LIST_QUERY_BASE: &str =
@@ -388,7 +428,9 @@ const PROCESS_LIST_QUERY_BASE: &str =
                  ELSE NULL END AS flat_label, \
             u.email AS user_email, \
             p.created_at, \
+            p.updated_at, \
             p.current_turn, \
+            p.tat_working_days, p.sla_started_at, p.sla_due_date, p.sla_paused_at, p.sla_paused_working_days, \
             COUNT(ps.step_instance_id) FILTER (WHERE ps.parent_step_instance_id IS NOT NULL) AS steps_total, \
             COUNT(ps.step_instance_id) FILTER (WHERE ps.parent_step_instance_id IS NOT NULL AND ps.is_completed = TRUE) AS steps_completed \
      FROM processes p \
@@ -399,15 +441,17 @@ const PROCESS_LIST_QUERY_BASE: &str =
      LEFT JOIN flats f ON fo.flat_id = f.flat_id \
      LEFT JOIN process_steps ps ON p.process_id = ps.process_id";
 
+const PROCESS_LIST_GROUP_BY: &str = "GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.updated_at, p.current_turn, p.tat_working_days, p.sla_started_at, p.sla_due_date, p.sla_paused_at, p.sla_paused_working_days";
+
 pub async fn list_processes_for_user(
     conn: &mut sqlx::PgConnection,
     user_id: i32,
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} WHERE p.user_id = $1 AND (fo.ownership_id IS NULL OR fo.is_active = TRUE) \
-         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.current_turn \
+         {} \
          ORDER BY p.created_at DESC",
-        PROCESS_LIST_QUERY_BASE
+        PROCESS_LIST_QUERY_BASE, PROCESS_LIST_GROUP_BY
     );
     sqlx::query_as(&query).bind(user_id).fetch_all(conn).await
 }
@@ -417,9 +461,9 @@ pub async fn list_all_processes(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} \
-         GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.current_turn \
+         {} \
          ORDER BY p.created_at DESC",
-        PROCESS_LIST_QUERY_BASE
+        PROCESS_LIST_QUERY_BASE, PROCESS_LIST_GROUP_BY
     );
     sqlx::query_as(&query).fetch_all(conn).await
 }
@@ -585,7 +629,7 @@ pub async fn load_state(
     let require_sig_doc_ids: Vec<Uuid> = step_info_map
         .values()
         .flat_map(|info| &info.fields)
-        .filter(|f| f.requires_signature && f.r#type == "document")
+        .filter(|f| f.requires_signature && f.r#type == crate::FieldType::File)
         .filter_map(|f| fields.get(&f.field_id).and_then(|fs| fs.document_id))
         .collect();
     if !require_sig_doc_ids.is_empty() {
@@ -657,27 +701,46 @@ async fn persist_start_times_and_turn(
         }
     }
 
-    persist_current_turn(
+    let just_closed = persist_current_turn(
         &mut *conn,
         process_id,
         state_machine::determine_turn(template, state),
     )
     .await?;
 
+    if just_closed {
+        crate::audit::insert_audit_event(
+            &mut *conn,
+            process_id,
+            None,
+            crate::audit::AuditEventType::ProcessClosed,
+            None,
+            None,
+        )
+        .await?;
+    }
+
     Ok(())
 }
 
+/// Updates `current_turn`, skipping the write if it's unchanged. Returns whether this
+/// call is the transition into `None` — i.e. the process just reached its terminal
+/// state for the first time, not a later no-op call while it's already closed.
 async fn persist_current_turn(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     turn: state_machine::ProcessTurn,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE processes SET current_turn = $1 WHERE process_id = $2")
-        .bind(turn.as_db_str())
-        .bind(process_id)
-        .execute(conn)
-        .await?;
-    Ok(())
+) -> Result<bool, sqlx::Error> {
+    let changed: Option<(String,)> = sqlx::query_as(
+        "UPDATE processes SET current_turn = $1 \
+         WHERE process_id = $2 AND current_turn IS DISTINCT FROM $1 \
+         RETURNING current_turn",
+    )
+    .bind(turn.as_db_str())
+    .bind(process_id)
+    .fetch_optional(conn)
+    .await?;
+    Ok(changed.is_some() && turn == state_machine::ProcessTurn::None)
 }
 
 /// Whether `document_id` is still the field's latest value (it may have been
@@ -720,6 +783,7 @@ pub async fn attach_signed_replacement(
         process_id,
         template_step_id,
         &[(template_field_id, None, Some(new_document_id))],
+        None,
     )
     .await
 }
@@ -761,6 +825,7 @@ async fn persist_fields(
     process_id: Uuid,
     template_step_id: i32,
     fields: &[(i32, Option<String>, Option<Uuid>)], // (template_field_id, text_value, document_id)
+    updated_by: Option<i32>,
 ) -> Result<(), sqlx::Error> {
     if fields.is_empty() {
         return Ok(());
@@ -772,14 +837,15 @@ async fn persist_fields(
     let document_ids: Vec<Option<Uuid>> = fields.iter().map(|f| f.2).collect();
 
     sqlx::query(
-        "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_at) \
-         SELECT $1, f.template_field_id, f.text_value, f.document_id, NOW() \
+        "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_by, updated_at) \
+         SELECT $1, f.template_field_id, f.text_value, f.document_id, $5, NOW() \
          FROM UNNEST($2::int[], $3::text[], $4::uuid[]) AS f(template_field_id, text_value, document_id)",
     )
     .bind(step_instance_id)
     .bind(&template_field_ids)
     .bind(&text_values)
     .bind(&document_ids)
+    .bind(updated_by)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -832,6 +898,279 @@ async fn insert_review(
     .execute(&mut *conn)
     .await?;
 
+    let event_type = if params.is_approved {
+        crate::audit::AuditEventType::StepApproved
+    } else {
+        crate::audit::AuditEventType::StepReturned
+    };
+    crate::audit::insert_audit_event(
+        &mut *conn,
+        process_id,
+        Some(params.step_id),
+        event_type,
+        params.notes,
+        params.reviewer_user_id,
+    )
+    .await?;
+    for &flagged_id in params.flagged_step_ids {
+        crate::audit::insert_audit_event(
+            &mut *conn,
+            process_id,
+            Some(flagged_id),
+            crate::audit::AuditEventType::StepFlagged,
+            None,
+            params.reviewer_user_id,
+        )
+        .await?;
+    }
+
+    if !params.is_approved {
+        pause_sla_clock(&mut *conn, process_id).await?;
+    }
+
+    Ok(())
+}
+
+/// Pauses the SLA clock (no-op if it isn't running yet, or is already paused).
+async fn pause_sla_clock(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE processes SET sla_paused_at = NOW() \
+         WHERE process_id = $1 AND sla_due_date IS NOT NULL AND sla_paused_at IS NULL",
+    )
+    .bind(process_id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Resumes a paused SLA clock, folding the elapsed working-day pause into the
+/// accumulated offset. No-op if the clock isn't currently paused.
+async fn resume_sla_clock_if_paused(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let paused_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT sla_paused_at FROM processes WHERE process_id = $1")
+            .bind(process_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+    let Some(paused_at) = paused_at else {
+        return Ok(());
+    };
+
+    let holidays = get_holidays(&mut *conn).await?;
+    let today = chrono::Utc::now().date_naive();
+    let elapsed =
+        crate::working_days::count_working_days_between(paused_at.date_naive(), today, &holidays);
+
+    sqlx::query(
+        "UPDATE processes SET sla_paused_working_days = sla_paused_working_days + $1, sla_paused_at = NULL \
+         WHERE process_id = $2 AND sla_paused_at = $3",
+    )
+    .bind(elapsed)
+    .bind(process_id)
+    .bind(paused_at)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Starts the SLA clock the first time the checklist is fully off the applicant's
+/// plate. No-op if the template has no `tat_working_days`, or the clock already ran.
+async fn maybe_start_sla_clock(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template: &crate::ProcessTemplate,
+    turn: state_machine::ProcessTurn,
+) -> Result<(), sqlx::Error> {
+    let Some(tat_working_days) = template.tat_working_days else {
+        return Ok(());
+    };
+    if turn == state_machine::ProcessTurn::User {
+        return Ok(());
+    }
+
+    let holidays = get_holidays(&mut *conn).await?;
+    let today = chrono::Utc::now().date_naive();
+    let due_date = crate::working_days::add_working_days(today, tat_working_days, &holidays);
+
+    sqlx::query(
+        "UPDATE processes SET tat_working_days = $1, sla_started_at = NOW(), sla_due_date = $2 \
+         WHERE process_id = $3 AND sla_started_at IS NULL",
+    )
+    .bind(tat_working_days)
+    .bind(due_date)
+    .bind(process_id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Every gazetted/office holiday, for working-day math.
+pub async fn get_holidays(
+    conn: &mut sqlx::PgConnection,
+) -> Result<std::collections::HashSet<chrono::NaiveDate>, sqlx::Error> {
+    let rows: Vec<(chrono::NaiveDate,)> =
+        sqlx::query_as("SELECT holiday_date FROM public_holidays")
+            .fetch_all(conn)
+            .await?;
+    Ok(rows.into_iter().map(|(d,)| d).collect())
+}
+
+/// Actual working days from SLA start to the process's `PROCESS_CLOSED` audit event,
+/// net of time spent paused. `None` if the template has no SLA tracking, or the
+/// process hasn't closed yet.
+pub async fn compute_tat_actual(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<Option<i32>, sqlx::Error> {
+    let sla_started_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT sla_started_at FROM processes WHERE process_id = $1")
+            .bind(process_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .flatten();
+    let Some(sla_started_at) = sla_started_at else {
+        return Ok(None);
+    };
+
+    let closed_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT created_at FROM process_audit_log \
+         WHERE process_id = $1 AND event_type = 'PROCESS_CLOSED' \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(process_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(closed_at) = closed_at else {
+        return Ok(None);
+    };
+
+    let paused_working_days: i32 =
+        sqlx::query_scalar("SELECT sla_paused_working_days FROM processes WHERE process_id = $1")
+            .bind(process_id)
+            .fetch_one(&mut *conn)
+            .await?;
+
+    let holidays = get_holidays(&mut *conn).await?;
+    let elapsed = crate::working_days::count_working_days_between(
+        sla_started_at.date_naive(),
+        closed_at.date_naive(),
+        &holidays,
+    );
+    Ok(Some((elapsed - paused_working_days).max(0)))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TemplateTatSummary {
+    pub template_name: String,
+    pub closed_count: i32,
+    pub average_tat_actual_working_days: f64,
+}
+
+/// Average `TATActual` per template, over every closed process with SLA tracking on —
+/// the data behind "what's our real turnaround on NOC type X" reporting.
+pub async fn tat_actual_summary_by_template(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<TemplateTatSummary>, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct ClosedProcessSla {
+        template_name: String,
+        sla_started_at: chrono::DateTime<chrono::Utc>,
+        sla_paused_working_days: i32,
+        closed_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let rows: Vec<ClosedProcessSla> = sqlx::query_as(
+        "SELECT pt.name AS template_name, p.sla_started_at, p.sla_paused_working_days, \
+                a.created_at AS closed_at \
+         FROM processes p \
+         JOIN process_template_versions ptv ON ptv.version_id = p.template_version_id \
+         JOIN process_templates pt ON pt.template_id = ptv.template_id \
+         JOIN LATERAL ( \
+             SELECT created_at FROM process_audit_log \
+             WHERE process_id = p.process_id AND event_type = 'PROCESS_CLOSED' \
+             ORDER BY created_at DESC LIMIT 1 \
+         ) a ON TRUE \
+         WHERE p.sla_started_at IS NOT NULL",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let holidays = get_holidays(&mut *conn).await?;
+    let mut by_template: HashMap<String, Vec<i32>> = HashMap::new();
+    for row in rows {
+        let elapsed = crate::working_days::count_working_days_between(
+            row.sla_started_at.date_naive(),
+            row.closed_at.date_naive(),
+            &holidays,
+        );
+        let tat_actual = (elapsed - row.sla_paused_working_days).max(0);
+        by_template
+            .entry(row.template_name)
+            .or_default()
+            .push(tat_actual);
+    }
+
+    let mut summaries: Vec<TemplateTatSummary> = by_template
+        .into_iter()
+        .map(|(template_name, values)| {
+            let closed_count = values.len() as i32;
+            let average_tat_actual_working_days =
+                values.iter().sum::<i32>() as f64 / values.len() as f64;
+            TemplateTatSummary {
+                template_name,
+                closed_count,
+                average_tat_actual_working_days,
+            }
+        })
+        .collect();
+    summaries.sort_by(|a, b| a.template_name.cmp(&b.template_name));
+    Ok(summaries)
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct PublicHoliday {
+    pub holiday_date: chrono::NaiveDate,
+    pub description: String,
+}
+
+pub async fn list_public_holidays(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<PublicHoliday>, sqlx::Error> {
+    sqlx::query_as("SELECT holiday_date, description FROM public_holidays ORDER BY holiday_date")
+        .fetch_all(conn)
+        .await
+}
+
+pub async fn add_public_holiday(
+    conn: &mut sqlx::PgConnection,
+    holiday_date: chrono::NaiveDate,
+    description: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO public_holidays (holiday_date, description) VALUES ($1, $2) \
+         ON CONFLICT (holiday_date) DO UPDATE SET description = EXCLUDED.description",
+    )
+    .bind(holiday_date)
+    .bind(description)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+pub async fn remove_public_holiday(
+    conn: &mut sqlx::PgConnection,
+    holiday_date: chrono::NaiveDate,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM public_holidays WHERE holiday_date = $1")
+        .bind(holiday_date)
+        .execute(conn)
+        .await?;
     Ok(())
 }
 

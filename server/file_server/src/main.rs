@@ -85,6 +85,7 @@ async fn main() {
             // subtab needs this same listing to know who to assign designations to.
             let users_view_routes = Router::new()
                 .route("/users/list", post(handlers::admin::list_users))
+                .route("/flats/list", post(handlers::flats::list_flats))
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[
@@ -106,6 +107,16 @@ async fn main() {
                     "/users/upload",
                     post(handlers::bulk_users_upload::upload_users),
                 )
+                .route("/flats/create", post(handlers::flats::create_flat))
+                .route(
+                    "/flats/bulk-create",
+                    post(handlers::flats::bulk_create_flats),
+                )
+                .route(
+                    "/flats/set-fire-flag",
+                    post(handlers::flats::set_flat_fire_flag),
+                )
+                .route("/flats/delete", post(handlers::flats::delete_flat))
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[Permission::UsersManage]),
@@ -163,10 +174,7 @@ async fn main() {
                     "/process/revoke",
                     post(handlers::process::admin_revoke_step),
                 )
-                .route(
-                    "/process/add-note",
-                    post(handlers::process::admin_add_note),
-                )
+                .route("/process/add-note", post(handlers::process::admin_add_note))
                 .route(
                     "/process/documents/add-signers",
                     post(handlers::process::admin_add_document_signers),
@@ -293,6 +301,26 @@ async fn main() {
                 .route(
                     "/process-templates/activate",
                     post(handlers::process_templates::activate),
+                )
+                .route(
+                    "/process-templates/deactivate",
+                    post(handlers::process_templates::deactivate),
+                )
+                .route(
+                    "/process-templates/holidays/list",
+                    post(handlers::process_templates::list_holidays),
+                )
+                .route(
+                    "/process-templates/holidays/add",
+                    post(handlers::process_templates::add_holiday),
+                )
+                .route(
+                    "/process-templates/holidays/remove",
+                    post(handlers::process_templates::remove_holiday),
+                )
+                .route(
+                    "/process-templates/tat-report",
+                    post(handlers::process_templates::tat_report),
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
@@ -553,7 +581,10 @@ async fn main() {
                     "/accounting/credit/balance",
                     post(handlers::accounting::get_flat_credit_balance),
                 )
-                .route("/accounting/funds/list", post(handlers::accounting::list_funds))
+                .route(
+                    "/accounting/funds/list",
+                    post(handlers::accounting::list_funds),
+                )
                 .route(
                     "/accounting/funds/contribution-rules/for-flat",
                     post(handlers::accounting::list_fund_rules_for_flat),
@@ -700,6 +731,10 @@ async fn main() {
                     post(handlers::auth::save_signer_info),
                 )
                 .route(
+                    "/api/v1/support/ticket",
+                    post(handlers::support::raise_ticket),
+                )
+                .route(
                     "/api/v1/documents",
                     post(handlers::documents::list_documents),
                 )
@@ -728,10 +763,13 @@ async fn main() {
                     post(handlers::process::get_process_state),
                 )
                 .route(
+                    "/api/v1/process/audit-log-pdf",
+                    post(handlers::process::audit_log_pdf),
+                )
+                .route(
                     "/api/v1/process/save-step",
                     post(handlers::process::save_process_step),
                 )
-
                 .route(
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),
@@ -770,7 +808,8 @@ async fn main() {
                     $state.clone(),
                     middleware::rate_limit_middleware,
                 ))
-                .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 + 10 * 1024 * 1024)) // 1GB + 10MB overhead
+                // Uploads go via presigned S3 PUTs; direct bodies are just small CSVs.
+                .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
                 .layer(axum_middleware::from_fn(middleware::add_security_headers))
                 .layer(axum_middleware::from_fn(middleware::log_request))
                 .with_state($state)

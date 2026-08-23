@@ -13,6 +13,12 @@ pub struct Cta {
     pub url: String,
 }
 
+pub struct Attachment {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// A structured email: a heading, plain paragraphs, an optional prominent code (for OTP),
 /// and an optional call-to-action button. `send_email` renders this into both a plain-text
 /// and an HTML part so every email shares one simple, mobile-friendly look instead of each
@@ -24,6 +30,7 @@ pub struct EmailMessage {
     pub paragraphs: Vec<String>,
     pub code: Option<String>,
     pub cta: Option<Cta>,
+    pub attachment: Option<Attachment>,
 }
 
 fn html_escape(s: &str) -> String {
@@ -107,16 +114,35 @@ fn render_html(msg: &EmailMessage) -> String {
 pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
     let config = match EmailConfig::from_env() {
         Some(c) => c,
-        None => {
-            eprintln!(
-                "SMTP configuration is missing in environment variables. Skipping email send."
-            );
-            return Ok(()); // Fail gracefully as per instructions
-        }
+        None => return Ok(()),
     };
 
     let plain = render_plain_text(msg);
     let html = render_html(msg);
+
+    let alternative = MultiPart::alternative()
+        .singlepart(
+            SinglePart::builder()
+                .header(ContentType::TEXT_PLAIN)
+                .body(plain),
+        )
+        .singlepart(
+            SinglePart::builder()
+                .header(ContentType::TEXT_HTML)
+                .body(html),
+        );
+
+    let body = match &msg.attachment {
+        None => alternative,
+        Some(attachment) => {
+            let content_type = ContentType::parse(&attachment.content_type)
+                .map_err(|e| format!("Invalid attachment content type: {}", e))?;
+            MultiPart::mixed().multipart(alternative).singlepart(
+                lettre::message::Attachment::new(attachment.filename.clone())
+                    .body(attachment.bytes.clone(), content_type),
+            )
+        }
+    };
 
     let email = match Message::builder()
         .from(
@@ -130,19 +156,8 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
             .parse()
             .map_err(|e| format!("Invalid recipient email: {}", e))?)
         .subject(&msg.subject)
-        .multipart(
-            MultiPart::alternative()
-                .singlepart(
-                    SinglePart::builder()
-                        .header(ContentType::TEXT_PLAIN)
-                        .body(plain),
-                )
-                .singlepart(
-                    SinglePart::builder()
-                        .header(ContentType::TEXT_HTML)
-                        .body(html),
-                ),
-        ) {
+        .multipart(body)
+    {
         Ok(email) => email,
         Err(e) => {
             eprintln!("Failed to build email message: {}", e);

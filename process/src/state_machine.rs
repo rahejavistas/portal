@@ -186,7 +186,7 @@ pub fn check_step_completed(
         if !field.is_optional {
             let is_filled = if let Some(fs) = state.fields.get(&field.field_id) {
                 let base_filled = crate::fields::is_field_filled(
-                    &field.r#type,
+                    field.r#type,
                     fs.text_value.as_deref(),
                     fs.document_id,
                 );
@@ -405,10 +405,11 @@ pub fn validate_save(
         }
 
         crate::fields::validate_field(
-            &field_meta.r#type,
+            field_meta.r#type,
             submitted.text_value.as_deref(),
             submitted.document_id,
             field_meta.is_optional,
+            field_meta.options.as_deref(),
         )?;
 
         updated_fields.insert(
@@ -634,12 +635,13 @@ mod tests {
         let field = |field_id: i32| crate::ProcessFieldTemplate {
             field_id,
             name: "Note".to_string(),
-            r#type: "text".to_string(),
+            r#type: crate::FieldType::Text,
             is_optional: false,
             filled_by: "user".to_string(),
             requirements: None,
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
+            options: None,
         };
         let template = crate::ProcessTemplate {
             name: "Mixed step".to_string(),
@@ -648,6 +650,7 @@ mod tests {
             is_optional: false,
             is_review_required: false,
             fields: None,
+            tat_working_days: None,
             substeps: Some(vec![crate::ProcessStepTemplate {
                 step_id: 2,
                 name: "Parent with its own field and a substep".to_string(),

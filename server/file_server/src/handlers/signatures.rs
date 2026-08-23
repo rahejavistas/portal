@@ -646,7 +646,7 @@ pub async fn signyu_webhook(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Some(secret) = &state.signyu_webhook_secret else {
         return Err(internal_err(
-            "SIGNYU_WEBHOOK_SECRET is not configured — refusing to process an unverifiable webhook",
+            "SIGNYU_WEBHOOK_SECRET is not configured - refusing to process an unverifiable webhook",
         ));
     };
 

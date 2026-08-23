@@ -31,7 +31,7 @@ fn find_column(
         [idx] => Ok(*idx),
         [] => Err(format!("CSV must contain a {column_label} column")),
         _ => Err(format!(
-            "CSV has multiple columns that could be {column_label} ({}) — rename the \
+            "CSV has multiple columns that could be {column_label} ({}) - rename the \
              intended one to an exact match like \"{}\"",
             matches
                 .iter()
@@ -114,7 +114,7 @@ pub async fn import_statement(
                 .to_vec();
             if file_bytes.len() > MAX_STATEMENT_CSV_BYTES {
                 return Err(bad_request(format!(
-                    "Statement file is too large — {} MB, max {} MB",
+                    "Statement file is too large - {} MB, max {} MB",
                     file_bytes.len() / (1024 * 1024),
                     MAX_STATEMENT_CSV_BYTES / (1024 * 1024)
                 )));
@@ -229,7 +229,7 @@ pub async fn match_line(
     .map_err(internal_err)?;
     if !changed {
         return Err(bad_request(
-            "This line is no longer unmatched — it was already matched or ignored",
+            "This line is no longer unmatched - it was already matched or ignored",
         ));
     }
     Ok(StatusCode::NO_CONTENT)
@@ -245,7 +245,7 @@ pub async fn ignore_line(
         .map_err(internal_err)?;
     if !changed {
         return Err(bad_request(
-            "This line is no longer unmatched — it was already matched or ignored",
+            "This line is no longer unmatched - it was already matched or ignored",
         ));
     }
     Ok(StatusCode::NO_CONTENT)

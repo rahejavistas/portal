@@ -132,6 +132,30 @@ async fn test_users_manage_only() {
             .send_json(serde_json::json!({})),
         "users/list also reachable with users.manage",
     );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"wing": "Z", "flat_number": "101"})),
+        "flats/create with users.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/bulk-create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"wing": "Z", "flat_numbers": ["201", "202"]})),
+        "flats/bulk-create with users.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "flats/list also reachable with users.manage",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/delete", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"flat_id": 999999})),
+        "flats/delete with users.manage (404-shaped, but permission-gated not 403)",
+    );
 
     assert_forbidden(
         ureq::post(&format!("{}/api/v1/admin/roles/designations/create", url))
@@ -144,6 +168,48 @@ async fn test_users_manage_only() {
             .set("Authorization", &a)
             .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "template_step_id": 1, "comment": "x"})),
         "process/add-note with only users.manage",
+    );
+}
+
+/// A designation holding only `users.view` can list flats and flat plans (read-only
+/// society structure) but cannot create them.
+#[tokio::test]
+async fn test_flats_permission_boundary() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "flatsview", "803", &["users.view"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/list", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({})),
+        "flats/list with users.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"wing": "Z", "flat_number": "101"})),
+        "flats/create with only users.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/bulk-create", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"wing": "Z", "flat_numbers": ["101"]})),
+        "flats/bulk-create with only users.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/set-fire-flag", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"flat_id": 1, "is_fire_flat": true})),
+        "flats/set-fire-flag with only users.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/admin/flats/delete", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"flat_id": 1})),
+        "flats/delete with only users.view",
     );
 }
 
@@ -174,6 +240,18 @@ async fn test_process_reviewer_only() {
             .set("Authorization", &a)
             .send_json(serde_json::json!({"process_id": process_id, "template_step_id": 1, "comment": "reviewed"})),
         "process/add-note with process.reviewer",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/process/audit-log-pdf", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"process_id": process_id})),
+        "process/audit-log-pdf with process.reviewer",
+    );
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/process/audit-log-pdf", url))
+            .set("Authorization", &auth(&owner_jwt))
+            .send_json(serde_json::json!({"process_id": process_id})),
+        "process/audit-log-pdf without reviewer/view permission",
     );
 
     assert_forbidden(

@@ -56,7 +56,7 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 |---|---|
 | `users` | Core identity: email, active flag, timestamps. |
 | `user_credentials` | Password hash and password-reset token, 1:1 with `users`. |
-| `flats` | Wing + flat number, the unit of residence. |
+| `flats` | Wing + flat number, the unit of residence, admin-managed (create/bulk-create/delete) via Society Profile → Flat Setup. `is_fire_flat` marks a flat excluded from the Add Resident picker and from bulk floor/wing removal. |
 | `flat_ownerships` | Which user owns/occupies which flat, with `is_active` (one active owner per flat, enforced by a partial unique index) and start/end dates. |
 | `designations` | The role catalog — only `super_admin`/`staff` are seeded (`is_system = TRUE`); everything else is admin-created at runtime. |
 | `permissions` | The permission catalog (see table above), seeded once, never admin-created. |
@@ -80,11 +80,13 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 |---|---|
 | `process_templates` | One row per logical process type (e.g. "Tenant Onboarding"): its `name` and which `active_version_id` residents currently start against (`NULL` until an admin explicitly activates a version). |
 | `process_template_versions` | Append-only: every Save from the admin builder adds a new row here (own `version_id`, a `version_number` for display, and the full tree as `definition` JSONB). Never mutated in place. |
-| `processes` | One resident-initiated workflow instance, permanently pinned to one `template_version_id` for its whole lifetime, optionally tied to a `flat_ownerships` row. |
+| `processes` | One resident-initiated workflow instance, permanently pinned to one `template_version_id` for its whole lifetime, optionally tied to a `flat_ownerships` row. Also carries the TAT/SLA clock: `tat_working_days` (copied from the template at start), `sla_started_at`/`sla_due_date` (set once, at first full submission — not at process creation), `sla_paused_at`/`sla_paused_working_days` (paused by an admin return, resumed on resubmission). |
 | `process_steps` | Steps within a process, tree-shaped via `parent_step_instance_id`; `is_completed` drives the state machine. |
-| `process_fields` | Append-only field submission log per step (documents or text values); latest value per field wins. |
+| `process_fields` | Append-only field submission log per step (documents or text values); latest value per field wins. `updated_by` records which user saved that value, for the audit trail. |
 | `process_step_reviews` | Reviewer decision history per step (`reviewer_user_id`, `is_approved`, notes, flagged step IDs). |
 | `process_reviewer_comments` | Standalone reviewer notes on a step, never shown to the resident. |
+| `process_audit_log` | Append-only status/verification/return trail, one row per event (`STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`), surfaced in the admin process detail's "Audit Trail" popup and its PDF export — a different, step-level mechanism from `process_fields`' field-level history above. |
+| `public_holidays` | Shared calendar excluded from every template's TAT working-day math, alongside weekends. Admin-managed via Society Profile → Public Holidays. |
 
 ## Frontend
 

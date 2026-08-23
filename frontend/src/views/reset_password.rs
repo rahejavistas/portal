@@ -5,11 +5,11 @@ pub(crate) const RESET_PASSWORD_HTML: &str = r#"
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Password Setup</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
             box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Google Sans', 'Outfit', sans-serif;
         }
         :root {
             --background: #FFFFFF;

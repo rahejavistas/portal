@@ -78,8 +78,13 @@ impl AppConfig {
             .unwrap_or_else(|e| panic!("Failed to parse configuration file {}: {}", file_name, e));
 
         // Override settings with environment variables if present
-        if let Ok(jwt_secret) = std::env::var("JWT_SECRET") {
-            config.jwt_secret = jwt_secret;
+        match std::env::var("JWT_SECRET") {
+            Ok(jwt_secret) => config.jwt_secret = jwt_secret,
+            Err(_) if env == "prod" => panic!(
+                "JWT_SECRET must be set via environment variable in production — \
+                 refusing to fall back to the placeholder secret committed in config_prod.toml"
+            ),
+            Err(_) => {}
         }
         if let Ok(db_url) = std::env::var("DATABASE_URL") {
             config.postgres.database_url = Some(db_url);

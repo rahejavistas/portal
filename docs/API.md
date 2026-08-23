@@ -198,11 +198,12 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
 * **Response (200):**
   ```json
   {
-    "processes": [ { "process_id": "uuid", "template_version_id": 1001, "template_name": "Tenant Onboarding", "ownership_id": 5, "flat_label": "A-301", "user_email": "...", "created_at": "...", "steps_total": 9, "steps_completed": 3, "status": "USER_INPUT_REQUIRED" } ],
+    "processes": [ { "process_id": "uuid", "template_version_id": 1001, "template_name": "Tenant Onboarding", "ownership_id": 5, "flat_label": "A-301", "user_email": "...", "created_at": "...", "updated_at": "...", "steps_total": 9, "steps_completed": 3, "status": "USER_INPUT_REQUIRED", "tat_working_days": 3, "sla_due_date": "2026-08-28", "days_running": 2, "effective_due_date": "2026-08-28", "is_sla_paused": false, "is_overdue": false } ],
     "flats": [ { "flat_id": 5, "wing": "A", "flat_number": "301" } ]
   }
   ```
   `status` is one of `COMPLETED`, `ADMIN_REVIEW_REQUIRED`, `USER_INPUT_REQUIRED`. `template_version_id` is the exact pinned version this process started on (see [Process Templates](#process-templates-versioned-admin-authored) below); `template_name` comes from a join and is just for display.
+  `days_running`/`effective_due_date`/`is_sla_paused`/`is_overdue` only mean anything when the template has `tat_working_days` set (see [TAT/SLA tracking](#tatsla-tracking) below); otherwise `sla_due_date`/`effective_due_date` are `null` and `days_running` is just calendar days since `created_at`, frozen once the process completes rather than growing forever.
 
 ### POST `/api/v1/process/state`
 Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing one, or `template_id` (the `process_templates.template_id` of the process *type* to start — always resolves to whichever version is currently active — plus optional `flat_id` if the caller owns multiple flats) to fetch-or-create.
@@ -221,10 +222,14 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
     "next_actions": [ { "template_step_id": 3, "name": "Upload ID Proof", "assigned_to": "user" } ],
     "reviews": [ { "review_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "is_approved": true, "notes": "Looks good", "created_at": "...", "flagged_step_ids": [] } ],
     "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "..." } ],
+    "audit_log": [ { "audit_id": 1, "template_step_id": 2, "event_type": "STEP_APPROVED", "detail": null, "actor_email": "admin@...", "created_at": "..." } ],
+    "effective_due_date": "2026-08-28",
+    "is_sla_paused": false,
+    "tat_actual_working_days": null,
     "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf", "document_content_type": "application/pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
   }
   ```
-  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` is only populated for callers with `process.reviewer`/`process.view`. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
+  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` and `audit_log` are only populated for callers with `process.reviewer`/`process.view` — `audit_log` is the append-only status/verification/return trail (`event_type` is one of `STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`); a field's own edit history is on each field's `history` array instead, and now carries `actor_email` (who saved that value). `tat_actual_working_days` is `null` until the process has actually closed. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
 * **400** if neither `process_id` nor `template_id` given, the given `template_id` has no active version yet, or the caller owns multiple flats and didn't disambiguate with `flat_id`; **403** if the caller doesn't own the process; **404** if not found.
 
 ### POST `/api/v1/process/save-step`
@@ -246,6 +251,23 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
 * **Request:** `{ "process_id": "uuid", "document_id": "uuid" }`
 * **Response (200):** `{ "download_url": "https://..." }`
 * Holders of `process.reviewer`/`process.view` can download a process's attached documents — but only documents actually attached to *that* process, verified via its field history, not a blanket category grant. No document-category permission is required for this. **403/404** otherwise.
+
+### POST `/api/v1/process/audit-log-pdf`
+Requires `process.reviewer` or `process.view`.
+* **Request:** `{ "process_id": "uuid" }`
+* **Response (200):** a rendered PDF (audit trail status timeline + field-change history), returned the same way as other generated PDFs in this app — see the accounting PDF endpoints for the response shape convention.
+* **403/404** under the same ownership rules as `/api/v1/process/state`.
+
+---
+
+## TAT/SLA tracking
+
+Not its own API surface — it's a set of fields threaded through `/api/v1/process/list` and `/api/v1/process/state` above, plus the admin-only endpoints under [Process Templates](#process-templates-versioned-admin-authored) for configuring it. Summary:
+
+- Opt-in per template version, via `tat_working_days` on the definition. `null`/absent means no TAT tracking for that template at all.
+- The clock (`sla_started_at`/`sla_due_date`) starts once, at the process's first full submission — not at process creation.
+- An admin rejecting a step pauses the clock (`sla_paused_at`); the resident resubmitting resumes it, folding the paused time into `sla_paused_working_days`, which shifts `effective_due_date` forward by that many working days (weekends and rows in `public_holidays` are skipped).
+- None of this gates anything — a process isn't blocked, locked, or auto-escalated for being overdue. It is purely for display (`is_overdue`) and reporting (`tat_actual_working_days`, `/api/v1/admin/process-templates/tat-report`).
 
 ---
 
@@ -275,6 +297,33 @@ Requires `users.manage`.
 ### POST `/api/v1/admin/users/upload`
 Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; duplicate flat claims within the file are rejected.
 * **Response (200):** `{ "total_rows": 50, "successfully_onboarded": 48, "failed_users": [ { "email": "bad@x.com", "reason": "Invalid flat number" } ] }`
+
+---
+
+## Admin Flats APIs
+
+Managing the wing/floor/flat catalog itself (as opposed to who owns a flat, which is the User Management APIs above). Reachable in the UI only from Society Profile → Flat Setup, `super_admin`-only.
+
+### POST `/api/v1/admin/flats/list`
+Requires `users.view`, `users.manage`, `users.roles.manage`, or `users.roles.view`.
+* **Response (200):** `[ { "flat_id": 5, "wing": "A", "flat_number": "0301", "area_sqft": "850.00", "is_fire_flat": false, "owner_email": "resident@..." } ]` — `owner_email` is `null` for a vacant flat.
+
+### POST `/api/v1/admin/flats/create`
+* **Request:** `{ "wing": "A", "flat_number": "0301", "area_sqft": "850.00" }` (`area_sqft` optional, must be positive if given)
+* **Response (200):** the created `FlatSummary`. Safe to call again for the same `(wing, flat_number)` — it returns the existing flat rather than erroring, but won't change its `area_sqft` on a repeat call.
+
+### POST `/api/v1/admin/flats/bulk-create`
+* **Request:** `{ "wing": "A", "flat_numbers": ["0201", "0202", "0203"] }`
+* **Response (200):** `{ "created": 3 }` — the count actually inserted; flat numbers that already exist for that wing are silently skipped, not double-created.
+
+### POST `/api/v1/admin/flats/set-fire-flag`
+* **Request:** `{ "flat_id": 5, "is_fire_flat": true }`
+* **Response (200):** `{ "status": "ok" }`. A fire flat is excluded from the Add Resident flat picker and from bulk floor/wing removal, but otherwise behaves like any other flat.
+
+### POST `/api/v1/admin/flats/delete`
+* **Request:** `{ "flat_id": 5 }`
+* **Response (200):** `{ "status": "ok" }`.
+* **400** `"This flat is occupied."` if it has an active owner, or a foreign-key-violation message if it has billing/document/process records attached — delete the dependent records (or revoke the owner) first.
 
 ---
 
@@ -470,6 +519,28 @@ Requires `process.templates.manage`. Makes the given version the one residents s
 * **Request:** `{ "template_id": 1, "version_id": 4 }`
 * **Response (200):** `{ "status": "ok" }`
 * **400** if `version_id` doesn't belong to `template_id`.
+
+### POST `/api/v1/admin/process-templates/deactivate`
+Requires `process.templates.manage`. Clears the active version, so `/api/v1/process-templates/available` no longer lists it and no resident can start a new process against it — any process already in progress on it keeps working, unaffected.
+* **Request:** `{ "template_id": 1 }`
+* **Response (200):** `{ "status": "ok" }`
+* **400** for an unknown `template_id`.
+
+### POST `/api/v1/admin/process-templates/holidays/list`
+Requires `process.templates.manage`.
+* **Response (200):** `[ { "holiday_date": "2026-01-26", "description": "Republic Day" } ]` — the shared calendar excluded from every template's TAT working-day math, alongside weekends.
+
+### POST `/api/v1/admin/process-templates/holidays/add`
+* **Request:** `{ "holiday_date": "2026-01-26", "description": "Republic Day" }`
+* **Response (200):** `{ "status": "ok" }`
+
+### POST `/api/v1/admin/process-templates/holidays/remove`
+* **Request:** `{ "holiday_date": "2026-01-26" }`
+* **Response (200):** `{ "status": "ok" }`
+
+### POST `/api/v1/admin/process-templates/tat-report`
+Requires `process.templates.manage`.
+* **Response (200):** `[ { "template_name": "Tenant Onboarding", "closed_count": 12, "average_tat_actual_working_days": 4.3 } ]` — one row per template, only over processes that have actually closed with TAT tracking on. Backend-only right now; nothing in the admin UI surfaces this yet.
 
 ### POST `/api/v1/process-templates/available`
 No special permission — any authenticated user. Resident-facing: populates the "Start Process" picker.

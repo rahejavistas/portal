@@ -105,6 +105,7 @@ impl<'a> TestProcess<'a> {
             step_id,
             fields,
             is_admin,
+            self.user_id,
         )
         .await?;
         self.refresh().await;

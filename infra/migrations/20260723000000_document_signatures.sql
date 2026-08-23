@@ -1,20 +1,6 @@
--- E-signature tracking. Signers are a curated directory (`document_signers`), each row
--- mapped to one user account with the contact details an e-signature provider needs
--- (name/phone/email) — kept separate from `users` since not every user is a signer, and
--- a user's signer contact info can differ from their login profile.
---
--- A signature requirement is NOT declared in the process template — a process reviewer
--- attaches one or more signers to a specific document from the process review screen
--- (see `POST /api/v1/admin/process/documents/add-signers`), in the exact order they
--- should sign (`sign_order`) — mirrors e-signature providers like SignYu, which sign
--- documents in the order signers were added. A requirement only becomes actionable
--- once every lower-`sign_order` requirement for the same document is COMPLETED. The
--- field stays not-filled until every attached signer's requirement is COMPLETED.
--- Signing = uploading the signed file as a NEW document; the original is never
--- touched, and this table's document_id -> signed_document_id pair is the old-to-new
--- map. There is deliberately no CANCELLED status and no way to remove a requirement
--- once attached — a required signature is required, full stop.
-
+-- E-signature tracking. document_signers is a curated signer directory, one row per
+-- user account. Signers are attached to a document at review time, not in the
+-- template, in sign_order; signing uploads a new document, the original is untouched.
 CREATE TYPE signature_status AS ENUM ('PENDING', 'COMPLETED');
 
 CREATE TABLE IF NOT EXISTS document_signers (
@@ -38,14 +24,9 @@ CREATE TABLE IF NOT EXISTS document_signature_requirements (
     template_step_id INT NOT NULL,
     template_field_id INT NOT NULL,
     signer_id INT NOT NULL REFERENCES document_signers(signer_id) ON DELETE CASCADE,
-    -- Position in the signing chain for this document (1-based, assigned in the order
-    -- signers were attached). Lower orders must COMPLETE before a higher order becomes
-    -- actionable.
+    -- 1-based signing-chain position; lower orders must COMPLETE first.
     sign_order INT NOT NULL,
-    -- Which provider is handling this requirement ('manual', or a registered external
-    -- provider name like 'signyu'). Provider-specific correlation data (e.g. SignYu's
-    -- own document/signer ids) lives in that provider's own table, not here — see
-    -- `signyu_requirement_links` below — so this table stays provider-agnostic.
+    -- 'manual' or a registered external provider name (e.g. 'signyu').
     provider VARCHAR(32) NOT NULL DEFAULT 'manual',
     status signature_status NOT NULL DEFAULT 'PENDING',
     signed_by INT REFERENCES users(user_id) ON DELETE SET NULL,
@@ -66,14 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_doc_sig_req_status ON document_signature_requirem
 
 CREATE INDEX IF NOT EXISTS idx_doc_sig_req_document_sign_order ON document_signature_requirements(document_id, sign_order);
 
--- No separate "requirement history" table — `document_signature_requirements` itself
--- always holds the current (and only) state a requirement can be in, and every
--- external provider interaction is already fully logged in `signature_provider_requests`
--- below. A dedicated event-log table would just duplicate one or the other.
-
--- Full audit trail of every request/response exchanged with an external signature
--- provider (e.g. SignYu) — "plug and play" providers all log through this same table,
--- keyed by `provider`, so adding a new provider tomorrow needs no schema change here.
+-- Every request/response exchanged with an external signature provider, keyed by provider.
 CREATE TABLE IF NOT EXISTS signature_provider_requests (
     log_id SERIAL PRIMARY KEY,
     provider VARCHAR(32) NOT NULL,
@@ -90,15 +64,11 @@ CREATE TABLE IF NOT EXISTS signature_provider_requests (
 
 CREATE INDEX IF NOT EXISTS idx_sig_provider_requests_requirement ON signature_provider_requests(requirement_id);
 
--- SignYu-specific correlation data for a requirement handled by that provider — kept
--- out of `document_signature_requirements` so the shared table stays provider-agnostic.
--- A second external provider gets its own equivalent table, not new columns here.
+-- SignYu-specific correlation data — a second provider gets its own table, not new columns here.
 CREATE TABLE IF NOT EXISTS signyu_requirement_links (
     requirement_id INT PRIMARY KEY REFERENCES document_signature_requirements(requirement_id) ON DELETE CASCADE,
     external_document_id VARCHAR(128) NOT NULL,
     external_signer_id VARCHAR(128) NOT NULL,
-    -- SignYu's own signing-page link for this signer, so our UI can offer "open signing
-    -- page" directly instead of the signer having to dig through SignYu's email.
     sign_url TEXT
 );
 

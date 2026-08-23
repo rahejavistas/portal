@@ -69,7 +69,7 @@ pub(super) fn csv_response<T: serde::Serialize>(
         .into_response())
 }
 
-pub(super) fn pdf_response(filename: &str, bytes: Vec<u8>) -> axum::response::Response {
+pub(crate) fn pdf_response(filename: &str, bytes: Vec<u8>) -> axum::response::Response {
     (
         StatusCode::OK,
         [

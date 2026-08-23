@@ -1,10 +1,6 @@
--- P1 accounting: sinking/repair fund contributions, TDS, vendor & expense management,
--- bank reconciliation, budgets, member advance/credit balances, fiscal-year close.
+-- P1 accounting: fund contributions, TDS, vendors/expenses, bank reconciliation, budgets.
 
 -- ============ Fund contributions (sinking/repair) ============
--- Extends invoicing to add a second line item per invoice when the flat's fund has an
--- active contribution rule — the actual multi-line-item invoicing the P0 reports doc
--- flagged as deferred.
 
 CREATE TABLE IF NOT EXISTS fund_contribution_rules (
     rule_id SERIAL PRIMARY KEY,
@@ -60,11 +56,7 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
 
 CREATE SEQUENCE IF NOT EXISTS po_number_seq START 1;
 
--- Vendor bill entry, gated by its own lightweight PENDING_APPROVAL/APPROVED/REJECTED
--- status (not routed through the resident-facing process/workflow engine — that engine
--- is built for multi-step JSONB-templated processes with document/signature
--- requirements, which a one-person expense sign-off doesn't need; forcing it through
--- there would couple two unrelated subsystems for no real benefit here).
+-- Vendor bill entry with its own lightweight approval status, not the process engine.
 CREATE TABLE IF NOT EXISTS vendor_expenses (
     expense_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     po_id UUID REFERENCES purchase_orders(po_id),
@@ -161,6 +153,4 @@ INSERT INTO chart_of_accounts (code, name, account_type, normal_balance, is_syst
     ('3000', 'Accumulated Surplus (Retained Earnings)', 'EQUITY', 'CREDIT', TRUE)
 ON CONFLICT (code) DO NOTHING;
 
--- Vendors, bank reconciliation, budgets, and fiscal-year close all gate on the same
--- accounting.manage/accounting.view permissions defined in the P0 migration — no
--- dedicated sub-permissions for this phase's features.
+-- All P1 features gate on the same accounting.manage/accounting.view from P0.

@@ -32,6 +32,7 @@ async fn notify_designation_change(user_email: &str, designation_code: &str, gra
             label: "Open Portal".to_string(),
             url: format!("{}/dashboard", email::config::portal_base_url()),
         }),
+        attachment: None,
     };
     if let Err(e) = email::send_email(&payload).await {
         eprintln!(
@@ -96,7 +97,7 @@ async fn guard_designation_change(
         return Err(error_response(
             StatusCode::FORBIDDEN,
             format!(
-                "You cannot assign or revoke '{}' — it grants permissions you don't hold yourself ({}).",
+                "You cannot assign or revoke '{}' - it grants permissions you don't hold yourself ({}).",
                 designation_code,
                 missing.join(", ")
             ),

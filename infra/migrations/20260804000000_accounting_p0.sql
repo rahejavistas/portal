@@ -47,9 +47,7 @@ CREATE TABLE IF NOT EXISTS fiscal_year_reopenings (
     reclosed_at TIMESTAMPTZ
 );
 
--- Double-entry ledger. Append-only: corrections post a new reversing transaction,
--- never mutate a posted one — enforced both in application code (post_transaction
--- is the only writer) and at the DB level via the rules below.
+-- Double-entry ledger, append-only — corrections post a reversing transaction, never mutate.
 CREATE TABLE IF NOT EXISTS ledger_transactions (
     transaction_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     fiscal_year_id INT NOT NULL REFERENCES fiscal_years(fiscal_year_id),
@@ -210,13 +208,8 @@ CREATE TABLE IF NOT EXISTS receipts (
     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- A resident self-reporting "I paid this, here's my transaction reference" for an
--- offline payment (UPI/bank transfer/cheque made outside the app). This is only a
--- claim — it never touches the ledger by itself. An admin reviews it against the
--- actual bank statement and either confirms it (which posts a real payment through
--- the same accounting::payments::record_payment path as an admin-entered payment) or
--- rejects it with a reason. Prevents a resident's unverified claim from ever being
--- treated as confirmed money.
+-- A resident's self-reported offline payment. Never touches the ledger by itself —
+-- only an admin confirming it posts a real payment.
 CREATE TABLE IF NOT EXISTS payment_claims (
     claim_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_id UUID NOT NULL REFERENCES invoices(invoice_id),
@@ -256,14 +249,8 @@ CREATE TABLE IF NOT EXISTS payment_instructions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- The society's own legal identity, printed on the header of every generated invoice
--- PDF (name, registration number, building address, phone). Single current row,
--- admin-editable, never hardcoded — GST registration number stays on gst_rules since
--- it's already tracked there.
--- `state` is one of India's 28 states / 8 union territories (a genuinely fixed,
--- non-admin-extensible set) — validated against that fixed list in the API layer, not
--- here. Knowing the state matters beyond the printed address: a future bylaws-reading
--- feature needs it to look up the right state's Co-operative Societies Act.
+-- Society's legal identity, printed on invoice PDFs. Single row, admin-editable.
+-- `state` is validated against India's fixed state/UT list in the API layer.
 CREATE TABLE IF NOT EXISTS society_profile (
     society_profile_id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
