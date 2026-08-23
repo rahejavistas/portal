@@ -52,41 +52,51 @@ async fn guard_designation_change(
     caller: &authentication::User,
     target_user_id: i32,
     designation_code: &str,
-) -> Result<(), axum::response::Response> {
+) -> Result<(), Box<axum::response::Response>> {
     if target_user_id == caller.user_id {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::FORBIDDEN,
             "You cannot modify your own designations. Another admin must make this change.",
-        ));
+        )));
     }
 
     let is_system = state
         .permissions_manager
         .is_system_designation(designation_code)
         .await
-        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| {
+            Box::new(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            ))
+        })?
         .ok_or_else(|| {
-            error_response(
+            Box::new(error_response(
                 StatusCode::BAD_REQUEST,
                 format!("Unknown designation: {}", designation_code),
-            )
+            ))
         })?;
 
     if is_system {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::FORBIDDEN,
             format!(
                 "'{}' is a system designation and cannot be assigned or revoked.",
                 designation_code
             ),
-        ));
+        )));
     }
 
     let designation_permissions = state
         .permissions_manager
         .get_designation_permissions(designation_code)
         .await
-        .map_err(|e| error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            Box::new(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            ))
+        })?;
     let caller_permissions: HashSet<&str> = caller.permissions.iter().map(String::as_str).collect();
     let missing: Vec<&str> = designation_permissions
         .iter()
@@ -94,14 +104,14 @@ async fn guard_designation_change(
         .filter(|p| !caller_permissions.contains(p))
         .collect();
     if !missing.is_empty() {
-        return Err(error_response(
+        return Err(Box::new(error_response(
             StatusCode::FORBIDDEN,
             format!(
                 "You cannot assign or revoke '{}' - it grants permissions you don't hold yourself ({}).",
                 designation_code,
                 missing.join(", ")
             ),
-        ));
+        )));
     }
 
     Ok(())
@@ -138,7 +148,7 @@ pub async fn assign_designation(
     if let Err(resp) =
         guard_designation_change(&state, &caller, payload.user_id, &payload.designation_code).await
     {
-        return resp;
+        return *resp;
     }
 
     match state
@@ -179,7 +189,7 @@ pub async fn revoke_designation(
     if let Err(resp) =
         guard_designation_change(&state, &caller, payload.user_id, &payload.designation_code).await
     {
-        return resp;
+        return *resp;
     }
 
     match state
