@@ -809,7 +809,8 @@ async fn main() {
                     middleware::rate_limit_middleware,
                 ))
                 // Uploads go via presigned S3 PUTs; direct bodies are just small CSVs.
-                .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
+                // Kept above bank_reconciliation.rs's 10MB CSV cap for multipart overhead.
+                .layer(DefaultBodyLimit::max(15 * 1024 * 1024))
                 .layer(axum_middleware::from_fn(middleware::add_security_headers))
                 .layer(axum_middleware::from_fn(middleware::log_request))
                 .with_state($state)

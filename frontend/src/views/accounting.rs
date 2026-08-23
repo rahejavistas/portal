@@ -2140,8 +2140,6 @@ const HTML: &str = r##"
             } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
         }
 
-        // `null` means the caller couldn't even list the category (no access granted
-        // yet, see settingsCategoryDuesStatements) - distinct from an empty array.
         async function loadDuesStatements() {
             try {
                 const resp = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {

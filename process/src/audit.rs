@@ -23,6 +23,27 @@ impl AuditEventType {
             AuditEventType::ProcessClosed => "PROCESS_CLOSED",
         }
     }
+
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "STEP_COMPLETED" => Some(AuditEventType::StepCompleted),
+            "STEP_APPROVED" => Some(AuditEventType::StepApproved),
+            "STEP_RETURNED" => Some(AuditEventType::StepReturned),
+            "STEP_FLAGGED" => Some(AuditEventType::StepFlagged),
+            "PROCESS_CLOSED" => Some(AuditEventType::ProcessClosed),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AuditEventType::StepCompleted => "Submitted",
+            AuditEventType::StepApproved => "Approved",
+            AuditEventType::StepReturned => "Returned",
+            AuditEventType::StepFlagged => "Flagged for attention",
+            AuditEventType::ProcessClosed => "Process closed",
+        }
+    }
 }
 
 /// Appends one row. Nothing in this crate ever updates or deletes from

@@ -158,10 +158,12 @@ pub async fn save_step(
         .map_err(|e| e.to_string())?;
     }
 
-    resume_sla_clock_if_paused(&mut *conn, process_id)
-        .await
-        .map_err(|e| e.to_string())?;
     let post_save_turn = state_machine::determine_turn(template, &post_save_state);
+    if post_save_turn == state_machine::ProcessTurn::Admin {
+        resume_sla_clock_if_paused(&mut *conn, process_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     maybe_start_sla_clock(&mut *conn, process_id, template, post_save_turn)
         .await
         .map_err(|e| e.to_string())?;
@@ -205,6 +207,12 @@ pub async fn review_step(
     insert_review(&mut *conn, process_id, &params)
         .await
         .map_err(|e| e.to_string())?;
+
+    if params.is_approved {
+        resume_sla_clock_if_paused(&mut *conn, process_id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     sync_start_times(&mut *conn, process_id, template)
         .await

@@ -540,6 +540,23 @@ async fn test_permission_gating_for_template_routes() {
         403
     );
     assert_eq!(
+        deactivate(&url, &no_perm_jwt, template_id).unwrap_err(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/tat-report",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
         ureq::post(&format!(
             "{}/api/v1/admin/process-templates/holidays/list",
             url
@@ -559,6 +576,19 @@ async fn test_permission_gating_for_template_routes() {
         ))
         .set("Authorization", &auth(&no_perm_jwt))
         .send_json(serde_json::json!({"holiday_date": "2026-01-26", "description": "Republic Day"}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/holidays/remove",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({"holiday_date": "2026-01-26"}))
         .unwrap_err()
         .into_response()
         .unwrap()
@@ -597,6 +627,14 @@ async fn test_permission_gating_for_template_routes() {
     .set("Authorization", &auth(&manager_jwt))
     .send_json(serde_json::json!({"holiday_date": "2026-01-26"}));
     assert!(remove_resp.is_ok());
+
+    let tat_report_resp = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/tat-report",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({}));
+    assert!(tat_report_resp.is_ok());
 
     // No special permission needed for the resident-facing "available" endpoint.
     let available_resp = ureq::post(&format!("{}/api/v1/process-templates/available", url))

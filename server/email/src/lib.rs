@@ -112,9 +112,18 @@ fn render_html(msg: &EmailMessage) -> String {
 }
 
 pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
+    let meter = opentelemetry::global::meter("email_service");
+    let counter = meter.u64_counter("emails_sent_total").init();
+    let record = |status: &'static str| {
+        counter.add(1, &[opentelemetry::KeyValue::new("status", status)]);
+    };
+
     let config = match EmailConfig::from_env() {
         Some(c) => c,
-        None => return Ok(()),
+        None => {
+            record("config_missing");
+            return Ok(());
+        }
     };
 
     let plain = render_plain_text(msg);
@@ -161,6 +170,7 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
         Ok(email) => email,
         Err(e) => {
             eprintln!("Failed to build email message: {}", e);
+            record("build_failed");
             return Ok(());
         }
     };
@@ -175,9 +185,6 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
             .credentials(creds)
             .build();
 
-    let meter = opentelemetry::global::meter("email_service");
-    let counter = meter.u64_counter("emails_sent_total").init();
-
     // Bounded so a stuck SMTP connection can never hang the caller's request (and burn
     // Lambda time) indefinitely — applies to every email sent through this one function.
     const SEND_TIMEOUT_SECONDS: u64 = 10;
@@ -188,19 +195,17 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
     .await;
 
     match send_result {
-        Ok(Ok(_)) => {
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "success")]);
-        }
+        Ok(Ok(_)) => record("success"),
         Ok(Err(e)) => {
             eprintln!("Could not send email to {}: {:?}", msg.to, e);
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "error")]);
+            record("error");
         }
         Err(_) => {
             eprintln!(
                 "Email send to {} timed out after {SEND_TIMEOUT_SECONDS}s",
                 msg.to
             );
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "timeout")]);
+            record("timeout");
         }
     }
 

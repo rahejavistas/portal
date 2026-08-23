@@ -52,10 +52,16 @@ pub async fn create_flat(
     }
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
 
-    let flat_id: i32 = sqlx::query_scalar(
+    let (flat_id, wing, flat_number, area_sqft, is_fire_flat): (
+        i32,
+        String,
+        String,
+        Option<Decimal>,
+        bool,
+    ) = sqlx::query_as(
         "INSERT INTO flats (wing, flat_number, area_sqft) VALUES ($1, $2, $3) \
          ON CONFLICT (wing, flat_number) DO UPDATE SET wing = EXCLUDED.wing \
-         RETURNING flat_id",
+         RETURNING flat_id, wing, flat_number, area_sqft, is_fire_flat",
     )
     .bind(flat.wing())
     .bind(flat.flat_number())
@@ -66,10 +72,10 @@ pub async fn create_flat(
 
     Ok(Json(FlatSummary {
         flat_id,
-        wing: flat.wing().to_string(),
-        flat_number: flat.flat_number().to_string(),
-        area_sqft: payload.area_sqft,
-        is_fire_flat: false,
+        wing,
+        flat_number,
+        area_sqft,
+        is_fire_flat,
         owner_email: None,
     }))
 }

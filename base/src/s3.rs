@@ -2,6 +2,19 @@ use crate::config::S3Config;
 use aws_sdk_s3::{presigning::PresigningConfig, primitives::ByteStream, Client};
 use std::time::Duration;
 
+/// Records one S3 call outcome, for Grafana visibility into this external dependency.
+fn record_operation_metric(operation: &str, outcome: &str) {
+    let meter = opentelemetry::global::meter("s3_accessor");
+    let counter = meter.u64_counter("s3_operations_total").init();
+    counter.add(
+        1,
+        &[
+            opentelemetry::KeyValue::new("operation", operation.to_string()),
+            opentelemetry::KeyValue::new("outcome", outcome.to_string()),
+        ],
+    );
+}
+
 #[derive(Clone)]
 pub struct S3Accessor {
     client: Client,
@@ -67,7 +80,7 @@ impl S3Accessor {
         key: &str,
         body: ByteStream,
         content_type: &str,
-    ) -> Result<(), aws_sdk_s3::Error> {
+    ) -> Result<(), Box<aws_sdk_s3::Error>> {
         let start = std::time::Instant::now();
 
         let res = self
@@ -89,11 +102,15 @@ impl S3Accessor {
             &[opentelemetry::KeyValue::new("operation", "upload")],
         );
 
-        res?;
+        match &res {
+            Ok(_) => record_operation_metric("upload", "success"),
+            Err(_) => record_operation_metric("upload", "error"),
+        }
+        res.map_err(|e| Box::new(aws_sdk_s3::Error::from(e)))?;
         Ok(())
     }
 
-    pub async fn download_file(&self, key: &str) -> Result<ByteStream, aws_sdk_s3::Error> {
+    pub async fn download_file(&self, key: &str) -> Result<ByteStream, Box<aws_sdk_s3::Error>> {
         let start = std::time::Instant::now();
         let resp = self
             .client
@@ -111,7 +128,12 @@ impl S3Accessor {
             &[opentelemetry::KeyValue::new("operation", "download")],
         );
 
-        Ok(resp?.body)
+        match &resp {
+            Ok(_) => record_operation_metric("download", "success"),
+            Err(_) => record_operation_metric("download", "error"),
+        }
+        let resp = resp.map_err(|e| Box::new(aws_sdk_s3::Error::from(e)))?;
+        Ok(resp.body)
     }
 
     pub async fn create_presigned_url(
@@ -120,17 +142,23 @@ impl S3Accessor {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let presigning_config = PresigningConfig::expires_in(self.presigned_expiry)?;
 
-        let req = self
+        let req = match self
             .presigned_client
             .get_object()
             .bucket(&self.bucket_name)
             .key(key)
             .presigned(presigning_config)
-            .await?;
-
-        let meter = opentelemetry::global::meter("s3_accessor");
-        let counter = meter.u64_counter("s3_presigned_url_fetches_total").init();
-        counter.add(1, &[]);
+            .await
+        {
+            Ok(req) => {
+                record_operation_metric("presign_get", "success");
+                req
+            }
+            Err(e) => {
+                record_operation_metric("presign_get", "error");
+                return Err(Box::new(e));
+            }
+        };
 
         Ok(req.uri().to_string())
     }
@@ -144,20 +172,24 @@ impl S3Accessor {
     ) -> Result<String, Box<dyn std::error::Error>> {
         let presigning_config = PresigningConfig::expires_in(self.presigned_expiry)?;
 
-        let req = self
+        let req = match self
             .presigned_client
             .put_object()
             .bucket(&self.bucket_name)
             .key(key)
             .content_type(content_type)
             .presigned(presigning_config)
-            .await?;
-
-        let meter = opentelemetry::global::meter("s3_accessor");
-        let counter = meter
-            .u64_counter("s3_presigned_put_url_fetches_total")
-            .init();
-        counter.add(1, &[]);
+            .await
+        {
+            Ok(req) => {
+                record_operation_metric("presign_put", "success");
+                req
+            }
+            Err(e) => {
+                record_operation_metric("presign_put", "error");
+                return Err(Box::new(e));
+            }
+        };
 
         Ok(req.uri().to_string())
     }
@@ -175,12 +207,21 @@ impl S3Accessor {
             .send()
             .await
         {
-            Ok(output) => Ok(Some(output.content_length().unwrap_or(0))),
+            Ok(output) => {
+                record_operation_metric("head", "success");
+                Ok(Some(output.content_length().unwrap_or(0)))
+            }
             Err(sdk_err) => {
                 let service_err = sdk_err.into_service_error();
                 match service_err {
-                    HeadObjectError::NotFound(_) => Ok(None),
-                    other => Err(Box::new(other) as Box<dyn std::error::Error>),
+                    HeadObjectError::NotFound(_) => {
+                        record_operation_metric("head", "not_found");
+                        Ok(None)
+                    }
+                    other => {
+                        record_operation_metric("head", "error");
+                        Err(Box::new(other) as Box<dyn std::error::Error>)
+                    }
                 }
             }
         }

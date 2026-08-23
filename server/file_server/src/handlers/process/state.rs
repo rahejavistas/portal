@@ -355,9 +355,7 @@ pub async fn list_user_processes(
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     // process.view sees every resident's list too, but never gains write access.
-    let can_view_all = !payload.personal_only
-        && (user.has_permission(authentication::Permission::ProcessReviewer)
-            || user.has_permission(authentication::Permission::ProcessView));
+    let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
     let mut items = if can_view_all {
         process::db::list_all_processes(&mut conn).await
     } else {
@@ -583,9 +581,7 @@ pub async fn get_process_state(
     // Read-only oversight (process.view) sees any resident's process state, same as a
     // reviewer — this handler never writes to another user's process, only the caller's own.
     // personal_only (set by the plain /process page) always forces the caller's own view.
-    let can_view_all = !payload.personal_only
-        && (user.has_permission(authentication::Permission::ProcessReviewer)
-            || user.has_permission(authentication::Permission::ProcessView));
+    let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
 
     let (process_id, template_version_id, ownership_id, template) =
         resolve_process_target(&mut tx, &state, &user, &payload, can_view_all).await?;
@@ -754,13 +750,9 @@ pub struct AuditLogPdfRequest {
 }
 
 fn audit_event_label(event_type: &str) -> String {
-    match event_type {
-        "STEP_COMPLETED" => "Submitted".to_string(),
-        "STEP_APPROVED" => "Approved".to_string(),
-        "STEP_RETURNED" => "Returned".to_string(),
-        "STEP_FLAGGED" => "Flagged for attention".to_string(),
-        other => other.to_string(),
-    }
+    process::audit::AuditEventType::from_db_str(event_type)
+        .map(|e| e.label().to_string())
+        .unwrap_or_else(|| event_type.to_string())
 }
 
 /// POST /api/v1/process/audit-log-pdf
@@ -771,9 +763,7 @@ pub async fn audit_log_pdf(
     State(state): State<AppState>,
     Json(payload): Json<AuditLogPdfRequest>,
 ) -> Result<axum::response::Response, ApiError> {
-    if !(user.has_permission(authentication::Permission::ProcessReviewer)
-        || user.has_permission(authentication::Permission::ProcessView))
-    {
+    if !super::can_view_all_processes(&user) {
         return Err((
             StatusCode::FORBIDDEN,
             Json("Not authorized to view the audit trail".to_string()),
