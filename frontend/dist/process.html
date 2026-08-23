@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2060,7 +2061,8 @@
                     const templateName = p.template_name;
                     const matchesName = templateName.toLowerCase().includes(searchQuery);
                     const matchesId = p.process_id.toLowerCase().includes(searchQuery);
-                    if (!matchesName && !matchesId) {
+                    const matchesRegNo = p.inward_reg_no && p.inward_reg_no.toLowerCase().includes(searchQuery);
+                    if (!matchesName && !matchesId && !matchesRegNo) {
                         return false;
                     }
                 }
@@ -2097,6 +2099,9 @@
                     <td>
                         <div class="process-title" title="${truncTitle(p.template_name)}" onclick="viewProcessDetail('${p.process_id}')">
                             ${escapeHtml(truncText(p.template_name, 60))}
+                        </div>
+                        <div style="margin-top: 4px;">
+                            <span style="display:inline-flex;align-items:center;background:var(--muted);color:var(--muted-foreground);font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                         </div>
                         <div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${isAdmin ? truncTitle(p.user_email) : ''}">
                             ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(truncText(p.user_email, 30))})` : ''}
@@ -2413,6 +2418,7 @@
                     : `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${tatDot(p)}No&nbsp;TAT&nbsp;tracking</span>`)
                 : '';
             metaContainer.innerHTML = `
+                <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                 ${p.flat_label ? `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">Flat&nbsp;${escapeHtml(p.flat_label)}</span>` : ''}
                 <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">ID&nbsp;${p.process_id.substring(0, 8)}</span>
                 <span style="display:inline-flex;align-items:center;gap:5px;${statusChipClass}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${statusText}</span>

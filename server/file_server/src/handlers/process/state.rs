@@ -98,6 +98,7 @@ pub struct StepResponse {
 #[derive(Serialize)]
 pub struct ProcessStateResponse {
     pub process_id: Uuid,
+    pub inward_reg_no: String,
     pub template_version_id: i32,
     pub process_name: String,
     pub ownership_id: Option<i32>,
@@ -710,6 +711,10 @@ pub async fn get_process_state(
     let sla_info = process::db::get_process_info(&mut tx, process_id)
         .await
         .internal_err()?;
+    let inward_reg_no = sla_info
+        .as_ref()
+        .map(|info| info.inward_reg_no.clone())
+        .unwrap_or_default();
     let (effective_due_date, is_sla_paused) = match sla_info {
         Some(info) => {
             let holidays = process::db::get_holidays(&mut tx).await.internal_err()?;
@@ -728,6 +733,7 @@ pub async fn get_process_state(
 
     Ok(Json(ProcessStateResponse {
         process_id,
+        inward_reg_no,
         template_version_id,
         process_name: template.name.clone(),
         ownership_id,

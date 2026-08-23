@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -9,6 +10,17 @@ use crate::state_machine::{
 // Top-level process operations
 // ==========================================
 
+/// Next human-facing inward register number, formatted "INW-{year}-{seq:06}".
+/// The sequence is never reset per year — a year rollover just means the next
+/// number carries a new year prefix while the underlying counter keeps climbing.
+pub async fn next_inward_reg_no(conn: &mut sqlx::PgConnection) -> Result<String, sqlx::Error> {
+    let n: i64 = sqlx::query_scalar("SELECT nextval('inward_reg_no_seq')")
+        .fetch_one(conn)
+        .await?;
+    let year = chrono::Utc::now().year();
+    Ok(format!("INW-{}-{:06}", year, n))
+}
+
 /// Create a new process and all its step rows. Returns the process_id.
 pub async fn init_process(
     conn: &mut sqlx::PgConnection,
@@ -17,10 +29,12 @@ pub async fn init_process(
     template: &crate::ProcessTemplate,
     ownership_id: Option<i32>,
 ) -> Result<Uuid, sqlx::Error> {
+    let inward_reg_no = next_inward_reg_no(&mut *conn).await?;
     let process_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO processes (user_id, template_version_id, ownership_id) \
-         VALUES ($1, $2, $3) RETURNING process_id",
+        "INSERT INTO processes (inward_reg_no, user_id, template_version_id, ownership_id) \
+         VALUES ($1, $2, $3, $4) RETURNING process_id",
     )
+    .bind(inward_reg_no)
     .bind(user_id)
     .bind(template_version_id)
     .bind(ownership_id)
@@ -317,6 +331,7 @@ pub struct ProcessInfo {
     pub user_id: i32,
     pub template_version_id: i32,
     pub ownership_id: Option<i32>,
+    pub inward_reg_no: String,
     pub sla_due_date: Option<chrono::NaiveDate>,
     pub sla_paused_at: Option<chrono::DateTime<chrono::Utc>>,
     pub sla_paused_working_days: i32,
@@ -327,7 +342,7 @@ pub async fn get_process_info(
     process_id: Uuid,
 ) -> Result<Option<ProcessInfo>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT user_id, template_version_id, ownership_id, \
+        "SELECT user_id, template_version_id, ownership_id, inward_reg_no, \
                 sla_due_date, sla_paused_at, sla_paused_working_days \
          FROM processes WHERE process_id = $1",
     )
@@ -412,6 +427,7 @@ pub async fn get_field_history(
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ProcessListItem {
     pub process_id: Uuid,
+    pub inward_reg_no: String,
     pub template_version_id: i32,
     pub template_name: String,
     pub ownership_id: Option<i32>,
@@ -433,7 +449,7 @@ pub struct ProcessListItem {
 }
 
 const PROCESS_LIST_QUERY_BASE: &str =
-    "SELECT p.process_id, p.template_version_id, pt.name AS template_name, p.ownership_id, \
+    "SELECT p.process_id, p.inward_reg_no, p.template_version_id, pt.name AS template_name, p.ownership_id, \
             CASE WHEN fo.flat_id IS NOT NULL \
                  THEN f.wing || '-' || f.flat_number \
                  ELSE NULL END AS flat_label, \
@@ -452,7 +468,7 @@ const PROCESS_LIST_QUERY_BASE: &str =
      LEFT JOIN flats f ON fo.flat_id = f.flat_id \
      LEFT JOIN process_steps ps ON p.process_id = ps.process_id";
 
-const PROCESS_LIST_GROUP_BY: &str = "GROUP BY p.process_id, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.updated_at, p.current_turn, p.tat_working_days, p.sla_started_at, p.sla_due_date, p.sla_paused_at, p.sla_paused_working_days";
+const PROCESS_LIST_GROUP_BY: &str = "GROUP BY p.process_id, p.inward_reg_no, p.template_version_id, pt.name, p.ownership_id, fo.flat_id, f.wing, f.flat_number, u.email, p.created_at, p.updated_at, p.current_turn, p.tat_working_days, p.sla_started_at, p.sla_due_date, p.sla_paused_at, p.sla_paused_working_days";
 
 pub async fn list_processes_for_user(
     conn: &mut sqlx::PgConnection,
@@ -467,13 +483,15 @@ pub async fn list_processes_for_user(
     sqlx::query_as(&query).bind(user_id).fetch_all(conn).await
 }
 
+/// Ordered by `inward_reg_no` ascending — the FIFO queue a compliance manager
+/// works through, not creation time.
 pub async fn list_all_processes(
     conn: &mut sqlx::PgConnection,
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} \
          {} \
-         ORDER BY p.created_at DESC",
+         ORDER BY p.inward_reg_no ASC",
         PROCESS_LIST_QUERY_BASE, PROCESS_LIST_GROUP_BY
     );
     sqlx::query_as(&query).fetch_all(conn).await

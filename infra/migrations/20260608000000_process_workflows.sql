@@ -1,5 +1,8 @@
+CREATE SEQUENCE IF NOT EXISTS inward_reg_no_seq START 1;
+
 CREATE TABLE IF NOT EXISTS processes (
     process_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    inward_reg_no TEXT NOT NULL UNIQUE,
     user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     template_version_id INT NOT NULL REFERENCES process_template_versions(version_id),
     ownership_id INT REFERENCES flat_ownerships(ownership_id) ON DELETE CASCADE,
