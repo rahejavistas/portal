@@ -327,7 +327,7 @@ pub fn render_invoice_pdf(
     doc.centered_line("TAX INVOICE", 15.0, true);
     if is_sample {
         doc.centered_line(
-            "SAMPLE PREVIEW — figures shown are illustrative, not a real bill.",
+            "SAMPLE PREVIEW - figures shown are illustrative, not a real bill.",
             8.5,
             false,
         );
@@ -731,6 +731,135 @@ pub fn render_noc_pdf(
         "and does not waive any dues that may arise after this date.",
         9.0,
     );
+    doc.finish()
+}
+
+pub struct AuditPdfEntry {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub event_label: String,
+    pub actor_email: Option<String>,
+    pub detail: Option<String>,
+}
+
+pub struct FieldChangePdfEntry {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub field_name: String,
+    pub value: String,
+    pub actor_email: Option<String>,
+}
+
+const AUDIT_COL_EVENT: f32 = 68.0;
+const AUDIT_COL_ACTOR: f32 = 108.0;
+
+pub fn render_process_audit_pdf(
+    process_name: &str,
+    flat_label: Option<&str>,
+    process_id: &str,
+    entries: &[AuditPdfEntry],
+    field_changes: &[FieldChangePdfEntry],
+) -> Vec<u8> {
+    let mut doc = SimpleDoc::new(&format!("Audit Trail - {}", process_name));
+    doc.centered_line("AUDIT TRAIL", 16.0, true);
+    doc.space(2.0);
+    doc.centered_line(process_name, 12.0, false);
+    doc.double_rule();
+
+    doc.two_col_line(
+        &format!("Process ID: {}", truncate(process_id, 36)),
+        &format!(
+            "Generated: {}",
+            chrono::Utc::now().format("%d %b %Y, %I:%M %p")
+        ),
+        9.0,
+        COL_HEADER_RIGHT,
+        false,
+    );
+    if let Some(flat) = flat_label {
+        doc.two_col_line(&format!("Flat: {}", flat), "", 9.0, COL_HEADER_RIGHT, false);
+    }
+    doc.rule();
+
+    doc.text_at(MARGIN_MM, "Date / Time", 9.0, true);
+    doc.text_at(AUDIT_COL_EVENT, "Event", 9.0, true);
+    doc.text_at(AUDIT_COL_ACTOR, "Actor", 9.0, true);
+    doc.advance_line(9.0);
+    doc.rule();
+
+    if entries.is_empty() {
+        doc.line("No audit events recorded.", 9.5);
+    }
+    for e in entries {
+        doc.ensure_space(5.0);
+        doc.text_at(
+            MARGIN_MM,
+            &e.created_at.format("%d %b %Y, %I:%M %p").to_string(),
+            8.5,
+            false,
+        );
+        doc.text_at(AUDIT_COL_EVENT, &e.event_label, 8.5, false);
+        doc.text_at(
+            AUDIT_COL_ACTOR,
+            e.actor_email.as_deref().unwrap_or("System"),
+            8.5,
+            false,
+        );
+        doc.advance_line(8.5);
+        if let Some(detail) = &e.detail {
+            doc.ensure_space(4.0);
+            doc.text_at(
+                AUDIT_COL_EVENT,
+                &format!("\u{201c}{}\u{201d}", truncate(detail, 85)),
+                8.0,
+                false,
+            );
+            doc.advance_line(8.0);
+        }
+        doc.space(1.5);
+    }
+    doc.space(6.0);
+    doc.rule();
+    doc.line(
+        "This is an append-only record - no entry shown here can be edited or removed.",
+        8.0,
+    );
+
+    doc.space(10.0);
+    doc.double_rule();
+    doc.centered_line("FIELD CHANGES", 13.0, true);
+    doc.space(2.0);
+    doc.rule();
+
+    doc.text_at(MARGIN_MM, "Date / Time", 9.0, true);
+    doc.text_at(AUDIT_COL_EVENT, "Field", 9.0, true);
+    doc.text_at(AUDIT_COL_ACTOR, "Actor", 9.0, true);
+    doc.advance_line(9.0);
+    doc.rule();
+
+    if field_changes.is_empty() {
+        doc.line("No field changes recorded.", 9.5);
+    }
+    for f in field_changes {
+        doc.ensure_space(5.0);
+        doc.text_at(
+            MARGIN_MM,
+            &f.created_at.format("%d %b %Y, %I:%M %p").to_string(),
+            8.5,
+            false,
+        );
+        doc.text_at(AUDIT_COL_EVENT, &f.field_name, 8.5, false);
+        doc.text_at(
+            AUDIT_COL_ACTOR,
+            f.actor_email.as_deref().unwrap_or("System"),
+            8.5,
+            false,
+        );
+        doc.advance_line(8.5);
+        doc.ensure_space(4.0);
+        doc.text_at(AUDIT_COL_EVENT, &truncate(&f.value, 85), 8.0, false);
+        doc.advance_line(8.0);
+        doc.space(1.5);
+    }
+
     doc.finish()
 }
 

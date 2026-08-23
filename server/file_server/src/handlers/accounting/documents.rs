@@ -145,7 +145,7 @@ async fn build_noc_pdf(conn: &mut sqlx::PgConnection, flat_id: i32) -> Result<Ve
         .map_err(internal_err)?
     {
         return Err(bad_request(
-            "Cannot issue a NOC — this flat has outstanding dues",
+            "Cannot issue a NOC - this flat has outstanding dues",
         ));
     }
 

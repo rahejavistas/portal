@@ -1,12 +1,4 @@
--- Versioned, DB-backed process templates. Each logical template (a "process type",
--- e.g. tenant onboarding) is a `process_templates` row; every save produces a new
--- append-only `process_template_versions` row, each with its own plain integer PK
--- (`version_id`). A process instance is permanently pinned to ONE `version_id` for
--- its whole lifetime (`processes.template_version_id`) — `process_templates` itself
--- is only ever consulted by the admin builder (listing/creating/activating templates)
--- and when starting a brand-new resident process (to resolve which version_id is
--- currently active); nothing else needs to look at it again.
-
+-- Versioned process templates: every save appends a new process_template_versions row.
 CREATE TABLE IF NOT EXISTS process_templates (
     template_id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,

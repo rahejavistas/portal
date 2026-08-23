@@ -171,8 +171,7 @@ pub async fn process_download_url(
 ) -> Result<Json<DocumentUrlResponse>, ApiError> {
     // Read-only oversight (process.view) can download documents attached to any process,
     // same as a reviewer — this handler never writes anything.
-    let can_view_all = user.has_permission(authentication::Permission::ProcessReviewer)
-        || user.has_permission(authentication::Permission::ProcessView);
+    let can_view_all = super::can_view_all_processes(&user);
 
     // Auth check: is the caller allowed to view this process at all?
     let owner_id = {

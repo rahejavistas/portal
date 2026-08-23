@@ -39,7 +39,9 @@ impl From<serde_json::Error> for TemplateStoreError {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FieldDraft {
     pub name: String,
-    pub r#type: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub r#type: crate::FieldType,
     #[serde(default)]
     pub is_optional: bool,
     pub filled_by: String,
@@ -49,6 +51,9 @@ pub struct FieldDraft {
     pub requires_signature: bool,
     #[serde(default)]
     pub required_signs_from_designations: Vec<String>,
+    /// `Enum` fields only — the closed list of valid values.
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -85,6 +90,9 @@ pub struct TemplateDraft {
     pub fields: Option<Vec<FieldDraft>>,
     #[serde(default)]
     pub substeps: Option<Vec<StepDraft>>,
+    /// `None` leaves SLA tracking off for this template.
+    #[serde(default)]
+    pub tat_working_days: Option<i32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -117,12 +125,14 @@ fn assign_field_ids(
                 crate::ProcessFieldTemplate {
                     field_id,
                     name: f.name,
+                    description: f.description,
                     r#type: f.r#type,
                     is_optional: f.is_optional,
                     filled_by: f.filled_by,
                     requirements: f.requirements,
                     requires_signature: f.requires_signature,
                     required_signs_from_designations: f.required_signs_from_designations,
+                    options: f.options,
                 }
             })
             .collect()
@@ -277,6 +287,7 @@ pub async fn save_template_version(
     let description = draft.description.clone();
     let is_optional = draft.is_optional;
     let is_review_required = draft.is_review_required;
+    let tat_working_days = draft.tat_working_days;
     let fields_draft = draft.fields;
     let substeps_draft = draft.substeps;
 
@@ -298,6 +309,7 @@ pub async fn save_template_version(
         is_review_required,
         substeps,
         fields,
+        tat_working_days,
     };
 
     let definition = serde_json::to_value(&template)?;
@@ -356,5 +368,27 @@ pub async fn activate_template_version(
     .execute(&mut *conn)
     .await?;
 
+    Ok(())
+}
+
+/// Clears `active_version_id` — no resident can start a new process against this
+/// template until it's activated again. In-progress processes stay pinned to their
+/// own version and are unaffected.
+pub async fn deactivate_template(
+    conn: &mut sqlx::PgConnection,
+    template_id: i32,
+) -> Result<(), String> {
+    let updated = sqlx::query(
+        "UPDATE process_templates SET active_version_id = NULL, updated_at = NOW() \
+         WHERE template_id = $1",
+    )
+    .bind(template_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if updated.rows_affected() == 0 {
+        return Err(format!("Unknown template_id: {}", template_id));
+    }
     Ok(())
 }

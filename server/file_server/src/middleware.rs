@@ -9,9 +9,11 @@ use axum::{
 };
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
 use jsonwebtoken::{decode, DecodingKey, Validation};
+use opentelemetry::metrics::{Counter, Histogram};
 use opentelemetry::{global, KeyValue};
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
+use std::sync::OnceLock;
 use std::time::Instant;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -46,11 +48,11 @@ pub async fn rate_limit_middleware<B>(
     let ip = if let Some(ConnectInfo(addr)) = connect_info {
         addr.ip()
     } else {
-        // Check X-Forwarded-For header if ConnectInfo is not present (e.g. on AWS Lambda)
+        // Last entry is the trusted edge's own append — a client can spoof earlier ones.
         req.headers()
             .get("x-forwarded-for")
             .and_then(|h| h.to_str().ok())
-            .and_then(|s| s.split(',').next())
+            .and_then(|s| s.split(',').next_back())
             .and_then(|s| s.trim().parse::<IpAddr>().ok())
             .unwrap_or_else(|| IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)))
     };
@@ -139,6 +141,9 @@ pub async fn add_security_headers<B>(req: Request<B>, next: Next<B>) -> Response
     response
 }
 
+static API_REQUESTS_TOTAL: OnceLock<Counter<f64>> = OnceLock::new();
+static API_REQUEST_DURATION_SECONDS: OnceLock<Histogram<f64>> = OnceLock::new();
+
 /// Request logging middleware to print requests and headers.
 pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
     let method = req.method().clone();
@@ -151,9 +156,11 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
     let duration = start.elapsed().as_secs_f64();
     let status = response.status().as_u16().to_string();
 
-    let meter = global::meter("file_server_api");
-
-    let counter = meter.f64_counter("api_requests_total").init();
+    let counter = API_REQUESTS_TOTAL.get_or_init(|| {
+        global::meter("file_server_api")
+            .f64_counter("api_requests_total")
+            .init()
+    });
     counter.add(
         1.0,
         &[
@@ -163,7 +170,11 @@ pub async fn log_request<B>(req: Request<B>, next: Next<B>) -> Response {
         ],
     );
 
-    let histogram = meter.f64_histogram("api_request_duration_seconds").init();
+    let histogram = API_REQUEST_DURATION_SECONDS.get_or_init(|| {
+        global::meter("file_server_api")
+            .f64_histogram("api_request_duration_seconds")
+            .init()
+    });
     histogram.record(
         duration,
         &[

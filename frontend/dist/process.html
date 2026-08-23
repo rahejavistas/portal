@@ -1,14 +1,15 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Processes</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
             box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Google Sans', 'Outfit', sans-serif;
             margin: 0;
             padding: 0;
         }
@@ -49,7 +50,8 @@
         .layout-container {
             display: flex;
             width: 100%;
-            min-height: 100vh;
+            min-height: calc(100vh - 56px);
+            margin-top: 56px;
         }
 
         .bg-shape-top-right {
@@ -73,40 +75,265 @@
             padding: 40px 24px;
             justify-content: space-between;
             position: fixed;
-            height: 100vh;
+            height: calc(100vh - 56px);
             left: 0;
-            top: 0;
+            top: 56px;
             z-index: 150;
             background-color: var(--background);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             will-change: transform;
         }
 
-        .mobile-topbar {
-            display: none;
+        .topbar {
+            display: flex;
             position: fixed;
             top: 0; left: 0; right: 0;
-            height: 48px;
+            height: 56px;
             background-color: var(--background);
             border-bottom: 1px solid var(--border);
             align-items: center;
-            justify-content: space-between;
-            padding: 0 14px;
+            gap: 16px;
+            padding: 0 16px;
             z-index: 200;
         }
-        .mobile-topbar-brand {
-            font-size: 1.5rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
         }
+        .topbar-brand {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
+            color: #000000;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .topbar-search {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            min-width: 0;
+            position: relative;
+        }
+        .topbar-search input {
+            width: 100%;
+            max-width: 420px;
+            padding: 9px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background-color: var(--muted);
+            color: var(--foreground);
+            font-size: 0.875rem;
+        }
+        .topbar-search input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background-color: var(--background);
+        }
+        .topbar-search-results {
+            display: none;
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 420px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            max-height: 320px;
+            overflow-y: auto;
+            z-index: 220;
+        }
+        .topbar-search-results.open { display: block; }
+        .topbar-search-result {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.8125rem;
+            color: var(--foreground);
+        }
+        .topbar-search-result:hover,
+        .topbar-search-result.active {
+            background-color: var(--muted);
+        }
+        .topbar-search-empty {
+            padding: 12px 14px;
+            font-size: 0.8125rem;
+            color: var(--muted-foreground);
+        }
+        .help-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--muted-foreground);
+            font-weight: 700;
+            font-size: 0.8125rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s, color 0.2s;
+            margin-right: 8px;
+        }
+        .help-btn:hover {
+            background-color: var(--muted);
+            color: var(--foreground);
+        }
+        .help-panel-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10020;
+        }
+        .help-panel-overlay.open { display: block; }
+        .help-panel {
+            position: fixed;
+            top: 0; right: 0;
+            width: 420px;
+            max-width: 92vw;
+            height: 100vh;
+            background: var(--background);
+            box-shadow: -8px 0 32px rgba(0, 0, 0, 0.18);
+            z-index: 10021;
+            transform: translateX(100%);
+            visibility: hidden;
+            pointer-events: none;
+            transition: transform 0.25s ease, visibility 0.25s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        .help-panel.open {
+            transform: translateX(0);
+            visibility: visible;
+            pointer-events: auto;
+        }
+        .help-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .help-panel-header h2 { margin: 0; font-size: 1.125rem; }
+        .help-panel-close {
+            background: none;
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            color: var(--muted-foreground);
+            line-height: 1;
+            padding: 4px;
+        }
+        .help-panel-body {
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex: 1;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: var(--foreground);
+        }
+        .help-panel-body h3 { font-size: 0.9375rem; margin: 20px 0 8px; }
+        .help-panel-body h3:first-child { margin-top: 0; }
+        .help-panel-body p { margin: 0 0 10px; }
+        @media (max-width: 700px) {
+            .help-panel { width: 100vw; max-width: 100vw; }
+        }
+        .topbar-profile {
+            position: relative;
+            flex-shrink: 0;
+        }
+        .topbar-profile-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .topbar-profile-btn:hover { background-color: var(--muted); }
+        .topbar-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            color: var(--background);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            flex-shrink: 0;
+        }
+        .topbar-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 190px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            z-index: 210;
+            overflow: hidden;
+        }
+        .topbar-dropdown.open { display: block; }
+        .topbar-dropdown-email {
+            padding: 12px 16px;
+            font-size: 0.75rem;
+            color: var(--muted-foreground);
+            border-bottom: 1px solid var(--border);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .topbar-dropdown .logout-btn {
+            width: 100%;
+            text-align: left;
+            border: none;
+            border-radius: 0;
+            padding: 12px 16px;
+            text-transform: none;
+        }
+        .topbar-dropdown-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: none;
+            border: none;
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--foreground);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .topbar-dropdown-item:hover { background-color: var(--muted); }
         .hamburger-btn {
             background: none;
             border: none;
             cursor: pointer;
             padding: 8px;
-            display: flex;
+            display: none;
             flex-direction: column;
             gap: 5px;
             border-radius: var(--radius-md);
@@ -134,23 +361,6 @@
         .sidebar-overlay.open {
             display: block;
             opacity: 1;
-        }
-        .sidebar-brand h1 {
-            font-size: 2.25rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
-            margin: 0 0 4px 0;
-            line-height: 0.9;
-        }
-        .sidebar-brand p {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--muted-foreground);
-            margin: 0 0 40px 0;
         }
         .nav-menu {
             display: flex;
@@ -506,6 +716,27 @@
             border-radius: var(--radius-md);
             font-size: 0.875rem;
         }
+        .form-group textarea {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            font-family: inherit;
+            resize: vertical;
+        }
+        .form-group input[type="file"] {
+            padding: 6px 0;
+            border: none;
+        }
+        .feedback-box {
+            display: none;
+            padding: 12px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .feedback-box.error { background-color: #FEE2E2; color: #EF4444; }
+        .feedback-box.success { background-color: #ECFDF5; color: #059669; }
 
         .process-workspace {
             display: flex;
@@ -791,20 +1022,20 @@
         }
 
         @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
+            .hamburger-btn { display: flex; }
+            .topbar-brand { font-size: 1.0625rem; }
+            .topbar-search { display: none; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 64px 20px 24px 20px;
+                padding: 24px 20px;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
-            .sidebar-brand p { display: none; }
-            .sidebar-brand h1 { display: none; }
             .workspace {
                 margin-left: 0 !important;
-                padding: 72px 16px 32px 16px;
+                padding: 32px 16px;
                 width: 100%;
                 min-width: 0;
                 max-width: 100vw;
@@ -937,13 +1168,60 @@
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <div class="mobile-topbar" id="mobile-topbar">
-        <span class="mobile-topbar-brand" id="mobile-brand-label">Vistas</span>
-        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
-            <span></span><span></span><span></span>
-        </button>
+    <div class="topbar" id="topbar">
+        <div class="topbar-left">
+            <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+                <span></span><span></span><span></span>
+            </button>
+            <a href="/dashboard" class="topbar-brand" id="topbar-brand-label">Raheja Vistas</a>
+        </div>
+        <div class="topbar-search">
+            <input type="text" id="topbar-search-input" placeholder="Search" maxlength="64" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="topbar-search-results" aria-autocomplete="list">
+            <div class="topbar-search-results" id="topbar-search-results" role="listbox"></div>
+        </div>
+        <button class="help-btn" onclick="openHelpPanel(event)" aria-label="Page help" title="Help">?</button>
+        <div class="topbar-profile" id="topbar-profile">
+            <button class="topbar-profile-btn" id="topbar-profile-btn" onclick="toggleProfileMenu()" aria-haspopup="true" aria-expanded="false" aria-label="Profile menu">
+                <span class="topbar-avatar" id="topbar-avatar">?</span>
+            </button>
+            <div class="topbar-dropdown" id="topbar-dropdown">
+                <div class="topbar-dropdown-email" id="topbar-dropdown-email">Loading...</div>
+                <a href="/dashboard" class="topbar-dropdown-item" id="topbar-my-profile-link" style="text-decoration:none;">My Profile</a>
+                <a href="/admin?tab=society" class="topbar-dropdown-item" id="topbar-society-profile-link" style="display:none; text-decoration:none;">Society Profile</a>
+                <button class="topbar-dropdown-item" onclick="openSupportModal()">Contact Support</button>
+                <button class="logout-btn" id="logout-btn" onclick="localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';">Log Out</button>
+            </div>
+        </div>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="help-panel-overlay" id="help-panel-overlay" onclick="closeHelpPanel()"></div>
+    <aside class="help-panel" id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-panel-title">
+        <div class="help-panel-header">
+            <h2 id="help-panel-title">Page Help</h2>
+            <button class="help-panel-close" onclick="closeHelpPanel()" aria-label="Close help">&times;</button>
+        </div>
+        <div class="help-panel-body" id="help-panel-body"></div>
+    </aside>
+
+    <div id="support-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeSupportModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Contact Support</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:16px;">Support, a suggestion, a feature request, anything.</p>
+            <div class="form-group">
+                <label for="support-message">Message</label>
+                <textarea id="support-message" rows="5" placeholder="What's going on?"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="support-image">Screenshot (Optional)</label>
+                <input type="file" id="support-image" accept="image/png,image/jpeg,image/webp">
+            </div>
+            <div class="feedback-box" id="support-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSupportModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="support-submit-btn" class="btn" onclick="submitSupportTicket()">Send</button>
+            </div>
+        </div>
+    </div>
 
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
@@ -986,15 +1264,17 @@
                     <table>
                         <thead>
                             <tr>
-                                <th>Process Name</th>
-                                <th class="process-table-col-flat">Flat</th>
-                                <th>State</th>
-                                <th class="process-table-col-date">Started On</th>
+                                <th style="cursor:pointer;" onclick="setProcessSort('template_name')">Process Name<span id="sort-arrow-template_name"></span></th>
+                                <th class="process-table-col-flat" style="cursor:pointer;" onclick="setProcessSort('flat_label')">Flat<span id="sort-arrow-flat_label"></span></th>
+                                <th id="col-state" style="cursor:pointer;" onclick="setProcessSort('status')">State<span id="sort-arrow-status"></span></th>
+                                <th class="process-table-col-date" style="cursor:pointer;" onclick="setProcessSort('created_at')">Started On<span id="sort-arrow-created_at"></span></th>
+                                <th id="col-days-running" style="display:none; cursor:pointer;" onclick="setProcessSort('days_running')">Time Running<span id="sort-arrow-days_running"></span></th>
+                                <th id="col-tat-due" style="display:none; cursor:pointer;" onclick="setProcessSort('effective_due_date')">TAT Due<span id="sort-arrow-effective_due_date"></span></th>
                             </tr>
                         </thead>
                         <tbody id="process-rows-target">
                             <tr>
-                                <td colspan="5" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">
+                                <td colspan="6" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">
                                     Loading workflows...
                                 </td>
                             </tr>
@@ -1011,6 +1291,7 @@
                     <h2 id="details-process-title" class="truncate" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
                     <div id="details-process-meta" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                         </div>
+                    <button type="button" id="details-audit-trail-btn" style="display:none; margin-top:12px; height:36px; padding:0 14px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer; font-size:13px; font-weight:600;" onclick="openAuditTrailModal()">View Audit Trail</button>
                 </div>
 
                 <div class="process-workspace">
@@ -1051,6 +1332,24 @@
                     <button type="submit" class="btn" id="start-process-submit-btn">Start</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="audit-trail-modal" onclick="if (event.target === this) closeAuditTrailModal()">
+        <div class="modal-content" style="max-width: 640px; max-height: 82vh; overflow-y: auto;">
+            <button class="close-modal-btn" onclick="closeAuditTrailModal()">&times;</button>
+            <h3 style="margin-top: 0; font-size: 1.375rem; font-weight: 800; margin-bottom: 20px;">Audit Trail</h3>
+
+            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Status Timeline</div>
+            <div id="audit-modal-events" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem; margin-bottom:24px;"></div>
+
+            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Field Changes</div>
+            <div id="audit-modal-fields" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem;"></div>
+
+            <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                <button type="button" class="btn btn-secondary" onclick="closeAuditTrailModal()">Close</button>
+                <button type="button" class="btn" id="audit-pdf-export-btn" onclick="downloadAuditTrailPdf()">Export PDF</button>
+            </div>
         </div>
     </div>
 
@@ -1193,6 +1492,132 @@
             document.body.style.overflow = '';
         }
 
+        function toggleProfileMenu() {
+            const dropdown = document.getElementById('topbar-dropdown');
+            const btn = document.getElementById('topbar-profile-btn');
+            const isOpen = dropdown.classList.toggle('open');
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        document.addEventListener('click', (e) => {
+            const profile = document.getElementById('topbar-profile');
+            if (profile && !profile.contains(e.target)) {
+                document.getElementById('topbar-dropdown').classList.remove('open');
+                document.getElementById('topbar-profile-btn').setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        const HELP_CONTENT_RESIDENT = {
+            title: 'Processes',
+            body: `
+                <h3>Starting one</h3>
+                <p>Click "Start New Process" and pick a process type. It walks you through the required steps and documents.</p>
+                <h3>Uploading & signing</h3>
+                <p>Fill each step's fields and upload requested documents. Some fields need admin review or a signature before the step counts as done.</p>
+                <h3>Still stuck?</h3>
+                <p>Click your avatar in the top right, then "Contact Support".</p>
+            `,
+        };
+        const HELP_CONTENT_ADMIN = {
+            title: 'Process Review',
+            body: `
+                <h3>The queue</h3>
+                <p>Every process step currently waiting on an admin: a review, a signature, or both.</p>
+                <h3>Reviewing a step</h3>
+                <p>Open a process, check what the resident submitted, then approve or send it back with a note. Sending it back reopens that step for the resident.</p>
+                <h3>Still stuck?</h3>
+                <p>Click your avatar in the top right, then "Contact Support".</p>
+            `,
+        };
+
+        function renderHelpContent() {
+            const content = IS_ADMIN_PROCESS_PAGE ? HELP_CONTENT_ADMIN : HELP_CONTENT_RESIDENT;
+            document.getElementById('help-panel-title').innerHTML = content.title;
+            document.getElementById('help-panel-body').innerHTML = content.body;
+        }
+
+        let helpPanelOpener = null;
+        function openHelpPanel(e) {
+            helpPanelOpener = (e && e.currentTarget) || document.activeElement;
+            renderHelpContent();
+            document.getElementById('help-panel').classList.add('open');
+            document.getElementById('help-panel-overlay').classList.add('open');
+            document.querySelector('.help-panel-close').focus();
+        }
+        function closeHelpPanel() {
+            document.getElementById('help-panel').classList.remove('open');
+            document.getElementById('help-panel-overlay').classList.remove('open');
+            if (helpPanelOpener) helpPanelOpener.focus();
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && document.getElementById('help-panel').classList.contains('open')) {
+                closeHelpPanel();
+            }
+        });
+
+        function openSupportModal() {
+            document.getElementById('topbar-dropdown').classList.remove('open');
+            document.getElementById('support-message').value = '';
+            document.getElementById('support-image').value = '';
+            const feedback = document.getElementById('support-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('support-modal').style.display = 'flex';
+        }
+        function closeSupportModal() {
+            document.getElementById('support-modal').style.display = 'none';
+        }
+        async function submitSupportTicket() {
+            const message = document.getElementById('support-message').value.trim();
+            const imageInput = document.getElementById('support-image');
+            const feedback = document.getElementById('support-feedback');
+            const btn = document.getElementById('support-submit-btn');
+
+            if (!message) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Message is required.`;
+                return;
+            }
+            const image = imageInput.files[0];
+            if (image && image.size > 5 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Image must be under 5MB.`;
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('message', message);
+            if (image) formData.append('image', image);
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/support/ticket`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                if (response.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">&#10003;</span> Sent. We usually reply within a day.`;
+                    setTimeout(closeSupportModal, 1200);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(await readErrorMessage(response))}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+            }
+        }
+
         let stagesExpanded = false;
         function toggleStagesSidebar() {
             stagesExpanded = !stagesExpanded;
@@ -1226,10 +1651,17 @@
         const isAdmin = isAdminUser(user);
         const showAdminBranding = IS_ADMIN_PROCESS_PAGE;
         const sidebarBrandContainer = document.getElementById('sidebar-brand-container');
-        const mobileBrandLabel = document.getElementById('mobile-brand-label');
-        if (mobileBrandLabel) mobileBrandLabel.textContent = showAdminBranding ? 'Admin' : 'Vistas';
+        const topbarBrandLabel = document.getElementById('topbar-brand-label');
+        if (topbarBrandLabel) topbarBrandLabel.textContent = 'Raheja Vistas';
+        if (user) {
+            document.getElementById('topbar-avatar').textContent = user.email.charAt(0).toUpperCase();
+            document.getElementById('topbar-dropdown-email').textContent = user.email;
+            if (user.designations && user.designations.includes('super_admin')) {
+                document.getElementById('topbar-society-profile-link').style.display = 'block';
+                document.getElementById('topbar-my-profile-link').style.display = 'none';
+            }
+        }
         if (sidebarBrandContainer) {
-            const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
             if (showAdminBranding) {
                 const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
                 const canViewUsers = !!(user && user.can_view_users);
@@ -1270,9 +1702,6 @@
                 const accountingLink = (user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting))
                     ? `<a href="/admin-accounting" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Accounting &amp; Billing</a>`
                     : '';
-                const societyProfileLink = (user && user.designations && user.designations.includes('super_admin'))
-                    ? `<a href="/admin?tab=society" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Society Profile</a>`
-                    : '';
                 const processesLink = IS_ADMIN_PROCESS_PAGE
                     ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
                     : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
@@ -1294,40 +1723,139 @@
                     </div>`
                     : '';
                 sidebarBrandContainer.innerHTML = `
-                    <h1>Admin</h1>
-                    <p>Raheja Vistas Admin Room</p>
                     <nav class="nav-menu">
                         ${residentsGroup}
                         ${documentsLink}
                         ${processesGroup}
                         ${accountingLink}
-                        ${societyProfileLink}
                         ${myFlatDashboardLink}
-                        <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             } else {
                 const adminDashboardLink = isAdmin
                     ? `<a href="/admin" class="admin-btn" style="text-decoration: none;">Admin Dashboard &rarr;</a>`
                     : '';
-                const residentHasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
-                const billingLink = (user && user.accounting_enabled && residentHasFlat)
-                    ? `<a href="/dashboard?tab=billing" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Billing</a>`
-                    : '';
                 sidebarBrandContainer.innerHTML = `
-                    <h1>Vistas</h1>
-                    <p>Resident Portal</p>
                     <nav class="nav-menu">
-                        <a href="/dashboard" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Profile</a>
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
                         <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
-                        ${billingLink}
                         ${adminDashboardLink}
-                        <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                     </nav>
                 `;
             }
         }
+
+        function searchDestinations() {
+            const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
+            const canViewUsers = !!(user && user.can_view_users);
+            const canManageDocs = !!(user && (user.can_manage_documents || user.can_manage_categories));
+            const canManageProcessTemplates = !!(user && user.can_manage_process_templates);
+            const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
+            const canManageSignerDirectory = !!(user && user.can_review_process);
+            const isSuperAdmin = !!(user && user.designations && user.designations.includes('super_admin'));
+            return [
+                { label: 'Residents', action: () => { window.location.href = '/admin?tab=residents'; }, show: canViewUsers },
+                { label: 'Documents', action: () => { window.location.href = '/admin?tab=documents'; }, show: canManageDocs },
+                { label: 'Roles &amp; Designations', action: () => { window.location.href = '/admin?tab=roles'; }, show: canManageRoles },
+                { label: 'Process Templates', action: () => { window.location.href = '/admin?tab=templates'; }, show: canManageProcessTemplates },
+                { label: 'Signatures', action: () => { window.location.href = '/admin?tab=signatures'; }, show: canSignDocuments || canManageSignerDirectory },
+                { label: 'Society Profile', action: () => { window.location.href = '/admin?tab=society'; }, show: isSuperAdmin },
+                { label: 'Accounting &amp; Billing', action: () => { window.location.href = '/admin-accounting'; }, show: !!(user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) },
+                { label: 'Process Review', action: () => { window.location.href = '/admin-process'; }, show: canAccessAdminProcessPage(user) },
+                { label: 'My Dashboard', action: () => { window.location.href = '/dashboard'; }, show: true },
+            ];
+        }
+
+        function levenshteinDistance(a, b) {
+            const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+            for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+            for (let i = 1; i <= a.length; i++) {
+                for (let j = 1; j <= b.length; j++) {
+                    dp[i][j] = a[i - 1] === b[j - 1]
+                        ? dp[i - 1][j - 1]
+                        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                }
+            }
+            return dp[a.length][b.length];
+        }
+
+        function fuzzyMatchesDestination(label, query) {
+            const l = label.toLowerCase();
+            if (l.includes(query)) return true;
+            if (query.length > 64) return false;
+            return l.split(/[^a-z0-9]+/).some(word => word.length > 2 && levenshteinDistance(word, query) <= 2);
+        }
+
+        let searchMatches = [];
+        let searchActiveIndex = -1;
+
+        function renderSearchResults(query) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            const q = query.trim().toLowerCase();
+            if (!q) {
+                searchResults.classList.remove('open');
+                searchResults.innerHTML = '';
+                searchInput.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            searchMatches = searchDestinations().filter(d => d.show && fuzzyMatchesDestination(d.label, q));
+            searchActiveIndex = -1;
+            searchResults.innerHTML = searchMatches.length === 0
+                ? '<div class="topbar-search-empty">No matches</div>'
+                : searchMatches.map((d, i) => `<button type="button" class="topbar-search-result" id="topbar-search-option-${i}" role="option" aria-selected="false" data-index="${i}">${escapeHtml(d.label)}</button>`).join('');
+            searchResults.classList.add('open');
+            searchInput.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeSearchResults() {
+            document.getElementById('topbar-search-results').classList.remove('open');
+            document.getElementById('topbar-search-input').setAttribute('aria-expanded', 'false');
+        }
+
+        function runSearchMatch(index) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const match = searchMatches[index];
+            if (!match) return;
+            match.action();
+            searchInput.value = '';
+            closeSearchResults();
+            searchInput.blur();
+        }
+
+        (function initTopbarSearch() {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            if (!searchInput) return;
+            searchInput.addEventListener('input', (e) => renderSearchResults(e.target.value));
+            searchInput.addEventListener('keydown', (e) => {
+                const items = Array.from(searchResults.querySelectorAll('.topbar-search-result'));
+                if (e.key === 'ArrowDown' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex + 1) % items.length;
+                } else if (e.key === 'ArrowUp' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex - 1 + items.length) % items.length;
+                } else if (e.key === 'Enter' && searchActiveIndex >= 0) {
+                    e.preventDefault();
+                    runSearchMatch(searchActiveIndex);
+                    return;
+                } else if (e.key === 'Escape') {
+                    closeSearchResults();
+                    return;
+                } else {
+                    return;
+                }
+                items.forEach((el, i) => el.classList.toggle('active', i === searchActiveIndex));
+            });
+            searchResults.addEventListener('click', (e) => {
+                const btn = e.target.closest('.topbar-search-result');
+                if (btn) runSearchMatch(Number(btn.dataset.index));
+            });
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.topbar-search')) closeSearchResults();
+            });
+        })();
 
         function escapeHtml(str) {
             if (!str) return '';
@@ -1382,6 +1910,18 @@
             return formatDateMinimal(isoStr);
         }
 
+        function formatDateOnly(dateStr) {
+            if (!dateStr) return '';
+            try {
+                const [year, month, day] = dateStr.split('-').map(Number);
+                const date = new Date(year, month - 1, day);
+                const monthLabel = date.toLocaleDateString('en-US', { month: 'short' });
+                return `${String(day).padStart(2, '0')} ${monthLabel} ${year}`;
+            } catch (e) {
+                return dateStr;
+            }
+        }
+
         function switchProcessTab(tab) {
             currentTab = tab;
             document.getElementById('tab-btn-admin-review').className = 'subtab-btn' + (tab === 'ADMIN_REVIEW_REQUIRED' ? ' active' : '');
@@ -1396,6 +1936,9 @@
                 if (adminEmailGroup) adminEmailGroup.style.display = 'flex';
                 const adminFlatGroup = document.getElementById('admin-flat-filter-group');
                 if (adminFlatGroup) adminFlatGroup.style.display = 'flex';
+                document.getElementById('col-days-running').style.display = 'table-cell';
+                document.getElementById('col-tat-due').style.display = 'table-cell';
+                document.getElementById('col-state').style.display = 'none';
                 const processSubtabBar = document.getElementById('process-subtab-bar');
                 if (processSubtabBar) processSubtabBar.style.display = 'flex';
                 currentTab = 'ADMIN_REVIEW_REQUIRED';
@@ -1422,7 +1965,7 @@
                     const errText = await readErrorMessage(response);
                     document.getElementById('process-rows-target').innerHTML = `
                         <tr>
-                            <td colspan="5" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
+                            <td colspan="6" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
                                 Failed to load processes: ${escapeHtml(errText)}
                             </td>
                         </tr>
@@ -1432,7 +1975,7 @@
                 console.error(e);
                 document.getElementById('process-rows-target').innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
+                        <td colspan="6" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
                             Network error while loading processes.
                         </td>
                     </tr>
@@ -1444,16 +1987,64 @@
             renderProcessList();
         }
 
+        let processSortField = 'days_running';
+        let processSortDir = 'desc';
+
+        function setProcessSort(field) {
+            if (processSortField === field) {
+                processSortDir = processSortDir === 'desc' ? 'asc' : 'desc';
+            } else {
+                processSortField = field;
+                processSortDir = 'desc';
+            }
+            renderProcessList();
+        }
+
+        function updateSortArrows() {
+            ['template_name', 'flat_label', 'status', 'created_at', 'days_running', 'effective_due_date'].forEach(field => {
+                const el = document.getElementById(`sort-arrow-${field}`);
+                if (!el) return;
+                el.textContent = field === processSortField ? (processSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+            });
+        }
+
+        function tatDot(p) {
+            if (!IS_ADMIN_PROCESS_PAGE) return '';
+            const isDone = p.status === 'COMPLETED' || p.is_completed === true;
+            if (isDone) {
+                return `<span title="Process completed - TAT clock stopped" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
+            }
+            if (!p.effective_due_date) {
+                return `<span title="No TAT tracking for this process" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
+            }
+            const color = p.is_sla_paused ? '#B45309' : '#16A34A';
+            const title = p.is_sla_paused ? 'TAT paused - waiting on resubmission' : 'TAT running';
+            return `<span title="${title}" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:${color}; margin-right:6px; vertical-align:middle;"></span>`;
+        }
+
+        function sortValue(p, field) {
+            if (field === 'created_at') return new Date(p.created_at).getTime();
+            if (field === 'effective_due_date') return p.effective_due_date ? new Date(p.effective_due_date).getTime() : -Infinity;
+            if (field === 'days_running') return p.days_running;
+            return (p[field] || '').toString().toLowerCase();
+        }
+
         function renderProcessList() {
             const tbody = document.getElementById('process-rows-target');
             tbody.innerHTML = '';
+            updateSortArrows();
 
             const searchQuery = document.getElementById('filter-search').value.trim().toLowerCase();
             const flatQuery = document.getElementById('filter-flat').value.trim().toLowerCase();
             const emailQuery = document.getElementById('filter-email').value.trim().toLowerCase();
             const isAdmin = IS_ADMIN_PROCESS_PAGE;
 
-            allProcesses.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            allProcesses.sort((a, b) => {
+                const av = sortValue(a, processSortField);
+                const bv = sortValue(b, processSortField);
+                const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+                return processSortDir === 'desc' ? -cmp : cmp;
+            });
 
             const filtered = allProcesses.filter(p => {
                 const isUserAction = p.status === 'USER_INPUT_REQUIRED';
@@ -1470,7 +2061,8 @@
                     const templateName = p.template_name;
                     const matchesName = templateName.toLowerCase().includes(searchQuery);
                     const matchesId = p.process_id.toLowerCase().includes(searchQuery);
-                    if (!matchesName && !matchesId) {
+                    const matchesRegNo = p.inward_reg_no && p.inward_reg_no.toLowerCase().includes(searchQuery);
+                    if (!matchesName && !matchesId && !matchesRegNo) {
                         return false;
                     }
                 }
@@ -1489,7 +2081,7 @@
             if (filtered.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="5" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">
+                        <td colspan="6" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">
                             No processes found.
                         </td>
                     </tr>
@@ -1508,19 +2100,28 @@
                         <div class="process-title" title="${truncTitle(p.template_name)}" onclick="viewProcessDetail('${p.process_id}')">
                             ${escapeHtml(truncText(p.template_name, 60))}
                         </div>
-                        <div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${isAdmin ? truncTitle(p.user_email) : ''}">
-                            ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(truncText(p.user_email, 30))})` : ''}
+                        <div style="margin-top: 4px;">
+                            <span style="display:inline-flex;align-items:center;background:var(--muted);color:var(--muted-foreground);font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                         </div>
+                        ${isAdmin ? `<div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${truncTitle(p.user_email)}">${escapeHtml(truncText(p.user_email, 30))}</div>` : ''}
                     </td>
                     <td>
                         <strong>${p.flat_label ? escapeHtml(p.flat_label) : 'TBD'}</strong>
                     </td>
-                    <td>
+                    ${IS_ADMIN_PROCESS_PAGE ? '' : `<td>
                         <span style="font-size: 0.8125rem; font-weight: 600; color: var(--primary);">${stateText}</span>
-                    </td>
+                    </td>`}
                     <td>
                         ${formatDate(p.created_at)}
                     </td>
+                    ${IS_ADMIN_PROCESS_PAGE ? `<td>
+                        ${p.days_running}d${p.is_sla_paused ? ' <span style="color:var(--muted-foreground);font-size:0.75rem;">(paused)</span>' : ''}
+                    </td>
+                    <td>
+                        ${p.effective_due_date
+                            ? `${tatDot(p)}<span style="${p.status === 'COMPLETED' ? 'color:var(--muted-foreground);' : (p.is_overdue ? 'color:var(--danger);font-weight:700;' : '')}">${escapeHtml(formatDateOnly(p.effective_due_date))}${p.is_overdue && p.status !== 'COMPLETED' ? ' (Overdue)' : ''}</span>`
+                            : '<span style="color:var(--muted-foreground);">-</span>'}
+                    </td>` : ''}
                 `;
                 tbody.appendChild(tr);
             });
@@ -1690,6 +2291,113 @@
             }
         }
 
+        const AUDIT_EVENT_LABELS = {
+            STEP_COMPLETED: 'Submitted',
+            STEP_APPROVED: 'Approved',
+            STEP_RETURNED: 'Returned',
+            STEP_FLAGGED: 'Flagged for attention',
+        };
+
+        function collectFieldNames(steps, map) {
+            map = map || {};
+            (steps || []).forEach(s => {
+                (s.fields || []).forEach(f => { map[f.template_field_id] = f.name; });
+                collectFieldNames(s.substeps, map);
+            });
+            return map;
+        }
+
+        function collectFieldHistory(steps, list) {
+            list = list || [];
+            (steps || []).forEach(s => {
+                (s.fields || []).forEach(f => {
+                    (f.history || []).forEach(h => list.push(Object.assign({ template_field_id: f.template_field_id }, h)));
+                });
+                collectFieldHistory(s.substeps, list);
+            });
+            return list;
+        }
+
+        function openAuditTrailModal() {
+            const p = currentProcessDetails;
+            if (!p) return;
+            const eventsEl = document.getElementById('audit-modal-events');
+            const fieldsEl = document.getElementById('audit-modal-fields');
+
+            const events = p.audit_log || [];
+            eventsEl.innerHTML = events.length === 0
+                ? '<span style="color:var(--muted-foreground);">No status events yet.</span>'
+                : events.map(e => `
+                    <div style="border-bottom:1px solid var(--border); padding-bottom:8px;">
+                        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;">
+                            <span style="font-weight:700;">${escapeHtml(AUDIT_EVENT_LABELS[e.event_type] || e.event_type)}</span>
+                            <span style="color:var(--muted-foreground); font-size:0.75rem;">${formatDate(e.created_at)}</span>
+                        </div>
+                        <div style="color:var(--muted-foreground); font-size:0.75rem;">${e.actor_email ? escapeHtml(e.actor_email) : 'System'}</div>
+                        ${e.detail ? `<div style="margin-top:2px;">&ldquo;${escapeHtml(e.detail)}&rdquo;</div>` : ''}
+                    </div>
+                `).join('');
+
+            const fieldNames = collectFieldNames(p.steps);
+            const fieldHistory = collectFieldHistory(p.steps).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+            fieldsEl.innerHTML = fieldHistory.length === 0
+                ? '<span style="color:var(--muted-foreground);">No field changes yet.</span>'
+                : fieldHistory.map(h => {
+                    const value = h.document_id
+                        ? (h.document_title ? `Document: ${h.document_title}` : 'Document uploaded')
+                        : (h.text_value === 'true' ? 'Yes' : h.text_value === 'false' ? 'No' : (h.text_value || '(cleared)'));
+                    return `
+                        <div style="border-bottom:1px solid var(--border); padding-bottom:8px;">
+                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;">
+                                <span style="font-weight:700;">${escapeHtml(fieldNames[h.template_field_id] || 'Field')}</span>
+                                <span style="color:var(--muted-foreground); font-size:0.75rem;">${formatDate(h.updated_at)}</span>
+                            </div>
+                            <div style="color:var(--muted-foreground); font-size:0.75rem;">${h.actor_email ? escapeHtml(h.actor_email) : 'System'}</div>
+                            <div style="margin-top:2px;">${escapeHtml(value)}</div>
+                        </div>
+                    `;
+                }).join('');
+
+            document.getElementById('audit-trail-modal').style.display = 'flex';
+        }
+
+        function closeAuditTrailModal() {
+            document.getElementById('audit-trail-modal').style.display = 'none';
+        }
+
+        async function downloadAuditTrailPdf() {
+            const p = currentProcessDetails;
+            if (!p) return;
+            const btn = document.getElementById('audit-pdf-export-btn');
+            btn.disabled = true;
+            btn.textContent = 'Generating...';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/process/audit-log-pdf`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ process_id: p.process_id })
+                });
+                if (!resp.ok) {
+                    showAlert(await readErrorMessage(resp));
+                    return;
+                }
+                const blob = await resp.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `audit-trail-${p.process_id}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (err) {
+                showAlert('Network error while generating PDF.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Export PDF';
+            }
+        }
+
         function renderProcessDetails() {
             if (!currentProcessDetails) return;
 
@@ -1702,11 +2410,21 @@
 
             const statusChipClass = p.is_completed ? 'background:#D1FAE5;color:#065F46;' : 'background:#DBEAFE;color:#1E40AF;';
             const statusText = p.is_completed ? 'Completed' : 'In Progress';
+            const dueChip = IS_ADMIN_PROCESS_PAGE
+                ? (p.effective_due_date
+                    ? `<span style="display:inline-flex;align-items:center;gap:5px;${p.is_sla_paused ? 'background:var(--muted);color:var(--muted-foreground);' : 'background:#FEF3C7;color:#92400E;'}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${tatDot(p)}TAT&nbsp;Due&nbsp;${escapeHtml(formatDateOnly(p.effective_due_date))}${p.is_sla_paused ? '&nbsp;(Paused)' : ''}</span>`
+                    : `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${tatDot(p)}No&nbsp;TAT&nbsp;tracking</span>`)
+                : '';
             metaContainer.innerHTML = `
+                <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                 ${p.flat_label ? `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">Flat&nbsp;${escapeHtml(p.flat_label)}</span>` : ''}
                 <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">ID&nbsp;${p.process_id.substring(0, 8)}</span>
                 <span style="display:inline-flex;align-items:center;gap:5px;${statusChipClass}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${statusText}</span>
+                ${dueChip}
             `;
+
+            const auditTrailBtn = document.getElementById('details-audit-trail-btn');
+            auditTrailBtn.style.display = (p.audit_log && p.audit_log.length > 0) ? 'inline-block' : 'none';
 
             const sidebar = document.getElementById('details-sidebar-target');
             sidebar.innerHTML = '';
@@ -1792,10 +2510,40 @@
             renderProcessDetails();
         }
 
+        function fieldDraftKey(processId, fieldId) {
+            return `process_field_draft:${processId}:${fieldId}`;
+        }
+        function saveFieldDraft(fieldId) {
+            const el = document.getElementById(`text-input-${fieldId}`);
+            if (!el || !currentProcessDetails) return;
+            const key = fieldDraftKey(currentProcessDetails.process_id, fieldId);
+            try {
+                if (el.value) {
+                    localStorage.setItem(key, el.value);
+                } else {
+                    localStorage.removeItem(key);
+                }
+            } catch (e) {}
+        }
+        function loadFieldDraft(processId, fieldId) {
+            try {
+                return localStorage.getItem(fieldDraftKey(processId, fieldId));
+            } catch (e) {
+                return null;
+            }
+        }
+        function clearFieldDraft(processId, fieldId) {
+            try {
+                localStorage.removeItem(fieldDraftKey(processId, fieldId));
+            } catch (e) {}
+        }
+
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
-            
+            let hasEditableTextField = false;
+            let anyRequiredEmpty = false;
+
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
                 const filledBy = f.filled_by;
@@ -1826,7 +2574,7 @@
                             </div>
                         `;
                     } else if ((hasPendingSignature || awaitingSignatureSetup) && !isCurrentAdmin) {
-                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">Submitted — under review</span>`;
+                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">Submitted - under review</span>`;
                     } else if (val.document_id) {
                         inputHtml = `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
@@ -1848,18 +2596,48 @@
                     }
                 } else {
                     if (isReadOnly) {
+                        const displayValue = type === 'bool'
+                            ? (val.text_value === 'true' ? 'Yes' : val.text_value === 'false' ? 'No' : null)
+                            : val.text_value;
                         inputHtml = `
                             <div class="field-value-display" style="background-color: var(--muted); border-color: var(--border); color: var(--foreground); padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; display: block; min-height: 44px; width: 100%; max-width: 500px;">
-                                ${val.text_value ? escapeHtml(val.text_value) : '<em style="color: var(--muted-foreground);">No remarks entered</em>'}
+                                ${displayValue ? escapeHtml(displayValue) : '<em style="color: var(--muted-foreground);">No remarks entered</em>'}
                             </div>
                         `;
                     } else {
-                        inputHtml = `
-                            <div style="display: flex; align-items: center; gap: 12px; max-width: 700px;">
-                                <input type="text" id="text-input-${fieldId}" class="text-value-input" style="flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;" value="${escapeHtml(val.text_value || '')}" placeholder="Enter details...">
-                                <button type="button" class="btn step-save-btn" data-step-id="${stepId}" style="font-size: 0.8125rem; padding: 10px 18px; flex-shrink: 0;" onclick="saveStepFieldsSubmit(${stepId})">Save Remarks</button>
-                            </div>
-                        `;
+                        hasEditableTextField = true;
+                        const restoredVal = val.text_value || loadFieldDraft(currentProcessDetails.process_id, fieldId) || '';
+                        if (!f.is_optional && !restoredVal) anyRequiredEmpty = true;
+                        const inputStyle = 'flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;';
+                        const onInputAttr = `oninput="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
+                        const onChangeAttr = `onchange="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
+                        let fieldInputHtml;
+                        if (type === 'int') {
+                            fieldInputHtml = `<input type="number" step="1" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter a whole number..." ${onInputAttr}>`;
+                        } else if (type === 'decimal') {
+                            fieldInputHtml = `<input type="number" step="any" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter an amount..." ${onInputAttr}>`;
+                        } else if (type === 'date') {
+                            fieldInputHtml = `<input type="date" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" ${onInputAttr}>`;
+                        } else if (type === 'bool') {
+                            fieldInputHtml = `
+                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
+                                    <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
+                                    <option value="true" ${restoredVal === 'true' ? 'selected' : ''}>Yes</option>
+                                    <option value="false" ${restoredVal === 'false' ? 'selected' : ''}>No</option>
+                                </select>
+                            `;
+                        } else if (type === 'enum') {
+                            const opts = f.options || [];
+                            fieldInputHtml = `
+                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
+                                    <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
+                                    ${opts.map(o => `<option value="${escapeHtml(o)}" ${restoredVal === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+                                </select>
+                            `;
+                        } else {
+                            fieldInputHtml = `<input type="text" id="text-input-${fieldId}" class="text-value-input" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter details..." ${onInputAttr}>`;
+                        }
+                        inputHtml = `<div style="max-width: 700px;">${fieldInputHtml}</div>`;
                     }
                 }
 
@@ -1887,7 +2665,7 @@
                         signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#DCFCE7; color:#166534;">&check; Signed: ${parts}</span>`;
                     }
                 } else if (isCurrentAdmin && f.requires_signature && val.document_id && stepIsOpen) {
-                    signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEE2E2; color:#991B1B;">Requires signature — no signers attached yet</span>`;
+                    signatureBadgeHtml = `<span style="display:inline-block; margin-bottom:10px; padding:3px 10px; font-size:11px; font-weight:700; border-radius:999px; background:#FEE2E2; color:#991B1B;">Requires signature - no signers attached yet</span>`;
                 }
 
                 let addSignersHtml = '';
@@ -1904,6 +2682,7 @@
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
+                        ${f.description ? `<p style="font-size: 0.8125rem; color: var(--muted-foreground); margin: 0 0 8px 0;">${escapeHtml(f.description)}</p>` : ''}
                         ${filledByHtml}
                         ${(signatureBadgeHtml || addSignersHtml) ? `<div>${signatureBadgeHtml}${addSignersHtml}</div>` : ''}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
@@ -1912,7 +2691,31 @@
                 `;
             });
 
+            if (hasEditableTextField) {
+                const btnStyle = anyRequiredEmpty
+                    ? 'background:#B91C1C; color:#fff; border-color:#B91C1C;'
+                    : '';
+                html += `
+                    <button type="button" class="btn step-save-btn" id="step-save-btn-${stepId}" data-step-id="${stepId}" style="font-size: 0.875rem; padding: 12px 24px; ${btnStyle}" onclick="saveStepFieldsSubmit(${stepId})">${anyRequiredEmpty ? 'Save (required fields missing)' : 'Save'}</button>
+                `;
+            }
+
             return html;
+        }
+
+        function updateSaveButtonState(stepId) {
+            const step = findStepInTree(currentProcessDetails.steps, stepId);
+            const btn = document.getElementById(`step-save-btn-${stepId}`);
+            if (!step || !btn) return;
+            const anyRequiredEmpty = step.fields.some(f => {
+                if (f.type === 'document' || f.is_optional) return false;
+                const el = document.getElementById(`text-input-${f.template_field_id}`);
+                return el && !el.value.trim();
+            });
+            btn.textContent = anyRequiredEmpty ? 'Save (required fields missing)' : 'Save';
+            btn.style.background = anyRequiredEmpty ? '#B91C1C' : '';
+            btn.style.color = anyRequiredEmpty ? '#fff' : '';
+            btn.style.borderColor = anyRequiredEmpty ? '#B91C1C' : '';
         }
 
         function renderSelectedStepContent() {
@@ -2327,7 +3130,7 @@
                         <span style="font-weight:800; width:18px; font-size:13px; flex-shrink:0;">${i + 1}.</span>
                         <span style="min-width:100px; font-size:16px; font-weight:600; color:var(--foreground); flex-shrink:0;">${escapeHtml(code)}</span>
                         <select style="flex:1; min-width:180px; padding:10px 8px; font-size:14px;" onchange="setAddSignersSlot(${i}, this.value)">
-                            <option value="">— Select signer —</option>
+                            <option value="">- Select signer -</option>
                             ${eligible.map(s => `<option value="${s.signer_id}" ${selectedValue === s.signer_id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
                         </select>
                     </div>
@@ -2606,15 +3409,16 @@
             if (!step) return;
 
             const fieldsPayload = [];
+            const editableTextFieldIds = [];
             let hasError = false;
             const isCurrentAdmin = canReviewProcess(user);
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
                 const isFieldEditable = (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) || (f.filled_by === 'admin' && isCurrentAdmin);
-                
+
                 if (isFieldEditable) {
-                    if (f.type === 'text') {
+                    if (f.type !== 'document') {
                         const inputEl = document.getElementById(`text-input-${fieldId}`);
                         if (inputEl) {
                             const val = inputEl.value.trim();
@@ -2623,11 +3427,25 @@
                                 hasError = true;
                                 return;
                             }
+                            if (val) {
+                                const typeLabels = { int: 'a whole number', decimal: 'a decimal number', date: 'a valid date' };
+                                if (f.type === 'int' && !/^-?\d+$/.test(val)) {
+                                    showAlert(`Field "${f.name}" must be ${typeLabels.int}.`);
+                                    hasError = true;
+                                    return;
+                                }
+                                if (f.type === 'decimal' && isNaN(Number(val))) {
+                                    showAlert(`Field "${f.name}" must be ${typeLabels.decimal}.`);
+                                    hasError = true;
+                                    return;
+                                }
+                            }
                             fieldsPayload.push({
                                 template_field_id: fieldId,
                                 text_value: val ? val : null,
                                 document_id: null
                             });
+                            editableTextFieldIds.push(fieldId);
                         }
                     } else if (f.type === 'document') {
                         const existingDocId = f.value ? f.value.document_id : null;
@@ -2670,6 +3488,7 @@
 
                 if (response.ok) {
                     showAlert('Step inputs saved successfully!');
+                    editableTextFieldIds.forEach(fid => clearFieldDraft(currentProcessDetails.process_id, fid));
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
                     const errText = await readErrorMessage(response);
@@ -2679,7 +3498,8 @@
                 console.error(e);
                 showAlert('Connection error while saving step.');
             } finally {
-                saveBtns.forEach(b => { b.disabled = false; b.textContent = 'Save Remarks'; });
+                saveBtns.forEach(b => { b.disabled = false; });
+                updateSaveButtonState(stepId);
             }
         }
 

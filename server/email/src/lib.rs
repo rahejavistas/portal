@@ -13,6 +13,12 @@ pub struct Cta {
     pub url: String,
 }
 
+pub struct Attachment {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// A structured email: a heading, plain paragraphs, an optional prominent code (for OTP),
 /// and an optional call-to-action button. `send_email` renders this into both a plain-text
 /// and an HTML part so every email shares one simple, mobile-friendly look instead of each
@@ -24,6 +30,7 @@ pub struct EmailMessage {
     pub paragraphs: Vec<String>,
     pub code: Option<String>,
     pub cta: Option<Cta>,
+    pub attachment: Option<Attachment>,
 }
 
 fn html_escape(s: &str) -> String {
@@ -105,18 +112,46 @@ fn render_html(msg: &EmailMessage) -> String {
 }
 
 pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
+    let meter = opentelemetry::global::meter("email_service");
+    let counter = meter.u64_counter("emails_sent_total").init();
+    let record = |status: &'static str| {
+        counter.add(1, &[opentelemetry::KeyValue::new("status", status)]);
+    };
+
     let config = match EmailConfig::from_env() {
         Some(c) => c,
         None => {
-            eprintln!(
-                "SMTP configuration is missing in environment variables. Skipping email send."
-            );
-            return Ok(()); // Fail gracefully as per instructions
+            record("config_missing");
+            return Ok(());
         }
     };
 
     let plain = render_plain_text(msg);
     let html = render_html(msg);
+
+    let alternative = MultiPart::alternative()
+        .singlepart(
+            SinglePart::builder()
+                .header(ContentType::TEXT_PLAIN)
+                .body(plain),
+        )
+        .singlepart(
+            SinglePart::builder()
+                .header(ContentType::TEXT_HTML)
+                .body(html),
+        );
+
+    let body = match &msg.attachment {
+        None => alternative,
+        Some(attachment) => {
+            let content_type = ContentType::parse(&attachment.content_type)
+                .map_err(|e| format!("Invalid attachment content type: {}", e))?;
+            MultiPart::mixed().multipart(alternative).singlepart(
+                lettre::message::Attachment::new(attachment.filename.clone())
+                    .body(attachment.bytes.clone(), content_type),
+            )
+        }
+    };
 
     let email = match Message::builder()
         .from(
@@ -130,22 +165,12 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
             .parse()
             .map_err(|e| format!("Invalid recipient email: {}", e))?)
         .subject(&msg.subject)
-        .multipart(
-            MultiPart::alternative()
-                .singlepart(
-                    SinglePart::builder()
-                        .header(ContentType::TEXT_PLAIN)
-                        .body(plain),
-                )
-                .singlepart(
-                    SinglePart::builder()
-                        .header(ContentType::TEXT_HTML)
-                        .body(html),
-                ),
-        ) {
+        .multipart(body)
+    {
         Ok(email) => email,
         Err(e) => {
             eprintln!("Failed to build email message: {}", e);
+            record("build_failed");
             return Ok(());
         }
     };
@@ -160,9 +185,6 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
             .credentials(creds)
             .build();
 
-    let meter = opentelemetry::global::meter("email_service");
-    let counter = meter.u64_counter("emails_sent_total").init();
-
     // Bounded so a stuck SMTP connection can never hang the caller's request (and burn
     // Lambda time) indefinitely — applies to every email sent through this one function.
     const SEND_TIMEOUT_SECONDS: u64 = 10;
@@ -173,19 +195,17 @@ pub async fn send_email(msg: &EmailMessage) -> Result<(), String> {
     .await;
 
     match send_result {
-        Ok(Ok(_)) => {
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "success")]);
-        }
+        Ok(Ok(_)) => record("success"),
         Ok(Err(e)) => {
             eprintln!("Could not send email to {}: {:?}", msg.to, e);
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "error")]);
+            record("error");
         }
         Err(_) => {
             eprintln!(
                 "Email send to {} timed out after {SEND_TIMEOUT_SECONDS}s",
                 msg.to
             );
-            counter.add(1, &[opentelemetry::KeyValue::new("status", "timeout")]);
+            record("timeout");
         }
     }
 

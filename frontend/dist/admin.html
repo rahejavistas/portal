@@ -1,10 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Admin Suite</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         document.documentElement.setAttribute(
             'data-tab',
@@ -14,7 +15,7 @@
     <style>
         * {
             box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Google Sans', 'Outfit', sans-serif;
             margin: 0;
             padding: 0;
         }
@@ -60,7 +61,8 @@
         .layout-container {
             display: flex;
             width: 100%;
-            min-height: 100vh;
+            min-height: calc(100vh - 56px);
+            margin-top: 56px;
         }
 
         .bg-shape-top-right {
@@ -84,40 +86,268 @@
             padding: 40px 24px;
             justify-content: space-between;
             position: fixed;
-            height: 100vh;
+            height: calc(100vh - 56px);
             left: 0;
-            top: 0;
+            top: 56px;
             z-index: 150;
             background-color: var(--background);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             will-change: transform;
         }
 
-        .mobile-topbar {
-            display: none;
+        .topbar {
+            display: flex;
             position: fixed;
             top: 0; left: 0; right: 0;
             height: 56px;
             background-color: var(--background);
             border-bottom: 1px solid var(--border);
             align-items: center;
-            justify-content: space-between;
+            gap: 16px;
             padding: 0 16px;
             z-index: 200;
         }
-        .mobile-topbar-brand {
-            font-size: 1.5rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
         }
+        .topbar-brand {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
+            color: #000000;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .topbar-search {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            min-width: 0;
+            position: relative;
+        }
+        .topbar-search input {
+            width: 100%;
+            max-width: 420px;
+            padding: 9px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background-color: var(--muted);
+            color: var(--foreground);
+            font-size: 0.875rem;
+        }
+        .topbar-search input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background-color: var(--background);
+        }
+        .topbar-search-results {
+            display: none;
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 420px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            max-height: 320px;
+            overflow-y: auto;
+            z-index: 220;
+        }
+        .topbar-search-results.open { display: block; }
+        .topbar-search-result {
+            display: block;
+            width: 100%;
+            text-align: left;
+            padding: 10px 14px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 0.8125rem;
+            color: var(--foreground);
+        }
+        .topbar-search-result:hover,
+        .topbar-search-result.active {
+            background-color: var(--muted);
+        }
+        .topbar-search-empty {
+            padding: 12px 14px;
+            font-size: 0.8125rem;
+            color: var(--muted-foreground);
+        }
+        .topbar-profile {
+            position: relative;
+            flex-shrink: 0;
+            margin-left: auto;
+        }
+        .topbar-profile-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .topbar-profile-btn:hover { background-color: var(--muted); }
+        .topbar-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            color: var(--background);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            flex-shrink: 0;
+        }
+        .help-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--muted-foreground);
+            font-weight: 700;
+            font-size: 0.8125rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s, color 0.2s;
+            margin-right: 8px;
+        }
+        .help-btn:hover {
+            background-color: var(--muted);
+            color: var(--foreground);
+        }
+        .help-panel-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10020;
+        }
+        .help-panel-overlay.open { display: block; }
+        .help-panel {
+            position: fixed;
+            top: 0; right: 0;
+            width: 420px;
+            max-width: 92vw;
+            height: 100vh;
+            background: var(--background);
+            box-shadow: -8px 0 32px rgba(0, 0, 0, 0.18);
+            z-index: 10021;
+            transform: translateX(100%);
+            visibility: hidden;
+            pointer-events: none;
+            transition: transform 0.25s ease, visibility 0.25s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        .help-panel.open {
+            transform: translateX(0);
+            visibility: visible;
+            pointer-events: auto;
+        }
+        .help-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .help-panel-header h2 { margin: 0; font-size: 1.125rem; }
+        .help-panel-close {
+            background: none;
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            color: var(--muted-foreground);
+            line-height: 1;
+            padding: 4px;
+        }
+        .help-panel-body {
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex: 1;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: var(--foreground);
+        }
+        .help-panel-body h3 { font-size: 0.9375rem; margin: 20px 0 8px; }
+        .help-panel-body h3:first-child { margin-top: 0; }
+        .help-panel-body p { margin: 0 0 10px; }
+        .help-panel-body ul { margin: 0 0 10px; padding-left: 20px; }
+        .help-panel-body li { margin-bottom: 6px; }
+        @media (max-width: 700px) {
+            .help-panel { width: 100vw; max-width: 100vw; }
+        }
+        .topbar-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 190px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            z-index: 210;
+            overflow: hidden;
+        }
+        .topbar-dropdown.open { display: block; }
+        .topbar-dropdown-email {
+            padding: 12px 16px;
+            font-size: 0.75rem;
+            color: var(--muted-foreground);
+            border-bottom: 1px solid var(--border);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .topbar-dropdown .logout-btn {
+            width: 100%;
+            text-align: left;
+            border: none;
+            border-radius: 0;
+            padding: 12px 16px;
+            text-transform: none;
+        }
+        .topbar-dropdown-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: none;
+            border: none;
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--foreground);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .topbar-dropdown-item:hover { background-color: var(--muted); }
         .hamburger-btn {
             background: none;
             border: none;
             cursor: pointer;
             padding: 8px;
-            display: flex;
+            display: none;
             flex-direction: column;
             gap: 5px;
             border-radius: var(--radius-md);
@@ -145,23 +375,6 @@
         .sidebar-overlay.open {
             display: block;
             opacity: 1;
-        }
-        .sidebar-brand h1 {
-            font-size: 2.25rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
-            margin: 0 0 4px 0;
-            line-height: 0.9;
-        }
-        .sidebar-brand p {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--muted-foreground);
-            margin: 0 0 40px 0;
         }
         .nav-menu {
             display: flex;
@@ -676,16 +889,17 @@
         }
 
         @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
+            .hamburger-btn { display: flex; }
+            .topbar-brand { font-size: 1.0625rem; }
+            .topbar-search { display: none; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 64px 20px 24px 20px;
+                padding: 24px 20px;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
-            .sidebar-brand p { display: none; }
             .workspace {
                 margin-left: 0 !important;
                 padding: 72px 16px 32px 16px;
@@ -803,20 +1017,43 @@
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <div class="mobile-topbar" id="mobile-topbar">
-        <span class="mobile-topbar-brand">Admin</span>
-        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
-            <span></span><span></span><span></span>
-        </button>
+    <div class="topbar" id="topbar">
+        <div class="topbar-left">
+            <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+                <span></span><span></span><span></span>
+            </button>
+            <a href="/admin" class="topbar-brand">Raheja Vistas</a>
+        </div>
+        <div class="topbar-search">
+            <input type="text" id="topbar-search-input" placeholder="Search" maxlength="64" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="topbar-search-results" aria-autocomplete="list">
+            <div class="topbar-search-results" id="topbar-search-results" role="listbox"></div>
+        </div>
+        <button class="help-btn" onclick="openHelpPanel(event)" aria-label="Page help" title="Help">?</button>
+        <div class="topbar-profile" id="topbar-profile">
+            <button class="topbar-profile-btn" id="topbar-profile-btn" onclick="toggleProfileMenu()" aria-haspopup="true" aria-expanded="false" aria-label="Profile menu">
+                <span class="topbar-avatar" id="topbar-avatar">?</span>
+            </button>
+            <div class="topbar-dropdown" id="topbar-dropdown">
+                <div class="topbar-dropdown-email" id="topbar-dropdown-email">Loading...</div>
+                <button class="topbar-dropdown-item" id="topbar-society-profile-btn" style="display:none;" onclick="openSocietyProfileFromMenu()">Society Profile</button>
+                <button class="topbar-dropdown-item" onclick="openSupportModal()">Contact Support</button>
+                <button class="logout-btn" id="logout-btn">Log Out</button>
+            </div>
+        </div>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="help-panel-overlay" id="help-panel-overlay" onclick="closeHelpPanel()"></div>
+    <aside class="help-panel" id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-panel-title">
+        <div class="help-panel-header">
+            <h2 id="help-panel-title">Page Help</h2>
+            <button class="help-panel-close" onclick="closeHelpPanel()" aria-label="Close help">&times;</button>
+        </div>
+        <div class="help-panel-body" id="help-panel-body"></div>
+    </aside>
 
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
-                <h1>Admin</h1>
-                <p>Raheja Vistas Admin Room</p>
-                
                 <nav class="nav-menu">
                     <div class="nav-group collapsed" id="residents-nav-group" style="display:none;">
                         <button class="nav-item nav-group-toggle" id="residents-nav-toggle" onclick="toggleResidentsNav()">
@@ -855,13 +1092,9 @@
                     <a href="/admin-accounting" class="nav-item" id="suite-btn-accounting" style="display:none; text-decoration: none;" onclick="closeSidebar()">
                         Accounting &amp; Billing
                     </a>
-                    <button class="nav-item" id="suite-btn-society" style="display:none;" onclick="switchSuite('society'); closeSidebar()">
-                        Society Profile
-                    </button>
                     <a href="/dashboard" class="admin-btn" id="my-flat-dashboard-link" style="display:none;">
                         My Flat Dashboard &rarr;
                     </a>
-                    <button class="logout-btn" id="logout-btn">Log Out</button>
                 </nav>
             </div>
         </aside>
@@ -884,11 +1117,16 @@
                                 </div>
                                 <div class="form-group">
                                     <label for="wing">Wing</label>
-                                    <input type="text" id="wing" required placeholder="e.g. A" maxlength="2">
+                                    <select id="wing" required onchange="onResidentFormWingChange()">
+                                        <option value="">Select wing...</option>
+                                    </select>
+                                    <p id="no-wings-hint" style="display:none; font-size:13px; margin-top:8px;">No wings set up yet. <a onclick="openFlatSetupFromResidentForm();" style="color:var(--primary); font-weight:600; cursor:pointer;">Add wings and flats</a></p>
                                 </div>
                                 <div class="form-group">
                                     <label for="flat">Flat</label>
-                                    <input type="text" id="flat" required placeholder="e.g. 101">
+                                    <select id="flat" required disabled>
+                                        <option value="">Select wing first...</option>
+                                    </select>
                                 </div>
                                 <button type="submit" class="submit-btn">Add Resident</button>
                             </form>
@@ -1003,11 +1241,15 @@
                                 <div class="form-row-2">
                                     <div class="form-group">
                                         <label for="doc-flat-wing">Wing</label>
-                                        <input type="text" id="doc-flat-wing" placeholder="e.g. A" maxlength="2" oninput="scheduleFlatOwnerLookup()">
+                                        <select id="doc-flat-wing" onchange="onDocFormWingChange()">
+                                            <option value="">Select wing...</option>
+                                        </select>
                                     </div>
                                     <div class="form-group">
                                         <label for="doc-flat-number">Flat Number</label>
-                                        <input type="text" id="doc-flat-number" placeholder="e.g. 301" oninput="scheduleFlatOwnerLookup()">
+                                        <select id="doc-flat-number" disabled onchange="scheduleFlatOwnerLookup()">
+                                            <option value="">Select wing first...</option>
+                                        </select>
                                     </div>
                                 </div>
                                 <div id="flat-owner-preview" style="font-size:12.5px; color:var(--muted-foreground); margin-top:-8px; margin-bottom:15px; min-height:16px;"></div>
@@ -1220,6 +1462,12 @@
             </section>
             <section class="suite-panel" id="suite-society">
                 <h2>Society Profile</h2>
+                <div class="subtab-bar">
+                    <button class="subtab-btn active" id="subtab-btn-society-identity" onclick="switchSubtab('society-identity')">Identity</button>
+                    <button class="subtab-btn" id="subtab-btn-society-flats" onclick="switchSubtab('society-flats')">Flat Setup</button>
+                    <button class="subtab-btn" id="subtab-btn-society-holidays" onclick="switchSubtab('society-holidays')">Public Holidays</button>
+                </div>
+                <div class="subtab-panel active" id="subtab-panel-society-identity">
                 <div class="card">
                     <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Identity</h3>
                     <div id="society-profile-summary" class="empty-state">Loading…</div>
@@ -1250,6 +1498,34 @@
                         </div>
                     </div>
                 </div>
+                </div>
+                <div class="subtab-panel" id="subtab-panel-society-flats">
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Flat Setup</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Pick a wing, add floors, and add flats to each floor. Tap a flat to mark it a fire flat.</p>
+                    <div class="feedback-box" id="fp-feedback" style="margin-top:0; margin-bottom:16px;"></div>
+                    <div id="fp-wing-tabs" style="display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:20px;"></div>
+                    <div id="fp-wing-content"></div>
+                </div>
+                </div>
+                <div class="subtab-panel" id="subtab-panel-society-holidays">
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Public Holidays</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Excluded from TAT working-day calculations, alongside weekends.</p>
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Date</label><input type="date" id="holiday-date"></div>
+                        <div class="form-group"><label>Description</label><input id="holiday-description" placeholder="Republic Day"></div>
+                    </div>
+                    <button type="button" class="submit-btn" style="width:auto;" onclick="addPublicHoliday()">Add Holiday</button>
+                    <div class="table-container" style="margin-top:16px;">
+                        <table>
+                            <tbody id="holiday-list-rows-target">
+                                <tr><td style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                </div>
             </section>
         </main>
     </div>
@@ -1276,6 +1552,7 @@
         <div class="builder-topbar">
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <input type="text" id="builder-template-name" placeholder="Template name (e.g. Resident Onboarding)" style="font-size:18px; font-weight:800; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); flex:1; min-width:180px;">
+                <input type="number" id="builder-tat-days" min="1" placeholder="TAT (working days)" title="Working days to complete once fully submitted. Leave blank for no SLA tracking." style="font-size:13px; font-weight:600; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); width:170px;" onchange="builderState.tat_working_days = this.value ? parseInt(this.value, 10) : null;">
                 <span id="builder-version-badge" style="font-size:12px; font-weight:700; color:var(--muted-foreground);"></span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -1294,7 +1571,7 @@
         <div class="builder-topbar">
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <span id="preview-template-name" style="font-size:18px; font-weight:800;"></span>
-                <span style="font-size:12px; font-weight:700; color:var(--muted-foreground);">Preview — how this looks to a resident</span>
+                <span style="font-size:12px; font-weight:700; color:var(--muted-foreground);">Preview - how this looks to a resident</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <button onclick="closeTemplatePreview()" style="height:38px; padding:0 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
@@ -1310,8 +1587,26 @@
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(560px, 92vw); max-height:80vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="template-versions-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;"></h3>
             <div id="template-versions-modal-rows"></div>
-            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px;">
+                <button type="button" id="template-versions-deactivate-btn" style="display:none; padding:10px 16px; background:transparent; border:1px solid #B91C1C; color:#B91C1C; border-radius:6px; cursor:pointer;" onclick="deactivateTemplate()">Deactivate - hide from residents</button>
                 <button onclick="closeTemplateVersionsModal()" style="padding:10px 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="new-wing-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; padding:16px; box-sizing:border-box;" onclick="if (event.target === this) closeNewWingModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(420px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">New Wing</h3>
+            <div class="form-group"><label>Wing Letter(s)</label><input id="new-wing-letters" placeholder="e.g. B" maxlength="3" style="text-transform:uppercase;"></div>
+            <div class="form-group"><label>Clone flat structure from</label>
+                <select id="new-wing-clone-source">
+                    <option value="">Start empty</option>
+                </select>
+            </div>
+            <div class="feedback-box" id="new-wing-feedback"></div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button type="button" onclick="closeNewWingModal()" style="padding:14px; font-weight:700; font-size:0.8125rem; text-transform:uppercase; letter-spacing:0.05em; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:var(--radius-md); cursor:pointer;">Cancel</button>
+                <button type="button" class="submit-btn" style="width:auto; margin-top:0;" onclick="submitNewWing()">Create Wing</button>
             </div>
         </div>
     </div>
@@ -1354,8 +1649,8 @@
         </div>
     </div>
 
-    <div id="manage-category-access-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
-        <div style="background:var(--background); padding:28px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+    <div id="manage-category-access-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; padding:16px; box-sizing:border-box;">
+        <div style="background:var(--background); padding:28px; border-radius:12px; width:min(480px, 92vw); max-height:90vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="manage-category-access-title" style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px; word-break:break-word;">Category Access</h3>
             <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Read lets this designation view documents in a category. Manage adds upload and delete.</p>
 
@@ -1443,6 +1738,26 @@
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
                 <button onclick="closeConfirmModal(false)" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
                 <button id="confirm-modal-ok-btn" onclick="closeConfirmModal(true)" class="del-action-btn">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="support-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeSupportModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Contact Support</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:16px;">Support, a suggestion, a feature request, anything.</p>
+            <div class="form-group">
+                <label for="support-message">Message</label>
+                <textarea id="support-message" rows="5" placeholder="What's going on?"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="support-image">Screenshot (Optional)</label>
+                <input type="file" id="support-image" accept="image/png,image/jpeg,image/webp">
+            </div>
+            <div class="feedback-box" id="support-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSupportModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="support-submit-btn" class="submit-btn" style="width:auto; margin:0;" onclick="submitSupportTicket()">Send</button>
             </div>
         </div>
     </div>
@@ -1551,6 +1866,298 @@
             document.body.style.overflow = '';
         }
 
+        function toggleProfileMenu() {
+            const dropdown = document.getElementById('topbar-dropdown');
+            const btn = document.getElementById('topbar-profile-btn');
+            const isOpen = dropdown.classList.toggle('open');
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        document.addEventListener('click', (e) => {
+            const profile = document.getElementById('topbar-profile');
+            if (profile && !profile.contains(e.target)) {
+                document.getElementById('topbar-dropdown').classList.remove('open');
+                document.getElementById('topbar-profile-btn').setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        function openSocietyProfileFromMenu() {
+            switchSuite('society');
+            closeSidebar();
+            document.getElementById('topbar-dropdown').classList.remove('open');
+            document.getElementById('topbar-profile-btn').setAttribute('aria-expanded', 'false');
+        }
+
+        const HELP_CONTENT = {
+            residents: {
+                title: 'Residents',
+                body: `
+                    <h3>Adding one person</h3>
+                    <p>Enter their email, wing, and flat, then click "Add Resident". They get an email with a link to set their password and log in.</p>
+                    <h3>Adding many at once</h3>
+                    <p>Upload a CSV with three columns: Email, Wing, Flat. Rows that fail show the reason next to them, so fix just those and upload again.</p>
+                    <h3>The registry</h3>
+                    <p>Everyone already added, searchable by email or flat.</p>
+                    <h3>One thing to know</h3>
+                    <p>A new resident only sees their own flat's documents and bills. To give someone more access, assign them a designation under Roles &amp; Designations.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            roles: {
+                title: 'Roles &amp; Designations',
+                body: `
+                    <h3>Creating a role</h3>
+                    <p>In "Manage Designations", type a name like "Treasurer" and click "Add New". Then tick what that role is allowed to do and click "Save Changes". Nothing applies until you save.</p>
+                    <h3>Giving someone a role</h3>
+                    <p>In "User Designations", find the person and assign them the role. Removing it works the same way.</p>
+                    <h3>Adding staff</h3>
+                    <p>"Add Staff" is for people who need access but don't own or live in a flat, like an accountant or a manager.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            documents: {
+                title: 'Documents',
+                body: `
+                    <h3>Explorer</h3>
+                    <p>Every document uploaded so far. Switch between active and deleted files using the chips at the top.</p>
+                    <h3>Adding a document</h3>
+                    <p>Title, file, and category are required. If you pick a flat-specific category, choose the flat too and only that flat's residents will see it.</p>
+                    <h3>Categories</h3>
+                    <p>Create the categories that appear in the upload form, and control which roles can see or manage each one.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            templates: {
+                title: 'Process Templates',
+                body: `
+                    <h3>What a template is</h3>
+                    <p>A reusable workflow: the steps, who fills what, who reviews, and who signs, in what order. Residents start processes from these.</p>
+                    <h3>Building one</h3>
+                    <p>Click "+ New Template", add your steps and fields, and save. Saving creates a draft version. Residents can only start the version you've activated.</p>
+                    <h3>Changing one later</h3>
+                    <p>Edits become a new version. Processes already running keep following the version they started on.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            signatures: {
+                title: 'Signatures',
+                body: `
+                    <h3>Signing queue</h3>
+                    <p>Documents waiting on your signature right now, from any process. Open one to review and sign.</p>
+                    <h3>Signer directory</h3>
+                    <p>Everyone who can be attached as a signer. If someone's missing, their role likely needs signing permission first, set under Roles &amp; Designations.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            society: {
+                title: 'Society Profile',
+                body: `
+                    <h3>What this is for</h3>
+                    <p>Your society's name, registration number, address, and contact details. This is what appears on generated invoice and receipt PDFs.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+        };
+
+        function renderHelpContent() {
+            const tab = document.documentElement.getAttribute('data-tab') || 'residents';
+            const content = HELP_CONTENT[tab] || HELP_CONTENT.residents;
+            document.getElementById('help-panel-title').innerHTML = content.title;
+            document.getElementById('help-panel-body').innerHTML = content.body;
+        }
+
+        let helpPanelOpener = null;
+        function openHelpPanel(e) {
+            helpPanelOpener = (e && e.currentTarget) || document.activeElement;
+            renderHelpContent();
+            document.getElementById('help-panel').classList.add('open');
+            document.getElementById('help-panel-overlay').classList.add('open');
+            document.querySelector('.help-panel-close').focus();
+        }
+        function closeHelpPanel() {
+            document.getElementById('help-panel').classList.remove('open');
+            document.getElementById('help-panel-overlay').classList.remove('open');
+            if (helpPanelOpener) helpPanelOpener.focus();
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && document.getElementById('help-panel').classList.contains('open')) {
+                closeHelpPanel();
+            }
+        });
+
+        function openSupportModal() {
+            document.getElementById('topbar-dropdown').classList.remove('open');
+            document.getElementById('support-message').value = '';
+            document.getElementById('support-image').value = '';
+            const feedback = document.getElementById('support-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('support-modal').style.display = 'flex';
+        }
+        function closeSupportModal() {
+            document.getElementById('support-modal').style.display = 'none';
+        }
+        async function submitSupportTicket() {
+            const message = document.getElementById('support-message').value.trim();
+            const imageInput = document.getElementById('support-image');
+            const feedback = document.getElementById('support-feedback');
+            const btn = document.getElementById('support-submit-btn');
+
+            if (!message) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Message is required.`;
+                return;
+            }
+            const image = imageInput.files[0];
+            if (image && image.size > 5 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Image must be under 5MB.`;
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('message', message);
+            if (image) formData.append('image', image);
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/support/ticket`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                if (response.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">&#10003;</span> Sent. We usually reply within a day.`;
+                    setTimeout(closeSupportModal, 1200);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(await readErrorMessage(response))}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+            }
+        }
+
+        function searchDestinations() {
+            return [
+                { label: 'Residents', action: () => switchSuite('residents'), show: canViewUsers },
+                { label: 'Documents', action: () => switchSuite('documents'), show: canManageDocuments || canManageCategories },
+                { label: 'Roles &amp; Designations', action: () => switchSuite('roles'), show: canManageRoles || canViewRoles || canManageDesignations },
+                { label: 'Process Templates', action: () => switchSuite('templates'), show: canManageProcessTemplates },
+                { label: 'Signatures', action: () => switchSuite('signatures'), show: canSignDocuments || canManageSignerDirectory },
+                { label: 'Society Profile', action: () => switchSuite('society'), show: !!(user && user.designations && user.designations.includes('super_admin')) },
+                { label: 'Accounting & Billing', action: () => { window.location.href = '/admin-accounting'; }, show: !!(user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) },
+                { label: 'Processes', action: () => { window.location.href = '/process'; }, show: true },
+            ];
+        }
+
+        function levenshteinDistance(a, b) {
+            const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+            for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+            for (let i = 1; i <= a.length; i++) {
+                for (let j = 1; j <= b.length; j++) {
+                    dp[i][j] = a[i - 1] === b[j - 1]
+                        ? dp[i - 1][j - 1]
+                        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                }
+            }
+            return dp[a.length][b.length];
+        }
+
+        function fuzzyMatchesDestination(label, query) {
+            const l = label.toLowerCase();
+            if (l.includes(query)) return true;
+            if (query.length > 64) return false;
+            return l.split(/[^a-z0-9]+/).some(word => word.length > 2 && levenshteinDistance(word, query) <= 2);
+        }
+
+        let searchMatches = [];
+        let searchActiveIndex = -1;
+
+        function renderSearchResults(query) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            const q = query.trim().toLowerCase();
+            if (!q) {
+                searchResults.classList.remove('open');
+                searchResults.innerHTML = '';
+                searchInput.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            searchMatches = searchDestinations().filter(d => d.show && fuzzyMatchesDestination(d.label, q));
+            searchActiveIndex = -1;
+            searchResults.innerHTML = searchMatches.length === 0
+                ? '<div class="topbar-search-empty">No matches</div>'
+                : searchMatches.map((d, i) => `<button type="button" class="topbar-search-result" id="topbar-search-option-${i}" role="option" aria-selected="false" data-index="${i}">${escapeHtml(d.label)}</button>`).join('');
+            searchResults.classList.add('open');
+            searchInput.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeSearchResults() {
+            document.getElementById('topbar-search-results').classList.remove('open');
+            document.getElementById('topbar-search-input').setAttribute('aria-expanded', 'false');
+        }
+
+        function runSearchMatch(index) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const match = searchMatches[index];
+            if (!match) return;
+            match.action();
+            searchInput.value = '';
+            closeSearchResults();
+            searchInput.blur();
+        }
+
+        (function initTopbarSearch() {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            if (!searchInput) return;
+            searchInput.addEventListener('input', (e) => renderSearchResults(e.target.value));
+            searchInput.addEventListener('keydown', (e) => {
+                const items = Array.from(searchResults.querySelectorAll('.topbar-search-result'));
+                if (e.key === 'ArrowDown' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex + 1) % items.length;
+                } else if (e.key === 'ArrowUp' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex - 1 + items.length) % items.length;
+                } else if (e.key === 'Enter' && searchActiveIndex >= 0) {
+                    e.preventDefault();
+                    runSearchMatch(searchActiveIndex);
+                    return;
+                } else if (e.key === 'Escape') {
+                    closeSearchResults();
+                    return;
+                } else {
+                    return;
+                }
+                items.forEach((el, i) => el.classList.toggle('active', i === searchActiveIndex));
+            });
+            searchResults.addEventListener('click', (e) => {
+                const btn = e.target.closest('.topbar-search-result');
+                if (btn) runSearchMatch(Number(btn.dataset.index));
+            });
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.topbar-search')) closeSearchResults();
+            });
+        })();
+
         function escapeHtml(unsafe) {
             if (!unsafe) return '';
             return unsafe
@@ -1615,6 +2222,10 @@
         const token = localStorage.getItem('vfs_token');
         const userStr = localStorage.getItem('vfs_user');
         const user = userStr ? JSON.parse(userStr) : null;
+        if (user) {
+            document.getElementById('topbar-avatar').textContent = user.email.charAt(0).toUpperCase();
+            document.getElementById('topbar-dropdown-email').textContent = user.email;
+        }
         const canManageRoles = !!(user && user.can_manage_roles);
         const canManageDesignations = !!(user && user.can_manage_designations);
         const canManageCategories = !!(user && user.can_manage_categories);
@@ -1632,7 +2243,7 @@
             if (accountingBtn) accountingBtn.style.display = 'block';
         }
         if (user && user.designations && user.designations.includes('super_admin')) {
-            const societyBtn = document.getElementById('suite-btn-society');
+            const societyBtn = document.getElementById('topbar-society-profile-btn');
             if (societyBtn) societyBtn.style.display = 'block';
         }
         const canSignDocuments = !!(user && user.designations && user.designations.some(d => d !== 'super_admin'));
@@ -1765,6 +2376,48 @@
             select.blur();
         }
 
+        let docFormFlatsCache = [];
+
+        async function loadDocFormFlats() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                docFormFlatsCache = resp.ok ? await resp.json() : [];
+            } catch (err) {
+                docFormFlatsCache = [];
+            }
+            const wingSelect = document.getElementById('doc-flat-wing');
+            const wings = [...new Set(docFormFlatsCache.filter(f => !f.is_fire_flat).map(f => f.wing))].sort();
+            const currentWing = wingSelect.value;
+            wingSelect.innerHTML = '<option value="">Select wing...</option>' +
+                wings.map(w => `<option value="${escapeHtml(w)}">Wing ${escapeHtml(w)}</option>`).join('');
+            wingSelect.value = currentWing;
+            onDocFormWingChange();
+        }
+
+        function onDocFormWingChange() {
+            const wing = document.getElementById('doc-flat-wing').value;
+            const flatSelect = document.getElementById('doc-flat-number');
+            if (!wing) {
+                flatSelect.innerHTML = '<option value="">Select wing first...</option>';
+                flatSelect.disabled = true;
+                document.getElementById('flat-owner-preview').textContent = '';
+                return;
+            }
+            const flats = docFormFlatsCache
+                .filter(f => f.wing === wing && !f.is_fire_flat)
+                .sort((a, b) => a.flat_number.localeCompare(b.flat_number));
+            flatSelect.disabled = false;
+            flatSelect.innerHTML = flats.length === 0
+                ? '<option value="">No flats set up for this wing</option>'
+                : '<option value="">Select flat...</option>' +
+                    flats.map(f => `<option value="${escapeHtml(f.flat_number)}">${escapeHtml(f.flat_number)}${f.owner_email ? ' (occupied)' : ''}</option>`).join('');
+            scheduleFlatOwnerLookup();
+        }
+
         let flatOwnerLookupTimer = null;
 
         function scheduleFlatOwnerLookup() {
@@ -1860,7 +2513,8 @@
 
             document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
 
-            document.getElementById(`suite-btn-${suiteName}`).classList.add('active');
+            const activeNavBtn = document.getElementById(`suite-btn-${suiteName}`);
+            if (activeNavBtn) activeNavBtn.classList.add('active');
             if (suiteName === 'residents' || suiteName === 'roles') {
                 document.getElementById('residents-nav-group').classList.remove('collapsed');
             } else if (suiteName === 'templates' || suiteName === 'signatures') {
@@ -1881,6 +2535,7 @@
             if (suiteName === 'residents') {
                 loadUsers();
                 loadUploadCategories();
+                loadResidentFormFlats();
             } else if (suiteName === 'documents') {
                 switchSubtab((!canManageDocuments && canManageCategories) ? 'categories' : 'db');
             } else if (suiteName === 'roles') {
@@ -1898,7 +2553,10 @@
                     loadSignerDirectory();
                 }
             } else if (suiteName === 'society') {
+                switchSubtab('society-identity');
                 loadSocietyProfile();
+                loadFlatSetup();
+                loadPublicHolidays();
             }
         }
 
@@ -1911,9 +2569,59 @@
             
             if (subName === 'db') {
                 loadAdminDocuments();
+                loadUploadCategories();
             } else if (subName === 'categories') {
                 loadCategoriesTabData();
+            } else if (subName === 'register') {
+                loadUploadCategories();
+                loadDocFormFlats();
             }
+        }
+
+        let residentFormFlatsCache = [];
+
+        async function loadResidentFormFlats() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                residentFormFlatsCache = resp.ok ? await resp.json() : [];
+            } catch (err) {
+                residentFormFlatsCache = [];
+            }
+            const wingSelect = document.getElementById('wing');
+            const wings = [...new Set(residentFormFlatsCache.filter(f => !f.is_fire_flat).map(f => f.wing))].sort();
+            const currentWing = wingSelect.value;
+            wingSelect.innerHTML = '<option value="">Select wing...</option>' +
+                wings.map(w => `<option value="${escapeHtml(w)}">Wing ${escapeHtml(w)}</option>`).join('');
+            wingSelect.value = currentWing;
+            document.getElementById('no-wings-hint').style.display = wings.length === 0 ? 'block' : 'none';
+            onResidentFormWingChange();
+        }
+
+        function openFlatSetupFromResidentForm() {
+            switchSuite('society');
+            switchSubtab('society-flats');
+        }
+
+        function onResidentFormWingChange() {
+            const wing = document.getElementById('wing').value;
+            const flatSelect = document.getElementById('flat');
+            if (!wing) {
+                flatSelect.innerHTML = '<option value="">Select wing first...</option>';
+                flatSelect.disabled = true;
+                return;
+            }
+            const flats = residentFormFlatsCache
+                .filter(f => f.wing === wing && !f.is_fire_flat)
+                .sort((a, b) => a.flat_number.localeCompare(b.flat_number));
+            flatSelect.disabled = false;
+            flatSelect.innerHTML = flats.length === 0
+                ? '<option value="">No flats set up for this wing</option>'
+                : '<option value="">Select flat...</option>' +
+                    flats.map(f => `<option value="${escapeHtml(f.flat_number)}">${escapeHtml(f.flat_number)}${f.owner_email ? ' (occupied)' : ''}</option>`).join('');
         }
 
         const onboardForm = document.getElementById('onboard-form');
@@ -2186,7 +2894,7 @@
             'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
             'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
             'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions. Also allows changing which designations are required to sign a document field.' },
-            'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report — GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
+            'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report - GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
             'accounting.manage': { title: 'Manage Accounting', desc: 'Full control of the accounting module: create billing plans and generate invoices, record payments, run the interest job, manage vendors/expenses and TDS, reconcile bank statements, set budgets, edit GST/interest rules and the chart of accounts, and close or reopen fiscal years. Includes everything View Accounting allows.' },
         };
 
@@ -2229,6 +2937,74 @@
         let builderState = null;
         let builderSelectedPath = null;
 
+        async function loadPublicHolidays() {
+            const tbody = document.getElementById('holiday-list-rows-target');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/holidays/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!resp.ok) {
+                    tbody.innerHTML = '<tr><td style="text-align:center; color:var(--foreground); font-weight:600;">Failed to load holidays.</td></tr>';
+                    return;
+                }
+                const holidays = await resp.json();
+                if (holidays.length === 0) {
+                    tbody.innerHTML = '<tr><td style="text-align:center; color:var(--muted-foreground); font-weight:600;">No holidays configured.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = holidays.map(h => `
+                    <tr>
+                        <td>${escapeHtml(h.holiday_date)}</td>
+                        <td>${escapeHtml(h.description)}</td>
+                        <td style="text-align:right;"><button type="button" style="background:transparent; border:1px solid var(--border); color:var(--danger); border-radius:6px; padding:4px 10px; cursor:pointer;" onclick="removePublicHoliday('${h.holiday_date}')">Remove</button></td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                tbody.innerHTML = '<tr><td style="text-align:center; color:var(--foreground); font-weight:600;">Database connection offline.</td></tr>';
+            }
+        }
+
+        async function addPublicHoliday() {
+            const holiday_date = document.getElementById('holiday-date').value;
+            const description = document.getElementById('holiday-description').value.trim();
+            if (!holiday_date || !description) {
+                showAlert('Date and description are both required.');
+                return;
+            }
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/holidays/add`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ holiday_date, description })
+                });
+                if (!resp.ok) {
+                    showAlert(await readErrorMessage(resp));
+                    return;
+                }
+                document.getElementById('holiday-date').value = '';
+                document.getElementById('holiday-description').value = '';
+                loadPublicHolidays();
+            } catch (err) {
+                showAlert('Network error communicating with server.');
+            }
+        }
+
+        async function removePublicHoliday(holiday_date) {
+            if (!await showConfirm(`Remove the holiday on ${holiday_date}?`)) return;
+            try {
+                await fetch(`${API_BASE}/api/v1/admin/process-templates/holidays/remove`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ holiday_date })
+                });
+                loadPublicHolidays();
+            } catch (err) {
+                showAlert('Network error communicating with server.');
+            }
+        }
+
         async function loadProcessTemplates() {
             const tbody = document.getElementById('template-list-rows-target');
             try {
@@ -2257,7 +3033,10 @@
                 const sortedVersions = [...t.versions].sort((a, b) => b.version_number - a.version_number);
                 return `
                     <tr>
-                        <td style="font-weight:700;">${escapeHtml(t.name)}</td>
+                        <td style="font-weight:700;">
+                            ${escapeHtml(t.name)}
+                            ${t.active_version_id ? '' : '<span style="margin-left:8px; font-size:11px; font-weight:800; color:#B91C1C; background:#FEE2E2; padding:2px 8px; border-radius:999px;">INACTIVE</span>'}
+                        </td>
                         <td style="text-align:right; vertical-align:top;">
                             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
                                 <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openTemplateVersionsModal(${t.template_id})">Versions (${t.versions.length})</button>
@@ -2285,7 +3064,9 @@
         function renderTemplateVersionsModal() {
             const t = allProcessTemplates.find(t => t.template_id === versionsModalTemplateId);
             if (!t) return;
-            document.getElementById('template-versions-modal-title').textContent = `Versions — ${t.name}`;
+            document.getElementById('template-versions-modal-title').textContent = `Versions - ${t.name}`;
+            const deactivateBtn = document.getElementById('template-versions-deactivate-btn');
+            if (deactivateBtn) deactivateBtn.style.display = t.active_version_id ? 'inline-block' : 'none';
             const sortedVersions = [...t.versions].sort((a, b) => b.version_number - a.version_number);
             document.getElementById('template-versions-modal-rows').innerHTML = sortedVersions.map(v => {
                 const isActive = v.version_id === t.active_version_id;
@@ -2307,8 +3088,22 @@
             }).join('');
         }
 
+        const FIELD_TYPES = [
+            { value: 'document', label: 'Document' },
+            { value: 'text', label: 'Text' },
+            { value: 'int', label: 'Number' },
+            { value: 'decimal', label: 'Rupees' },
+            { value: 'date', label: 'Date' },
+            { value: 'bool', label: 'Yes/No' },
+            { value: 'enum', label: 'Choice (fixed list)' },
+        ];
+
+        function fieldTypeLabel(type) {
+            return (FIELD_TYPES.find(t => t.value === type) || {}).label || type;
+        }
+
         function emptyField() {
-            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [] };
+            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [], options: [] };
         }
         function emptyStage() {
             return { name: 'New Stage', description: '', is_optional: false, is_review_required: true, fields: null, substeps: [emptySubstep()] };
@@ -2335,17 +3130,19 @@
                     const tree = await resp.json();
                     builderState = { template_id: templateId, name: tree.name, description: tree.description,
                         is_optional: tree.is_optional, is_review_required: tree.is_review_required,
+                        tat_working_days: tree.tat_working_days || null,
                         fields: null, substeps: (tree.substeps || []).map(stageFromServer) };
-                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version — saving creates a new version, which you'll need to activate before residents start using it`;
+                    document.getElementById('builder-version-badge').textContent = `Editing from an existing version - saving creates a new version, which you'll need to activate before residents start using it`;
                 } catch (err) {
-                    builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
+                    builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
                 }
             } else {
-                builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, fields: null, substeps: [emptyStage()] };
+                builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
                 document.getElementById('builder-version-badge').textContent = 'New template';
             }
 
             document.getElementById('builder-template-name').value = builderState.name || '';
+            document.getElementById('builder-tat-days').value = builderState.tat_working_days || '';
             builderSelectedPath = builderState.substeps && builderState.substeps.length > 0 ? [0] : null;
             renderBuilderStages();
             renderBuilderStageDetail();
@@ -2365,7 +3162,7 @@
             };
         }
         function fieldFromServer(f) {
-            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [] };
+            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [] };
         }
 
         function closeTemplateBuilder() {
@@ -2466,7 +3263,7 @@ function openDesignationPicker(field) {
                         <button type="button" class="del-action-btn" onclick="removeDesignationFromPicker(${i})">Remove</button>
                     </div>
                 `;
-            }).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No restriction — any registered signer can be picked.</p>';
+            }).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No restriction - any registered signer can be picked.</p>';
         }
 
         function renderFieldDesignationSummary(field, onchangePrefix) {
@@ -2484,19 +3281,23 @@ function openDesignationPicker(field) {
 
         function renderFieldRow(field, onchangePrefix) {
             const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
+            const optionsCsv = (field.options || []).join(', ');
             return `
                 <div class="field-row">
                     <div class="field-row-main">
                         <input type="text" class="field-name-input" value="${escapeHtml(field.name)}" placeholder="Field name" oninput="${onchangePrefix}.name=this.value">
                         <select onchange="${onchangePrefix}.type=this.value; renderBuilderStageDetail();">
-                            <option value="document" ${field.type === 'document' ? 'selected' : ''}>Document</option>
-                            <option value="text" ${field.type === 'text' ? 'selected' : ''}>Text</option>
+                            ${FIELD_TYPES.map(t => `<option value="${t.value}" ${field.type === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
                         </select>
                         <select onchange="${onchangePrefix}.filled_by=this.value; if (this.value !== 'admin') { ${onchangePrefix}.requires_signature = false; ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();">
                             <option value="user" ${field.filled_by === 'user' ? 'selected' : ''}>Filled by Resident</option>
                             <option value="admin" ${field.filled_by === 'admin' ? 'selected' : ''}>Filled by Admin</option>
                         </select>
                     </div>
+                    ${field.type === 'enum' ? `
+                    <div class="field-row-meta">
+                        <input type="text" class="field-name-input" style="flex:1;" value="${escapeHtml(optionsCsv)}" placeholder="Allowed values, comma-separated (e.g. Owner, Tenant, Agent)" oninput="${onchangePrefix}.options=this.value.split(',').map(s=>s.trim()).filter(Boolean)">
+                    </div>` : ''}
                     <div class="field-row-meta">
                         <label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>
                         ${(field.type === 'document' && field.filled_by === 'admin') ? `<label class="field-check-label"><input type="checkbox" ${field.requires_signature ? 'checked' : ''} onchange="${onchangePrefix}.requires_signature=this.checked; if (!this.checked) { ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();"> Requires signature</label>` : ''}
@@ -2602,6 +3403,27 @@ function openDesignationPicker(field) {
             }
         }
 
+        async function deactivateTemplate() {
+            const t = allProcessTemplates.find(t => t.template_id === versionsModalTemplateId);
+            if (!t) return;
+            if (!await showConfirm('Hide this template from residents? Anyone already partway through it can keep going, and this only blocks new starts.')) return;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/process-templates/deactivate`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ template_id: t.template_id })
+                });
+                if (resp.ok) {
+                    await loadProcessTemplates();
+                    if (versionsModalTemplateId === t.template_id) renderTemplateVersionsModal();
+                } else {
+                    showAlert(await readErrorMessage(resp));
+                }
+            } catch (err) {
+                showAlert('Network error communicating with server.');
+            }
+        }
+
         let previewState = null;
         let previewSelectedIndex = null;
 
@@ -2660,7 +3482,7 @@ function openDesignationPicker(field) {
                             <div class="field-row">
                                 <div class="field-row-main">
                                     <span class="field-name-input">${escapeHtml(f.name)}</span>
-                                    <span style="font-size:12px; color:var(--muted-foreground);">${f.type === 'document' ? 'Document' : 'Text'}</span>
+                                    <span style="font-size:12px; color:var(--muted-foreground);">${escapeHtml(fieldTypeLabel(f.type))}</span>
                                     <span style="font-size:12px; color:var(--muted-foreground);">Filled by ${f.filled_by === 'admin' ? 'Admin' : 'Resident'}</span>
                                 </div>
                                 ${(f.is_optional || f.requires_signature) ? `<div class="field-row-meta">${f.is_optional ? '<span class="field-check-label" style="cursor:default;">Optional</span>' : ''}${f.requires_signature ? '<span class="field-check-label" style="cursor:default;">Requires signature</span>' : ''}</div>` : ''}
@@ -2867,7 +3689,7 @@ function openDesignationPicker(field) {
         async function toggleSignerActive(signerId, newActive) {
             if (!newActive) {
                 const confirmed = await showConfirm(
-                    'Stops them from being offered in future Add Signers picks.\nAnything already waiting on them is unaffected — reversible via Activate.',
+                    'Stops them from being offered in future Add Signers picks.\nAnything already waiting on them is unaffected - reversible via Activate.',
                     'Confirm Deactivate'
                 );
                 if (!confirmed) return;
@@ -2906,7 +3728,7 @@ function openDesignationPicker(field) {
         }
 
         function fmtProfileDate(v) {
-            if (!v) return '—';
+            if (!v) return '-';
             const d = new Date(v);
             if (Number.isNaN(d.getTime())) return v;
             return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -2928,7 +3750,7 @@ function openDesignationPicker(field) {
                 const data = await resp.json();
                 const p = data.profile;
                 if (p) {
-                    summary.innerHTML = `<strong>${escapeHtml(p.name)}</strong>${p.registration_number ? ' — ' + escapeHtml(p.registration_number) : ''}<br>${escapeHtml(p.address)}${p.state ? ', ' + escapeHtml(p.state) : ''}${p.phone ? ' — Tel: ' + escapeHtml(p.phone) : ''}`;
+                    summary.innerHTML = `<strong>${escapeHtml(p.name)}</strong>${p.registration_number ? ' - ' + escapeHtml(p.registration_number) : ''}<br>${escapeHtml(p.address)}${p.state ? ', ' + escapeHtml(p.state) : ''}${p.phone ? ' - Tel: ' + escapeHtml(p.phone) : ''}`;
                     summary.className = '';
                     document.getElementById('sp-name').value = p.name || '';
                     document.getElementById('sp-reg').value = p.registration_number || '';
@@ -2936,7 +3758,7 @@ function openDesignationPicker(field) {
                     document.getElementById('sp-state').value = p.state || '';
                     document.getElementById('sp-phone').value = p.phone || '';
                 } else {
-                    summary.textContent = 'Not set yet — invoices will be generated without a society letterhead.';
+                    summary.textContent = '';
                     summary.className = 'empty-state';
                 }
                 document.getElementById('society-admin-email').textContent = data.super_admin_email;
@@ -2982,6 +3804,311 @@ function openDesignationPicker(field) {
                 feedback.className = 'feedback-box error';
                 feedback.textContent = err.message;
             }
+        }
+
+        let allFlatsCache = [];
+        let activeWing = null;
+
+        function padUnit(n) {
+            return String(n).padStart(2, '0');
+        }
+
+        function floorOfFlatNumber(fn) {
+            return parseInt(fn.slice(0, -2), 10);
+        }
+
+        function unitOfFlatNumber(fn) {
+            return fn.slice(-2);
+        }
+
+        function flatsForActiveWing() {
+            return allFlatsCache.filter(f => f.wing === activeWing);
+        }
+
+        function fpFeedback(message, isError) {
+            const feedback = document.getElementById('fp-feedback');
+            feedback.style.display = 'block';
+            feedback.className = isError ? 'feedback-box error' : 'feedback-box success';
+            feedback.textContent = message;
+        }
+
+        function renderWingTabs() {
+            const wingsWithFlats = allFlatsCache.map(f => f.wing);
+            const wings = [...new Set(activeWing ? [...wingsWithFlats, activeWing] : wingsWithFlats)].sort();
+            const container = document.getElementById('fp-wing-tabs');
+            container.innerHTML = wings.map(w =>
+                `<button type="button" class="subtab-btn ${w === activeWing ? 'active' : ''}" onclick="selectWing('${w}')">Wing ${escapeHtml(w)}</button>`
+            ).join('') + `<button type="button" class="subtab-btn" onclick="promptNewWing()">+ New Wing</button>`;
+        }
+
+        function selectWing(w) {
+            activeWing = w;
+            renderWingTabs();
+            renderWingContent();
+        }
+
+        function promptNewWing() {
+            document.getElementById('new-wing-letters').value = '';
+            const newWingFeedback = document.getElementById('new-wing-feedback');
+            newWingFeedback.style.display = 'none';
+            const wings = [...new Set(allFlatsCache.map(f => f.wing))].sort();
+            const select = document.getElementById('new-wing-clone-source');
+            select.innerHTML = '<option value="">Start empty</option>' +
+                wings.map(w => `<option value="${escapeHtml(w)}">Same as Wing ${escapeHtml(w)}</option>`).join('');
+            document.getElementById('new-wing-modal').style.display = 'flex';
+        }
+
+        function closeNewWingModal() {
+            document.getElementById('new-wing-modal').style.display = 'none';
+        }
+
+        async function submitNewWing() {
+            const feedback = document.getElementById('new-wing-feedback');
+            feedback.style.display = 'none';
+            const w = document.getElementById('new-wing-letters').value.trim().toUpperCase();
+            if (!/^[A-Z]+$/.test(w)) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Wing must be letters only.';
+                return;
+            }
+            if (allFlatsCache.some(f => f.wing === w)) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = `Wing ${w} already exists.`;
+                return;
+            }
+
+            const cloneSource = document.getElementById('new-wing-clone-source').value;
+            if (!cloneSource) {
+                activeWing = w;
+                closeNewWingModal();
+                renderWingTabs();
+                renderWingContent();
+                return;
+            }
+
+            const flat_numbers = allFlatsCache.filter(f => f.wing === cloneSource).map(f => f.flat_number);
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/bulk-create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ wing: w, flat_numbers })
+                });
+                if (!resp.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = await readErrorMessage(resp);
+                    return;
+                }
+                activeWing = w;
+                closeNewWingModal();
+                await loadFlatSetup();
+                fpFeedback(`Wing ${w} created, cloned from Wing ${cloneSource}.`, false);
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Network error communicating with server.';
+            }
+        }
+
+        function renderWingContent() {
+            const container = document.getElementById('fp-wing-content');
+            if (!activeWing) {
+                container.innerHTML = '<div class="empty-state">Add a wing to get started.</div>';
+                return;
+            }
+            const flats = flatsForActiveWing();
+            const byFloor = {};
+            flats.forEach(f => {
+                const floor = floorOfFlatNumber(f.flat_number);
+                byFloor[floor] = byFloor[floor] || [];
+                byFloor[floor].push(f);
+            });
+            const floors = Object.keys(byFloor).map(Number).sort((a, b) => a - b);
+
+            const rows = floors.map(floor => {
+                const units = byFloor[floor].sort((a, b) => a.flat_number.localeCompare(b.flat_number));
+                const chips = units.map(f => `
+                    <span style="display:inline-flex; align-items:center; gap:2px; border-radius:8px; overflow:hidden; ${f.is_fire_flat ? 'background:#FEE2E2; border:2px solid #B91C1C;' : 'background:var(--muted); border:2px solid transparent;'}">
+                        <span style="padding:10px 8px 10px 14px; font-size:13px; font-weight:700; color:${f.is_fire_flat ? '#B91C1C' : 'var(--foreground)'};">${escapeHtml(f.flat_number)}</span>
+                        <button type="button" onclick="toggleFireFlat(${f.flat_id}, ${f.is_fire_flat})" title="${f.is_fire_flat ? 'Unmark fire flat' : 'Mark as fire flat'}" style="border:none; background:transparent; cursor:pointer; padding:10px 6px; line-height:1; color:${f.is_fire_flat ? '#B91C1C' : 'var(--muted-foreground)'};">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="${f.is_fire_flat ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c1 3-2 4-2 7a3 3 0 0 0 6 0c0-1-.5-2-1-3 2 1 4 4 4 7a7 7 0 1 1-14 0c0-4 3-5 4-9 .5 2 1 3 3 5-.5-3 0-5-.5-7Z"/></svg>
+                        </button>
+                        <button type="button" onclick="removeSingleFlat(${f.flat_id}, '${escapeHtml(f.flat_number)}')" title="Remove this flat" style="border:none; background:transparent; cursor:pointer; padding:10px 12px 10px 6px; font-size:13px; line-height:1; color:var(--muted-foreground); font-weight:800;">&times;</button>
+                    </span>
+                `).join('');
+                return `
+                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--border);">
+                        <div style="font-weight:800; min-width:70px;">Floor ${floor}</div>
+                        <div style="display:flex; flex-wrap:wrap; gap:8px; flex:1;">${chips}</div>
+                        <button type="button" onclick="addFlatToFloor(${floor})" style="height:38px; padding:0 14px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap;">+ Add Flat</button>
+                        <button type="button" onclick="removeFloor(${floor})" style="height:38px; padding:0 14px; background:transparent; border:1px solid #B91C1C; color:#B91C1C; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap;">Remove Floor</button>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `
+                <div style="margin-bottom:16px;">${rows || '<div class="empty-state">No floors yet.</div>'}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                    <button type="button" class="submit-btn" style="width:auto;" onclick="addFloorForActiveWing()">+ Add Floor</button>
+                    ${flats.length > 0 ? `<button type="button" style="height:44px; padding:0 16px; background:transparent; border:1px solid #B91C1C; color:#B91C1C; border-radius:6px; cursor:pointer; font-size:14px; font-weight:700; white-space:nowrap;" onclick="removeWing()">Remove Wing ${escapeHtml(activeWing)}</button>` : ''}
+                </div>
+            `;
+        }
+
+        async function removeSingleFlat(flatId, flatNumber) {
+            if (!await showConfirm(`Remove flat ${flatNumber}?`)) return;
+            const failures = await deleteFlatsById([flatId]);
+            if (failures.length > 0) {
+                fpFeedback(failures[0], true);
+            } else {
+                fpFeedback(`Flat ${flatNumber} removed.`, false);
+            }
+            await loadFlatSetup();
+        }
+
+        async function deleteFlatsById(flatIds) {
+            const failures = [];
+            for (const flatId of flatIds) {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/v1/admin/flats/delete`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ flat_id: flatId })
+                    });
+                    if (!resp.ok) failures.push(await readErrorMessage(resp));
+                } catch (err) {
+                    failures.push('Network error communicating with server.');
+                }
+            }
+            return failures;
+        }
+
+        async function removeFloor(floor) {
+            const allFlats = flatsForActiveWing().filter(f => floorOfFlatNumber(f.flat_number) === floor);
+            const flats = allFlats.filter(f => !f.is_fire_flat);
+            const skippedFireFlats = allFlats.length - flats.length;
+            if (!await showConfirm(`Remove Floor ${floor} and its ${flats.length} flat(s)?${skippedFireFlats > 0 ? ` ${skippedFireFlats} fire flat(s) will be kept.` : ''}`)) return;
+            const failures = await deleteFlatsById(flats.map(f => f.flat_id));
+            if (failures.length > 0) {
+                fpFeedback(`${failures.length} flat(s) could not be removed: ${failures[0]}`, true);
+            } else {
+                fpFeedback(`Floor ${floor} removed.`, false);
+            }
+            await loadFlatSetup();
+        }
+
+        async function removeWing() {
+            const wing = activeWing;
+            const allFlats = flatsForActiveWing();
+            const flats = allFlats.filter(f => !f.is_fire_flat);
+            const skippedFireFlats = allFlats.length - flats.length;
+            if (!await showConfirm(`Remove Wing ${wing} and all ${flats.length} of its flat(s)? This cannot be undone.${skippedFireFlats > 0 ? ` ${skippedFireFlats} fire flat(s) will be kept.` : ''}`)) return;
+            const failures = await deleteFlatsById(flats.map(f => f.flat_id));
+            if (failures.length > 0) {
+                fpFeedback(`${failures.length} flat(s) could not be removed: ${failures[0]}`, true);
+            } else {
+                fpFeedback(`Wing ${wing} removed.`, false);
+            }
+            activeWing = null;
+            await loadFlatSetup();
+        }
+
+        function previousFloorUnits() {
+            const flats = flatsForActiveWing();
+            if (flats.length === 0) return null;
+            const floors = [...new Set(flats.map(f => floorOfFlatNumber(f.flat_number)))].sort((a, b) => a - b);
+            const lastFloor = floors[floors.length - 1];
+            return {
+                floor: lastFloor,
+                units: flats
+                    .filter(f => floorOfFlatNumber(f.flat_number) === lastFloor)
+                    .map(f => unitOfFlatNumber(f.flat_number))
+                    .sort()
+            };
+        }
+
+        async function addFloorForActiveWing() {
+            const flats = flatsForActiveWing();
+            const floors = flats.map(f => floorOfFlatNumber(f.flat_number));
+            const nextFloor = floors.length > 0 ? Math.max(...floors) + 1 : 1;
+            const prev = previousFloorUnits();
+            const units = prev ? prev.units : ['01', '02', '03', '04'];
+            const flat_numbers = units.map(u => `${nextFloor}${u}`);
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/bulk-create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ wing: activeWing, flat_numbers })
+                });
+                if (!resp.ok) {
+                    fpFeedback(await readErrorMessage(resp), true);
+                    return;
+                }
+                await loadFlatSetup();
+                fpFeedback(`Floor ${nextFloor} added.`, false);
+            } catch (err) {
+                fpFeedback('Network error communicating with server.', true);
+            }
+        }
+
+        async function addFlatToFloor(floor) {
+            const flats = flatsForActiveWing().filter(f => floorOfFlatNumber(f.flat_number) === floor);
+            const units = flats.map(f => parseInt(unitOfFlatNumber(f.flat_number), 10));
+            const nextUnit = units.length > 0 ? Math.max(...units) + 1 : 1;
+            const flat_number = `${floor}${padUnit(nextUnit)}`;
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ wing: activeWing, flat_number })
+                });
+                if (!resp.ok) {
+                    fpFeedback(await readErrorMessage(resp), true);
+                    return;
+                }
+                await loadFlatSetup();
+            } catch (err) {
+                fpFeedback('Network error communicating with server.', true);
+            }
+        }
+
+        async function toggleFireFlat(flatId, current) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/set-fire-flag`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ flat_id: flatId, is_fire_flat: !current })
+                });
+                if (!resp.ok) {
+                    fpFeedback(await readErrorMessage(resp), true);
+                    return;
+                }
+                await loadFlatSetup();
+            } catch (err) {
+                fpFeedback('Network error communicating with server.', true);
+            }
+        }
+
+        async function loadFlatSetup() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/flats/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                allFlatsCache = resp.ok ? await resp.json() : [];
+            } catch (err) {
+                allFlatsCache = [];
+            }
+            if (!activeWing) {
+                const wings = [...new Set(allFlatsCache.map(f => f.wing))].sort();
+                activeWing = wings.length > 0 ? wings[0] : activeWing;
+            }
+            renderWingTabs();
+            renderWingContent();
         }
 
         async function loadCategoriesTabData() {
@@ -3660,7 +4787,7 @@ function openDesignationPicker(field) {
                 <tr>
                     <td style="font-weight:700; position:sticky; left:0; z-index:1; background-color:var(--background); box-shadow: 2px 0 4px rgba(0,0,0,0.06); max-width:180px;">
                         <span class="truncate" style="max-width:150px; display:inline-block; vertical-align:middle;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 24))}</span>
-                        ${isOwn ? '<span title="You hold this designation — only another admin can change its permissions." style="color:var(--muted-foreground); font-size:11px; font-weight:600; margin-left:6px;">(yours)</span>' : ''}
+                        ${isOwn ? '<span title="You hold this designation - only another admin can change its permissions." style="color:var(--muted-foreground); font-size:11px; font-weight:600; margin-left:6px;">(yours)</span>' : ''}
                     </td>
                     ${allPermissions.map(p => `
                         <td style="text-align:center;">
@@ -4297,6 +5424,7 @@ function openDesignationPicker(field) {
                 docFeedback.className = 'feedback-box success';
                 regDocForm.reset();
                 handleCategoryChange();
+                onDocFormWingChange();
                 loadAdminDocuments();
                 
             } catch (err) {

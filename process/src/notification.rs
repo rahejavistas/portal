@@ -30,6 +30,7 @@ async fn dispatch(
             label: "Open Portal".to_string(),
             url: cta_url,
         }),
+        attachment: None,
     };
 
     if let Err(e) = email::send_email(&payload).await {
@@ -78,7 +79,7 @@ pub async fn notify_signature_queue(
         "Document Awaiting Your Signature",
         vec![
             format!("\"{}\" requires your signature.", document_title),
-            format!("Step: {} — Process: {}", step_name, process_name),
+            format!("Step: {} - Process: {}", step_name, process_name),
         ],
         portal_signature_queue_url(),
         process_id,
@@ -99,10 +100,10 @@ pub async fn notify_signature_turn(
         "It's Your Turn to Sign",
         vec![
             format!(
-                "The signer(s) ahead of you on \"{}\" have finished — it's now your turn.",
+                "The signer(s) ahead of you on \"{}\" have finished - it's now your turn.",
                 document_title
             ),
-            format!("Step: {} — Process: {}", step_name, process_name),
+            format!("Step: {} - Process: {}", step_name, process_name),
         ],
         portal_signature_queue_url(),
         process_id,

@@ -5,7 +5,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Resident Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         document.documentElement.setAttribute(
             'data-tab',
@@ -15,7 +15,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
     <style>
         * {
             box-sizing: border-box;
-            font-family: 'Outfit', sans-serif;
+            font-family: 'Google Sans', 'Outfit', sans-serif;
             margin: 0;
             padding: 0;
         }
@@ -61,7 +61,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         .layout-container {
             display: flex;
             width: 100%;
-            min-height: 100vh;
+            min-height: calc(100vh - 56px);
+            margin-top: 56px;
         }
 
         .bg-shape-top-right {
@@ -76,33 +77,198 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             pointer-events: none;
         }
 
-        .mobile-topbar {
-            display: none;
+        .topbar {
+            display: flex;
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 48px;
+            top: 0; left: 0; right: 0;
+            height: 56px;
             background-color: var(--background);
             border-bottom: 1px solid var(--border);
             align-items: center;
-            justify-content: space-between;
-            padding: 0 14px;
+            gap: 16px;
+            padding: 0 16px;
             z-index: 200;
         }
-        .mobile-topbar-brand {
-            font-size: 1.5rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
         }
+        .topbar-brand {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            line-height: 1.2;
+            color: #000000;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .help-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: none;
+            color: var(--muted-foreground);
+            font-weight: 700;
+            font-size: 0.8125rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s, color 0.2s;
+            margin-left: auto;
+            margin-right: 8px;
+        }
+        .help-btn:hover {
+            background-color: var(--muted);
+            color: var(--foreground);
+        }
+        .help-panel-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10020;
+        }
+        .help-panel-overlay.open { display: block; }
+        .help-panel {
+            position: fixed;
+            top: 0; right: 0;
+            width: 420px;
+            max-width: 92vw;
+            height: 100vh;
+            background: var(--background);
+            box-shadow: -8px 0 32px rgba(0, 0, 0, 0.18);
+            z-index: 10021;
+            transform: translateX(100%);
+            visibility: hidden;
+            pointer-events: none;
+            transition: transform 0.25s ease, visibility 0.25s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        .help-panel.open {
+            transform: translateX(0);
+            visibility: visible;
+            pointer-events: auto;
+        }
+        .help-panel-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .help-panel-header h2 { margin: 0; font-size: 1.125rem; }
+        .help-panel-close {
+            background: none;
+            border: none;
+            font-size: 22px;
+            cursor: pointer;
+            color: var(--muted-foreground);
+            line-height: 1;
+            padding: 4px;
+        }
+        .help-panel-body {
+            padding: 20px 24px;
+            overflow-y: auto;
+            flex: 1;
+            font-size: 0.875rem;
+            line-height: 1.6;
+            color: var(--foreground);
+        }
+        .help-panel-body h3 { font-size: 0.9375rem; margin: 20px 0 8px; }
+        .help-panel-body h3:first-child { margin-top: 0; }
+        .help-panel-body p { margin: 0 0 10px; }
+        @media (max-width: 700px) {
+            .help-panel { width: 100vw; max-width: 100vw; }
+        }
+        .topbar-profile {
+            position: relative;
+            flex-shrink: 0;
+        }
+        .topbar-profile-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 6px 8px;
+            border-radius: var(--radius-md);
+            transition: background 0.2s;
+        }
+        .topbar-profile-btn:hover { background-color: var(--muted); }
+        .topbar-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            color: var(--background);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            flex-shrink: 0;
+        }
+        .topbar-dropdown {
+            display: none;
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 190px;
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            z-index: 210;
+            overflow: hidden;
+        }
+        .topbar-dropdown.open { display: block; }
+        .topbar-dropdown-email {
+            padding: 12px 16px;
+            font-size: 0.75rem;
+            color: var(--muted-foreground);
+            border-bottom: 1px solid var(--border);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .topbar-dropdown .logout-btn {
+            width: 100%;
+            text-align: left;
+            border: none;
+            border-radius: 0;
+            padding: 12px 16px;
+            text-transform: none;
+        }
+        .topbar-dropdown-item {
+            display: block;
+            width: 100%;
+            text-align: left;
+            background: none;
+            border: none;
+            padding: 12px 16px;
+            font-weight: 600;
+            font-size: 0.8125rem;
+            color: var(--foreground);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .topbar-dropdown-item:hover { background-color: var(--muted); }
         .hamburger-btn {
             background: none;
             border: none;
             cursor: pointer;
             padding: 8px;
-            display: flex;
+            display: none;
             flex-direction: column;
             gap: 5px;
             border-radius: var(--radius-md);
@@ -143,30 +309,13 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             padding: 40px 24px;
             justify-content: space-between;
             position: fixed;
-            height: 100vh;
+            height: calc(100vh - 56px);
             left: 0;
-            top: 0;
+            top: 56px;
             z-index: 150;
             background-color: var(--background);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             will-change: transform;
-        }
-        .sidebar-brand h1 {
-            font-size: 2.25rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            text-transform: uppercase;
-            color: var(--primary);
-            margin: 0 0 4px 0;
-            line-height: 0.9;
-        }
-        .sidebar-brand p {
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--muted-foreground);
-            margin: 0 0 40px 0;
         }
         .nav-menu {
             display: flex;
@@ -203,11 +352,9 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         #panel-billing { display: none; }
         html[data-tab="documents"] #panel-profile { display: none; }
         html[data-tab="documents"] #panel-documents { display: block; }
-        html[data-tab="documents"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
         html[data-tab="documents"] #tab-btn-documents { background-color: var(--primary); color: var(--background); }
         html[data-tab="billing"] #panel-profile { display: none; }
         html[data-tab="billing"] #panel-billing { display: block; }
-        html[data-tab="billing"] #tab-btn-profile { background-color: transparent; color: var(--foreground); }
         html[data-tab="billing"] #tab-btn-billing { background-color: var(--primary); color: var(--background); }
         .badge { display: inline-block; padding: 3px 10px; border-radius: 9999px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
         .badge-green { background-color: #D1FAE5; color: #065F46; }
@@ -339,21 +486,19 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         }
 
         @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
+            .hamburger-btn { display: flex; }
+            .topbar-brand { font-size: 1.0625rem; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
                 min-width: unset;
-                padding: 64px 20px 24px 20px;
-                top: 0;
+                padding: 24px 20px;
                 box-shadow: 4px 0 24px rgba(0,0,0,0.12);
             }
             .sidebar.open { transform: translateX(0); }
-            .sidebar-brand p { display: none; }
-            .sidebar-brand h1 { display: none; }
             .main-content {
                 margin-left: 0 !important;
-                padding: 72px 16px 32px 16px;
+                padding: 32px 16px;
                 width: 100%;
                 min-width: 0;
                 max-width: 100vw;
@@ -438,6 +583,18 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         .form-group input:disabled {
             background-color: var(--muted);
             color: var(--muted-foreground);
+        }
+        .form-group textarea {
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            font-size: 0.875rem;
+            font-family: inherit;
+            resize: vertical;
+        }
+        .form-group input[type="file"] {
+            padding: 6px 0;
+            border: none;
         }
 
         .feedback-box {
@@ -614,29 +771,66 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 <body>
     <div class="bg-shape-top-right"></div>
 
-    <div class="mobile-topbar" id="mobile-topbar">
-        <span class="mobile-topbar-brand">Vistas</span>
-        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
-            <span></span><span></span><span></span>
-        </button>
+    <div class="topbar" id="topbar">
+        <div class="topbar-left">
+            <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu">
+                <span></span><span></span><span></span>
+            </button>
+            <a href="/dashboard" class="topbar-brand">Raheja Vistas</a>
+        </div>
+        <button class="help-btn" onclick="openHelpPanel(event)" aria-label="Page help" title="Help">?</button>
+        <div class="topbar-profile" id="topbar-profile">
+            <button class="topbar-profile-btn" id="topbar-profile-btn" onclick="toggleProfileMenu()" aria-haspopup="true" aria-expanded="false" aria-label="Profile menu">
+                <span class="topbar-avatar" id="topbar-avatar">?</span>
+            </button>
+            <div class="topbar-dropdown" id="topbar-dropdown">
+                <div class="topbar-dropdown-email" id="topbar-dropdown-email">Loading...</div>
+                <button class="topbar-dropdown-item" onclick="switchTab('profile'); document.getElementById('topbar-dropdown').classList.remove('open');">My Profile</button>
+                <button class="topbar-dropdown-item" onclick="openSupportModal()">Contact Support</button>
+                <button class="logout-btn" id="logout-btn">Log Out</button>
+            </div>
+        </div>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="help-panel-overlay" id="help-panel-overlay" onclick="closeHelpPanel()"></div>
+    <aside class="help-panel" id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-panel-title">
+        <div class="help-panel-header">
+            <h2 id="help-panel-title">Page Help</h2>
+            <button class="help-panel-close" onclick="closeHelpPanel()" aria-label="Close help">&times;</button>
+        </div>
+        <div class="help-panel-body" id="help-panel-body"></div>
+    </aside>
+
+    <div id="support-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeSupportModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Contact Support</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-top:0; margin-bottom:16px;">Support, a suggestion, a feature request, anything.</p>
+            <div class="form-group">
+                <label for="support-message">Message</label>
+                <textarea id="support-message" rows="5" placeholder="What's going on?"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="support-image">Screenshot (Optional)</label>
+                <input type="file" id="support-image" accept="image/png,image/jpeg,image/webp">
+            </div>
+            <div class="feedback-box" id="support-feedback" style="margin-top:12px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSupportModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="support-submit-btn" class="download-btn" style="padding: 10px 24px;" onclick="submitSupportTicket()">Send</button>
+            </div>
+        </div>
+    </div>
 
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
-                <h1>Vistas</h1>
-                <p>Resident Portal</p>
-                
                 <nav class="nav-menu">
-                    <button class="nav-item active" id="tab-btn-profile" onclick="switchTab('profile'); closeSidebar()">Profile</button>
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <button class="nav-item" id="tab-btn-billing" style="display:none;" onclick="switchTab('billing'); closeSidebar()">Billing</button>
                     <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
                     <a href="/admin" class="admin-btn" id="admin-link" style="display:none;">
                         Admin Dashboard &rarr;
                     </a>
-                    <button class="logout-btn" id="logout-btn" style="margin-top: 8px;">Log Out</button>
                 </nav>
             </div>
         </aside>
@@ -834,6 +1028,146 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             document.body.style.overflow = '';
         }
 
+        function toggleProfileMenu() {
+            const dropdown = document.getElementById('topbar-dropdown');
+            const btn = document.getElementById('topbar-profile-btn');
+            const isOpen = dropdown.classList.toggle('open');
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        document.addEventListener('click', (e) => {
+            const profile = document.getElementById('topbar-profile');
+            if (profile && !profile.contains(e.target)) {
+                document.getElementById('topbar-dropdown').classList.remove('open');
+                document.getElementById('topbar-profile-btn').setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        const HELP_CONTENT = {
+            profile: {
+                title: 'Profile',
+                body: `
+                    <h3>Your details</h3>
+                    <p>Your email, flat, and roles. To change your password, use "Forgot Password" from the login screen.</p>
+                    <h3>Notifications</h3>
+                    <p>Choose which emails you get for process updates and signature requests.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            documents: {
+                title: 'Documents',
+                body: `
+                    <h3>What you see here</h3>
+                    <p>Documents shared with everyone, plus anything mapped specifically to your flat.</p>
+                    <h3>Uploading your own</h3>
+                    <p>Add a document under your own flat for the society's records.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            billing: {
+                title: 'Billing',
+                body: `
+                    <h3>Pending bills</h3>
+                    <p>Maintenance bills currently due for your flat.</p>
+                    <h3>Reporting a payment</h3>
+                    <p>Paid a bill outside the portal? Report the payment with the reference number so an admin can confirm it.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+        };
+
+        function renderHelpContent() {
+            const tab = document.documentElement.getAttribute('data-tab') || 'profile';
+            const content = HELP_CONTENT[tab] || HELP_CONTENT.profile;
+            document.getElementById('help-panel-title').innerHTML = content.title;
+            document.getElementById('help-panel-body').innerHTML = content.body;
+        }
+
+        let helpPanelOpener = null;
+        function openHelpPanel(e) {
+            helpPanelOpener = (e && e.currentTarget) || document.activeElement;
+            renderHelpContent();
+            document.getElementById('help-panel').classList.add('open');
+            document.getElementById('help-panel-overlay').classList.add('open');
+            document.querySelector('.help-panel-close').focus();
+        }
+        function closeHelpPanel() {
+            document.getElementById('help-panel').classList.remove('open');
+            document.getElementById('help-panel-overlay').classList.remove('open');
+            if (helpPanelOpener) helpPanelOpener.focus();
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && document.getElementById('help-panel').classList.contains('open')) {
+                closeHelpPanel();
+            }
+        });
+
+        function openSupportModal() {
+            document.getElementById('topbar-dropdown').classList.remove('open');
+            document.getElementById('support-message').value = '';
+            document.getElementById('support-image').value = '';
+            const feedback = document.getElementById('support-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('support-modal').style.display = 'flex';
+        }
+        function closeSupportModal() {
+            document.getElementById('support-modal').style.display = 'none';
+        }
+        async function submitSupportTicket() {
+            const message = document.getElementById('support-message').value.trim();
+            const imageInput = document.getElementById('support-image');
+            const feedback = document.getElementById('support-feedback');
+            const btn = document.getElementById('support-submit-btn');
+
+            if (!message) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Message is required.`;
+                return;
+            }
+            const image = imageInput.files[0];
+            if (image && image.size > 5 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Image must be under 5MB.`;
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('message', message);
+            if (image) formData.append('image', image);
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/support/ticket`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                if (response.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">&#10003;</span> Sent. We usually reply within a day.`;
+                    setTimeout(closeSupportModal, 1200);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(await readErrorMessage(response))}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+            }
+        }
+
         function escapeHtml(unsafe) {
             if (!unsafe) return '';
             return unsafe
@@ -884,6 +1218,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         function renderProfile(user) {
             document.getElementById('user-email').textContent = user.email;
             document.getElementById('user-email').title = user.email;
+            document.getElementById('topbar-avatar').textContent = user.email.charAt(0).toUpperCase();
+            document.getElementById('topbar-dropdown-email').textContent = user.email;
 
             const rolesContainer = document.getElementById('user-roles');
             rolesContainer.innerHTML = '';
@@ -915,7 +1251,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             }
 
             document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
-            document.getElementById('tab-btn-billing').style.display = (user.accounting_enabled && hasFlat) ? 'block' : 'none';
+            document.getElementById('tab-btn-billing').style.display = 'none';
 
             loadAccountSettings();
 
@@ -1111,7 +1447,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             document.documentElement.setAttribute('data-tab', tabName);
 
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-            document.getElementById(`tab-btn-${tabName}`).classList.add('active');
+            const activeTabBtn = document.getElementById(`tab-btn-${tabName}`);
+            if (activeTabBtn) activeTabBtn.classList.add('active');
             
             document.getElementById('panel-profile').style.display = 'none';
             document.getElementById('panel-documents').style.display = 'none';
@@ -1155,13 +1492,13 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
         switchTab(initialTab);
 
         function money(v) {
-            if (v === null || v === undefined) return '—';
+            if (v === null || v === undefined) return '-';
             const n = typeof v === 'string' ? parseFloat(v) : v;
-            if (Number.isNaN(n)) return '—';
+            if (Number.isNaN(n)) return '-';
             return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
         function fmtDate(v) {
-            if (!v) return '—';
+            if (!v) return '-';
             const d = new Date(v);
             if (Number.isNaN(d.getTime())) return v;
             return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -1180,7 +1517,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
                     <div>
                         <div style="font-weight:800; font-size:1.0625rem;">${escapeHtml(inv.invoice_number)}</div>
-                        <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">Billing period ${fmtDate(inv.billing_period_start)} to ${fmtDate(inv.billing_period_end)} — due ${fmtDate(inv.due_date)}</div>
+                        <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">Billing period ${fmtDate(inv.billing_period_start)} to ${fmtDate(inv.billing_period_end)} - due ${fmtDate(inv.due_date)}</div>
                     </div>
                     <span class="badge ${cls}">${(inv.status || '').replace(/_/g, ' ')}</span>
                 </div>
@@ -1219,7 +1556,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 const paid = invoices.filter(i => i.status === 'PAID');
                 document.getElementById('billing-pending-list').innerHTML = pending.length
                     ? pending.map(invoiceCard).join('')
-                    : '<p class="empty-note">No pending bills — you\'re all caught up.</p>';
+                    : '<p class="empty-note">No pending bills - you\'re all caught up.</p>';
                 document.getElementById('billing-paid-list').innerHTML = paid.length
                     ? paid.map(invoiceCard).join('')
                     : '<p class="empty-note">No paid bills yet.</p>';
@@ -1245,8 +1582,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 el.innerHTML = claims.map(c => `<div class="card" style="padding:20px; margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                         <div>
-                            <div style="font-weight:700;">${escapeHtml(c.invoice_number)} — ${money(c.amount)}</div>
-                            <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">${paymentMethodLabelResident(c.payment_method)} — reference ${escapeHtml(c.reference_number)} — reported ${fmtDate(c.submitted_at)}</div>
+                            <div style="font-weight:700;">${escapeHtml(c.invoice_number)} - ${money(c.amount)}</div>
+                            <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">${paymentMethodLabelResident(c.payment_method)} - reference ${escapeHtml(c.reference_number)} - reported ${fmtDate(c.submitted_at)}</div>
                             ${c.status === 'REJECTED' && c.review_note ? `<div style="color:#991B1B; font-size:0.8125rem; margin-top:4px;">Reason: ${escapeHtml(c.review_note)}</div>` : ''}
                         </div>
                         <span class="badge ${statusMap[c.status] || 'badge-gray'}">${c.status}</span>

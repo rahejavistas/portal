@@ -1,16 +1,35 @@
+pub mod audit;
 pub mod db;
 pub mod fields;
 pub mod notification;
 pub mod state_machine;
 pub mod template_store;
+pub mod working_days;
 
 use serde::{Deserialize, Serialize};
+
+/// Wire values match the pre-existing stored data — `File` keeps the historical
+/// `"document"` tag so every already-saved template stays valid on deserialize.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldType {
+    Text,
+    Int,
+    Decimal,
+    Date,
+    Bool,
+    Enum,
+    #[serde(rename = "document")]
+    File,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessFieldTemplate {
     pub field_id: i32,
     pub name: String,
-    pub r#type: String, // "document" or "text"
+    #[serde(default)]
+    pub description: Option<String>,
+    pub r#type: FieldType,
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
@@ -22,6 +41,10 @@ pub struct ProcessFieldTemplate {
     /// both when a reviewer attaches signers and again at the moment of signing.
     #[serde(default)]
     pub required_signs_from_designations: Vec<String>,
+    /// `Enum` fields only — the closed list of valid values. Admin-configured, so it
+    /// stays a plain string list rather than a compile-time Rust enum.
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,12 +68,16 @@ pub struct ProcessTemplate {
     pub is_review_required: bool,
     pub substeps: Option<Vec<ProcessStepTemplate>>,
     pub fields: Option<Vec<ProcessFieldTemplate>>,
+    /// Working days allowed for this process, once the checklist is fully submitted.
+    /// `None` means SLA tracking is off for this template.
+    #[serde(default)]
+    pub tat_working_days: Option<i32>,
 }
 
 /// Test fixture for this crate's own unit tests (can't depend on `quality`'s JSON fixture — cyclic dep).
 #[cfg(test)]
 pub(crate) mod test_fixtures {
-    use super::{ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate};
+    use super::{FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate};
 
     fn field(
         field_id: i32,
@@ -59,15 +86,22 @@ pub(crate) mod test_fixtures {
         is_optional: bool,
         filled_by: &str,
     ) -> ProcessFieldTemplate {
+        let r#type = match r#type {
+            "document" => FieldType::File,
+            "text" => FieldType::Text,
+            other => panic!("unknown fixture field type: {other}"),
+        };
         ProcessFieldTemplate {
             field_id,
             name: name.to_string(),
-            r#type: r#type.to_string(),
+            description: None,
+            r#type,
             is_optional,
             filled_by: filled_by.to_string(),
             requirements: None,
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
+            options: None,
         }
     }
 
@@ -82,6 +116,7 @@ pub(crate) mod test_fixtures {
             is_optional: false,
             is_review_required: false,
             fields: None,
+            tat_working_days: None,
             substeps: Some(vec![
                 ProcessStepTemplate {
                     step_id: 2,

@@ -45,6 +45,13 @@ pub(super) async fn load_authorized_process(
     Ok((info, template))
 }
 
+/// Whether this user has admin-level read access to every resident's processes —
+/// `process.reviewer` or `process.view`, the same gate `/admin-process` itself requires.
+pub(super) fn can_view_all_processes(user: &authentication::User) -> bool {
+    user.has_permission(authentication::Permission::ProcessReviewer)
+        || user.has_permission(authentication::Permission::ProcessView)
+}
+
 pub(super) fn find_step_name(template: &process::ProcessTemplate, step_id: i32) -> String {
     process::state_machine::build_step_info_map(template)
         .get(&step_id)

@@ -2,6 +2,7 @@
 
 use super::{load_authorized_process, ApiError, ResultExt};
 use crate::extractors::SessionUser;
+use crate::handlers::accounting::pdf_response;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
@@ -44,6 +45,7 @@ pub struct FieldHistoryEntry {
     pub document_id: Option<Uuid>,
     pub document_title: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub actor_email: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -67,13 +69,16 @@ pub struct FieldSignatureStatus {
 pub struct FieldResponse {
     pub template_field_id: i32,
     pub name: String,
-    pub r#type: String,
+    pub description: Option<String>,
+    pub r#type: process::FieldType,
     pub filled_by: String,
     pub is_optional: bool,
     /// Blocks completion until a reviewer attaches and every signer signs.
     pub requires_signature: bool,
     /// Designations the "Add Signers" picker scopes to (empty = no restriction).
     pub required_signs_from_designations: Vec<String>,
+    /// `Enum` fields only — the closed list of valid values.
+    pub options: Option<Vec<String>>,
     pub value: Option<FieldValue>,
     pub history: Vec<FieldHistoryEntry>,
     /// Empty until a reviewer attaches signers via the process review screen.
@@ -94,6 +99,7 @@ pub struct StepResponse {
 #[derive(Serialize)]
 pub struct ProcessStateResponse {
     pub process_id: Uuid,
+    pub inward_reg_no: String,
     pub template_version_id: i32,
     pub process_name: String,
     pub ownership_id: Option<i32>,
@@ -104,6 +110,14 @@ pub struct ProcessStateResponse {
     /// Standalone admin-only comments. Only populated for admin callers;
     /// empty for residents.
     pub admin_comments: Vec<AdminComment>,
+    /// Append-only status/verification/return trail. Only populated for admin
+    /// callers, same visibility as `admin_comments`.
+    pub audit_log: Vec<process::audit::AuditLogEntry>,
+    pub effective_due_date: Option<chrono::NaiveDate>,
+    pub is_sla_paused: bool,
+    /// Real working days from SLA start to closure, net of pause time. `None` until
+    /// the process has actually closed (or the template has no SLA tracking).
+    pub tat_actual_working_days: Option<i32>,
     pub steps: Vec<StepResponse>,
 }
 
@@ -125,8 +139,50 @@ impl From<UserFlatInfo> for UserFlatResponse {
 }
 
 #[derive(Serialize)]
+pub struct ProcessListItemView {
+    #[serde(flatten)]
+    pub item: process::db::ProcessListItem,
+    /// Calendar days since creation, frozen at completion instead of growing forever.
+    pub days_running: i64,
+    /// `sla_due_date` shifted forward by time spent paused for a return. `None` until
+    /// the checklist is fully submitted (or the template has no `tat_working_days`).
+    pub effective_due_date: Option<chrono::NaiveDate>,
+    pub is_sla_paused: bool,
+    pub is_overdue: bool,
+}
+
+fn build_list_item_view(
+    item: process::db::ProcessListItem,
+    holidays: &std::collections::HashSet<chrono::NaiveDate>,
+    today: chrono::NaiveDate,
+) -> ProcessListItemView {
+    let is_completed = item.current_turn.as_deref() == Some("none");
+    let days_running_end = if is_completed {
+        item.updated_at
+    } else {
+        chrono::Utc::now()
+    };
+    let days_running = (days_running_end - item.created_at).num_days();
+    let effective_due_date = item.sla_due_date.map(|due| {
+        process::working_days::add_working_days(due, item.sla_paused_working_days, holidays)
+    });
+    let is_overdue = effective_due_date
+        .map(|due| !is_completed && today > due)
+        .unwrap_or(false);
+    let is_sla_paused = item.sla_paused_at.is_some();
+
+    ProcessListItemView {
+        item,
+        days_running,
+        effective_due_date,
+        is_sla_paused,
+        is_overdue,
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProcessListResponse {
-    pub processes: Vec<process::db::ProcessListItem>,
+    pub processes: Vec<ProcessListItemView>,
     pub flats: Vec<UserFlatResponse>,
 }
 
@@ -254,11 +310,13 @@ fn map_step_template(
             fields.push(FieldResponse {
                 template_field_id: field_id,
                 name: f.name.clone(),
-                r#type: f.r#type.clone(),
+                description: f.description.clone(),
+                r#type: f.r#type,
                 filled_by: f.filled_by.clone(),
                 is_optional: f.is_optional,
                 requires_signature: f.requires_signature,
                 required_signs_from_designations: f.required_signs_from_designations.clone(),
+                options: f.options.clone(),
                 value,
                 history,
                 signature_status,
@@ -300,9 +358,7 @@ pub async fn list_user_processes(
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     // process.view sees every resident's list too, but never gains write access.
-    let can_view_all = !payload.personal_only
-        && (user.has_permission(authentication::Permission::ProcessReviewer)
-            || user.has_permission(authentication::Permission::ProcessView));
+    let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
     let mut items = if can_view_all {
         process::db::list_all_processes(&mut conn).await
     } else {
@@ -328,10 +384,14 @@ pub async fn list_user_processes(
         .internal_err()?;
     let flats = flats_db.into_iter().map(UserFlatResponse::from).collect();
 
-    Ok(Json(ProcessListResponse {
-        processes: items,
-        flats,
-    }))
+    let holidays = process::db::get_holidays(&mut conn).await.internal_err()?;
+    let today = chrono::Utc::now().date_naive();
+    let processes = items
+        .into_iter()
+        .map(|item| build_list_item_view(item, &holidays, today))
+        .collect();
+
+    Ok(Json(ProcessListResponse { processes, flats }))
 }
 
 /// Resolves an existing `process_id` (authorization checked) or fetch-or-creates one
@@ -439,7 +499,7 @@ async fn compute_signature_blocking_state(
     let require_sig_doc_ids: Vec<Uuid> = step_info_map_for_gating
         .values()
         .flat_map(|info| &info.fields)
-        .filter(|f| f.requires_signature && f.r#type == "document")
+        .filter(|f| f.requires_signature && f.r#type == process::FieldType::File)
         .filter_map(|f| {
             latest_field_states
                 .get(&f.field_id)
@@ -524,9 +584,7 @@ pub async fn get_process_state(
     // Read-only oversight (process.view) sees any resident's process state, same as a
     // reviewer — this handler never writes to another user's process, only the caller's own.
     // personal_only (set by the plain /process page) always forces the caller's own view.
-    let can_view_all = !payload.personal_only
-        && (user.has_permission(authentication::Permission::ProcessReviewer)
-            || user.has_permission(authentication::Permission::ProcessView));
+    let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
 
     let (process_id, template_version_id, ownership_id, template) =
         resolve_process_target(&mut tx, &state, &user, &payload, can_view_all).await?;
@@ -567,6 +625,7 @@ pub async fn get_process_state(
                 document_id: row.document_id,
                 document_title: title,
                 updated_at: row.updated_at,
+                actor_email: row.actor_email,
             });
     }
 
@@ -638,18 +697,45 @@ pub async fn get_process_state(
     let is_completed =
         statuses.get(&template.step_id) == Some(&process::state_machine::StepStatus::Completed);
 
-    let admin_comments = if can_view_all {
-        get_admin_comments(&mut tx, process_id)
-            .await
-            .unwrap_or_default()
+    let (admin_comments, audit_log) = if can_view_all {
+        (
+            get_admin_comments(&mut tx, process_id)
+                .await
+                .unwrap_or_default(),
+            process::audit::get_audit_log(&mut tx, process_id)
+                .await
+                .unwrap_or_default(),
+        )
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
+
+    let sla_info = process::db::get_process_info(&mut tx, process_id)
+        .await
+        .internal_err()?;
+    let inward_reg_no = sla_info
+        .as_ref()
+        .map(|info| info.inward_reg_no.clone())
+        .unwrap_or_default();
+    let (effective_due_date, is_sla_paused) = match sla_info {
+        Some(info) => {
+            let holidays = process::db::get_holidays(&mut tx).await.internal_err()?;
+            let due = info.sla_due_date.map(|d| {
+                process::working_days::add_working_days(d, info.sla_paused_working_days, &holidays)
+            });
+            (due, info.sla_paused_at.is_some())
+        }
+        None => (None, false),
+    };
+    let tat_actual_working_days = process::db::compute_tat_actual(&mut tx, process_id)
+        .await
+        .internal_err()?;
 
     tx.commit().await.internal_err()?;
 
     Ok(Json(ProcessStateResponse {
         process_id,
+        inward_reg_no,
         template_version_id,
         process_name: template.name.clone(),
         ownership_id,
@@ -658,6 +744,109 @@ pub async fn get_process_state(
         next_actions,
         reviews,
         admin_comments,
+        audit_log,
+        effective_due_date,
+        is_sla_paused,
+        tat_actual_working_days,
         steps: steps_res,
     }))
+}
+
+#[derive(Deserialize)]
+pub struct AuditLogPdfRequest {
+    pub process_id: Uuid,
+}
+
+fn audit_event_label(event_type: &str) -> String {
+    process::audit::AuditEventType::from_db_str(event_type)
+        .map(|e| e.label().to_string())
+        .unwrap_or_else(|| event_type.to_string())
+}
+
+/// POST /api/v1/process/audit-log-pdf
+/// Same visibility as `admin_comments`/`audit_log` on `/process/state` — reviewer or
+/// view permission, any process (admin oversight, not scoped to a specific flat).
+pub async fn audit_log_pdf(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<AuditLogPdfRequest>,
+) -> Result<axum::response::Response, ApiError> {
+    if !super::can_view_all_processes(&user) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Not authorized to view the audit trail".to_string()),
+        ));
+    }
+
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
+    let (info, template) =
+        load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+
+    let flat_label = if let Some(oid) = info.ownership_id {
+        get_flat_info_for_ownership(&mut conn, oid)
+            .await
+            .internal_err()?
+            .map(|f| f.label)
+    } else {
+        None
+    };
+
+    let audit_log = process::audit::get_audit_log(&mut conn, payload.process_id)
+        .await
+        .internal_err()?;
+
+    let entries: Vec<accounting::pdf::AuditPdfEntry> = audit_log
+        .into_iter()
+        .map(|e| accounting::pdf::AuditPdfEntry {
+            created_at: e.created_at,
+            event_label: audit_event_label(&e.event_type),
+            actor_email: e.actor_email,
+            detail: e.detail,
+        })
+        .collect();
+
+    let field_names: HashMap<i32, String> = process::state_machine::build_step_info_map(&template)
+        .values()
+        .flat_map(|info| info.fields.iter())
+        .map(|f| (f.field_id, f.name.clone()))
+        .collect();
+
+    let field_history = process::db::get_field_history(&mut conn, payload.process_id)
+        .await
+        .internal_err()?;
+
+    let field_changes: Vec<accounting::pdf::FieldChangePdfEntry> = field_history
+        .into_iter()
+        .map(|h| {
+            let value = match h.text_value.as_deref() {
+                Some("true") => "Yes".to_string(),
+                Some("false") => "No".to_string(),
+                Some(other) => other.to_string(),
+                None if h.document_id.is_some() => "Document uploaded".to_string(),
+                None => "(cleared)".to_string(),
+            };
+            accounting::pdf::FieldChangePdfEntry {
+                created_at: h.updated_at,
+                field_name: field_names
+                    .get(&h.template_field_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Field {}", h.template_field_id)),
+                value,
+                actor_email: h.actor_email,
+            }
+        })
+        .collect();
+
+    let bytes = accounting::pdf::render_process_audit_pdf(
+        &template.name,
+        flat_label.as_deref(),
+        &payload.process_id.to_string(),
+        &entries,
+        &field_changes,
+    );
+
+    Ok(pdf_response(
+        &format!("audit-trail-{}.pdf", payload.process_id),
+        bytes,
+    ))
 }

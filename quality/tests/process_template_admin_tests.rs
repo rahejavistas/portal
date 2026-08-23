@@ -72,6 +72,20 @@ fn activate(url: &str, jwt: &str, template_id: i32, version_id: i32) -> Result<(
     }
 }
 
+fn deactivate(url: &str, jwt: &str, template_id: i32) -> Result<(), u16> {
+    let resp = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/deactivate",
+        url
+    ))
+    .set("Authorization", &auth(jwt))
+    .send_json(serde_json::json!({ "template_id": template_id }));
+    match resp {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
 fn list_templates(url: &str, jwt: &str) -> Vec<serde_json::Value> {
     ureq::post(&format!("{}/api/v1/admin/process-templates/list", url))
         .set("Authorization", &auth(jwt))
@@ -525,6 +539,102 @@ async fn test_permission_gating_for_template_routes() {
         activate(&url, &no_perm_jwt, template_id, v1_id).unwrap_err(),
         403
     );
+    assert_eq!(
+        deactivate(&url, &no_perm_jwt, template_id).unwrap_err(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/tat-report",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/holidays/list",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/holidays/add",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({"holiday_date": "2026-01-26", "description": "Republic Day"}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+    assert_eq!(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process-templates/holidays/remove",
+            url
+        ))
+        .set("Authorization", &auth(&no_perm_jwt))
+        .send_json(serde_json::json!({"holiday_date": "2026-01-26"}))
+        .unwrap_err()
+        .into_response()
+        .unwrap()
+        .status(),
+        403
+    );
+
+    let add_resp: serde_json::Value = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/holidays/add",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({"holiday_date": "2026-01-26", "description": "Republic Day"}))
+    .unwrap()
+    .into_json()
+    .unwrap();
+    assert_eq!(add_resp["status"], "ok");
+
+    let list_resp: Vec<serde_json::Value> = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/holidays/list",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({}))
+    .unwrap()
+    .into_json()
+    .unwrap();
+    assert!(list_resp
+        .iter()
+        .any(|h| h["holiday_date"] == "2026-01-26" && h["description"] == "Republic Day"));
+
+    let remove_resp = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/holidays/remove",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({"holiday_date": "2026-01-26"}));
+    assert!(remove_resp.is_ok());
+
+    let tat_report_resp = ureq::post(&format!(
+        "{}/api/v1/admin/process-templates/tat-report",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({}));
+    assert!(tat_report_resp.is_ok());
 
     // No special permission needed for the resident-facing "available" endpoint.
     let available_resp = ureq::post(&format!("{}/api/v1/process-templates/available", url))
@@ -533,5 +643,81 @@ async fn test_permission_gating_for_template_routes() {
     assert!(
         available_resp.is_ok(),
         "available should be reachable by any authenticated user"
+    );
+}
+
+/// Deactivating a template clears active_version_id so it drops out of the
+/// resident-facing "available" list, but an already-started process stays pinned to
+/// its own version and keeps working normally.
+#[tokio::test]
+async fn test_deactivate_hides_from_available_but_in_progress_process_keeps_working() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let manager_jwt = seeded_manager(&env, &admin_jwt, "deactivate", "913");
+
+    let resp = save(
+        &url,
+        &manager_jwt,
+        &simple_draft("Deactivate Me Template", None),
+    )
+    .unwrap();
+    let version_id = resp["version_id"].as_i64().unwrap() as i32;
+    let templates = list_templates(&url, &manager_jwt);
+    let template_id = templates
+        .iter()
+        .find(|t| {
+            t["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["version_id"].as_i64() == Some(version_id as i64))
+        })
+        .unwrap()["template_id"]
+        .as_i64()
+        .unwrap() as i32;
+
+    activate(&url, &manager_jwt, template_id, version_id).expect("activate should succeed");
+    assert!(available_templates(&url, &manager_jwt)
+        .iter()
+        .any(|t| t["template_id"].as_i64() == Some(template_id as i64)));
+
+    quick_create_user(
+        &env,
+        &admin_jwt,
+        "deactivate_res@tmpladmin.test",
+        "D",
+        "914",
+    );
+    let res_jwt = quick_onboard_user(&env, "deactivate_res@tmpladmin.test", "password123");
+    let start_resp: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&res_jwt))
+        .send_json(serde_json::json!({"template_id": template_id}))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let process_id = start_resp["process_id"].as_str().unwrap().to_string();
+
+    deactivate(&url, &manager_jwt, template_id).expect("deactivate should succeed");
+
+    assert!(
+        !available_templates(&url, &manager_jwt)
+            .iter()
+            .any(|t| t["template_id"].as_i64() == Some(template_id as i64)),
+        "deactivated template must drop out of the resident-facing available list"
+    );
+    let templates_after = list_templates(&url, &manager_jwt);
+    let entry_after = templates_after
+        .iter()
+        .find(|t| t["template_id"].as_i64() == Some(template_id as i64))
+        .unwrap();
+    assert!(entry_after["active_version_id"].is_null());
+
+    let reload_resp = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&res_jwt))
+        .send_json(serde_json::json!({"process_id": process_id}));
+    assert!(
+        reload_resp.is_ok(),
+        "an in-progress process must keep working after its template is deactivated"
     );
 }

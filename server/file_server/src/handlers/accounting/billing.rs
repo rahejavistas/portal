@@ -125,7 +125,7 @@ pub async fn bulk_assign_billing_plan(
         .map_err(|_| not_found("Billing plan not found"))?;
     if plan.billing_type != "FLAT_RATE" {
         return Err(bad_request(
-            "Only FLAT_RATE plans can be bulk-assigned — PER_SQFT and SLAB plans need an area_sqft entered per flat",
+            "Only FLAT_RATE plans can be bulk-assigned - PER_SQFT and SLAB plans need an area_sqft entered per flat",
         ));
     }
     let flats_assigned = accounting::db::bulk_assign_flat_rate_plan_to_unassigned(
@@ -436,6 +436,15 @@ pub struct RecordPaymentResponse {
     pub newly_recorded: bool,
 }
 
+/// True if a concurrent request won the race on the same payment reference.
+fn is_duplicate_reference_race(e: &accounting::payments::PaymentError) -> bool {
+    matches!(
+        e,
+        accounting::payments::PaymentError::Db(db_err)
+            if db_err.as_database_error().is_some_and(|d| d.is_unique_violation())
+    )
+}
+
 pub async fn record_payment(
     SessionUser(user): SessionUser,
     State(state): State<AppState>,
@@ -444,24 +453,44 @@ pub async fn record_payment(
     if payload.amount <= Decimal::ZERO {
         return Err(bad_request("amount must be positive"));
     }
-    let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
-    let result = accounting::payments::record_payment(
-        &mut tx,
-        accounting::payments::RecordPaymentRequest {
-            invoice_id: payload.invoice_id,
-            amount: payload.amount,
-            payment_method: &payload.payment_method,
-            reference_number: payload.reference_number.as_deref(),
-            payment_date: payload.payment_date,
-            recorded_by: user.user_id,
-        },
-    )
-    .await
-    .map_err(|e| match &e {
-        accounting::payments::PaymentError::InvoiceNotFound => not_found("Invoice not found"),
-        _ => bad_request(e.to_string()),
-    })?;
-    tx.commit().await.map_err(internal_err)?;
+
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        let mut tx = state.pg_pool.begin().await.map_err(internal_err)?;
+        let outcome = accounting::payments::record_payment(
+            &mut tx,
+            accounting::payments::RecordPaymentRequest {
+                invoice_id: payload.invoice_id,
+                amount: payload.amount,
+                payment_method: &payload.payment_method,
+                reference_number: payload.reference_number.as_deref(),
+                payment_date: payload.payment_date,
+                recorded_by: user.user_id,
+            },
+        )
+        .await;
+
+        match outcome {
+            Ok(result) => {
+                tx.commit().await.map_err(internal_err)?;
+                break result;
+            }
+            Err(e) if attempts == 1 && is_duplicate_reference_race(&e) => {
+                tx.rollback().await.map_err(internal_err)?;
+                continue;
+            }
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(match &e {
+                    accounting::payments::PaymentError::InvoiceNotFound => {
+                        not_found("Invoice not found")
+                    }
+                    _ => bad_request(e.to_string()),
+                });
+            }
+        }
+    };
 
     Ok(Json(RecordPaymentResponse {
         payment_id: result.payment_id,

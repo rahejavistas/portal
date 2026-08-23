@@ -9,9 +9,9 @@ const HTML: &str = r##"
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Vistas Portal - Accounting &amp; Billing</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; font-family: 'Outfit', sans-serif; margin: 0; padding: 0; }
+        * { box-sizing: border-box; font-family: 'Google Sans', 'Outfit', sans-serif; margin: 0; padding: 0; }
         html { overflow-x: hidden; }
         :root {
             --background: #FFFFFF;
@@ -29,7 +29,7 @@ const HTML: &str = r##"
         }
         body { background-color: var(--muted); color: var(--foreground); min-height: 100vh; overflow-x: hidden; width: 100%; }
         .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; max-width: 100%; }
-        .layout-container { display: flex; width: 100%; min-height: 100vh; }
+        .layout-container { display: flex; width: 100%; min-height: calc(100vh - 56px); margin-top: 56px; }
         .bg-shape-top-right {
             position: fixed; width: 500px; height: 500px; border-radius: 50%;
             background: radial-gradient(circle, rgba(59, 130, 246, 0.04) 0%, rgba(59, 130, 246, 0) 70%);
@@ -39,21 +39,61 @@ const HTML: &str = r##"
         .sidebar {
             width: 260px; min-width: 260px; border-right: 1px solid var(--border);
             display: flex; flex-direction: column; padding: 40px 24px; justify-content: space-between;
-            position: fixed; height: 100vh; left: 0; top: 0; z-index: 150; background-color: var(--background);
+            position: fixed; height: calc(100vh - 56px); left: 0; top: 56px; z-index: 150; background-color: var(--background);
             transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform;
         }
-        .mobile-topbar {
-            display: none; position: fixed; top: 0; left: 0; right: 0; height: 48px; background-color: var(--background);
-            border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; padding: 0 14px; z-index: 200;
+        .topbar {
+            display: flex; position: fixed; top: 0; left: 0; right: 0; height: 56px; background-color: var(--background);
+            border-bottom: 1px solid var(--border); align-items: center; gap: 16px; padding: 0 16px; z-index: 200;
         }
-        .mobile-topbar-brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em; text-transform: uppercase; color: var(--primary); }
-        .hamburger-btn { background: none; border: none; cursor: pointer; padding: 8px; display: flex; flex-direction: column; gap: 5px; border-radius: var(--radius-md); transition: background 0.2s; }
+        .topbar-left { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+        .topbar-brand { font-size: 19px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.2; color: #000000; text-decoration: none; white-space: nowrap; }
+        .help-btn {
+            width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: none;
+            color: var(--muted-foreground); font-weight: 700; font-size: 0.8125rem; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s, color 0.2s;
+            margin-left: auto; margin-right: 8px;
+        }
+        .help-btn:hover { background-color: var(--muted); color: var(--foreground); }
+        .help-panel-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.5); z-index: 10020; }
+        .help-panel-overlay.open { display: block; }
+        .help-panel {
+            position: fixed; top: 0; right: 0; width: 420px; max-width: 92vw; height: 100vh; background: var(--background);
+            box-shadow: -8px 0 32px rgba(0, 0, 0, 0.18); z-index: 10021; transform: translateX(100%); visibility: hidden;
+            pointer-events: none; transition: transform 0.25s ease, visibility 0.25s ease; display: flex; flex-direction: column;
+        }
+        .help-panel.open { transform: translateX(0); visibility: visible; pointer-events: auto; }
+        .help-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+        .help-panel-header h2 { margin: 0; font-size: 1.125rem; }
+        .help-panel-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted-foreground); line-height: 1; padding: 4px; }
+        .help-panel-body { padding: 20px 24px; overflow-y: auto; flex: 1; font-size: 0.875rem; line-height: 1.6; color: var(--foreground); }
+        .help-panel-body h3 { font-size: 0.9375rem; margin: 20px 0 8px; }
+        .help-panel-body h3:first-child { margin-top: 0; }
+        .help-panel-body p { margin: 0 0 10px; }
+        @media (max-width: 700px) { .help-panel { width: 100vw; max-width: 100vw; } }
+        .topbar-search { flex: 1; display: flex; justify-content: center; min-width: 0; position: relative; }
+        .topbar-search input { width: 100%; max-width: 420px; padding: 9px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); background-color: var(--muted); color: var(--foreground); font-size: 0.875rem; }
+        .topbar-search input:focus { outline: none; border-color: var(--primary); background-color: var(--background); }
+        .topbar-search-results { display: none; position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); width: 100%; max-width: 420px; background-color: var(--background); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); max-height: 320px; overflow-y: auto; z-index: 220; }
+        .topbar-search-results.open { display: block; }
+        .topbar-search-result { display: block; width: 100%; text-align: left; padding: 10px 14px; background: none; border: none; cursor: pointer; font-size: 0.8125rem; color: var(--foreground); }
+        .topbar-search-result:hover, .topbar-search-result.active { background-color: var(--muted); }
+        .topbar-search-empty { padding: 12px 14px; font-size: 0.8125rem; color: var(--muted-foreground); }
+        .topbar-profile { position: relative; flex-shrink: 0; }
+        .topbar-profile-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-md); transition: background 0.2s; }
+        .topbar-profile-btn:hover { background-color: var(--muted); }
+        .topbar-avatar { width: 32px; height: 32px; border-radius: 50%; background-color: var(--primary); color: var(--background); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8125rem; flex-shrink: 0; }
+        .topbar-dropdown { display: none; position: absolute; top: calc(100% + 8px); right: 0; min-width: 190px; background-color: var(--background); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15); z-index: 210; overflow: hidden; }
+        .topbar-dropdown.open { display: block; }
+        .topbar-dropdown-email { padding: 12px 16px; font-size: 0.75rem; color: var(--muted-foreground); border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .topbar-dropdown .logout-btn { width: 100%; text-align: left; border: none; border-radius: 0; padding: 12px 16px; text-transform: none; }
+        .topbar-dropdown-item { display: block; width: 100%; text-align: left; background: none; border: none; padding: 12px 16px; font-weight: 600; font-size: 0.8125rem; color: var(--foreground); cursor: pointer; text-decoration: none; }
+        .topbar-dropdown-item:hover { background-color: var(--muted); }
+        .hamburger-btn { background: none; border: none; cursor: pointer; padding: 8px; display: none; flex-direction: column; gap: 5px; border-radius: var(--radius-md); transition: background 0.2s; }
         .hamburger-btn:hover { background-color: var(--muted); }
         .hamburger-btn span { display: block; width: 22px; height: 2px; background-color: var(--foreground); border-radius: 2px; }
         .sidebar-overlay { display: none; position: fixed; inset: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.45); z-index: 149; opacity: 0; transition: opacity 0.3s ease; }
         .sidebar-overlay.open { display: block; opacity: 1; }
-        .sidebar-brand h1 { font-size: 2.25rem; font-weight: 800; letter-spacing: -0.03em; text-transform: uppercase; color: var(--primary); margin: 0 0 4px 0; line-height: 0.9; }
-        .sidebar-brand p { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted-foreground); margin: 0 0 40px 0; }
         .nav-menu { display: flex; flex-direction: column; gap: 10px; flex-grow: 1; }
         .nav-item { display: block; padding: 12px 16px; border: none; border-radius: var(--radius-md); color: var(--foreground); text-decoration: none; font-weight: 600; font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; transition: all 0.2s ease; text-align: left; background: none; width: 100%; }
         .nav-item:hover { background-color: var(--muted); transform: scale(1.03); }
@@ -151,23 +191,71 @@ const HTML: &str = r##"
         .settings-category-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 8px; }
 
         @media (max-width: 768px) {
-            .mobile-topbar { display: flex; }
+            .hamburger-btn { display: flex; }
+            .topbar-brand { font-size: 1.0625rem; }
             .sidebar { transform: translateX(-100%); width: min(280px, 85vw); min-width: unset; }
             .sidebar.open { transform: translateX(0); box-shadow: 8px 0 24px rgba(0,0,0,0.15); }
-            .workspace { margin-left: 0; padding: 76px 20px 40px; }
+            .workspace { margin-left: 0; padding: 20px; }
             h2 { font-size: 1.875rem; }
             .card, .table-container { padding: 20px; }
             .form-row-2, .form-row-3 { grid-template-columns: 1fr; }
+            .topbar-search { display: none; }
         }
     </style>
 </head>
 <body>
     <div class="bg-shape-top-right"></div>
-    <div class="mobile-topbar" id="mobile-topbar">
-        <span class="mobile-topbar-brand">Accounting</span>
-        <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu"><span></span><span></span><span></span></button>
+    <div class="topbar" id="topbar">
+        <div class="topbar-left">
+            <button class="hamburger-btn" id="hamburger-btn" onclick="toggleSidebar()" aria-label="Open menu"><span></span><span></span><span></span></button>
+            <a href="/admin-accounting" class="topbar-brand">Accounting</a>
+        </div>
+        <div class="topbar-search">
+            <input type="text" id="topbar-search-input" placeholder="Search" maxlength="64" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="topbar-search-results" aria-autocomplete="list">
+            <div class="topbar-search-results" id="topbar-search-results" role="listbox"></div>
+        </div>
+        <button class="help-btn" onclick="openHelpPanel(event)" aria-label="Page help" title="Help">?</button>
+        <div class="topbar-profile" id="topbar-profile">
+            <button class="topbar-profile-btn" id="topbar-profile-btn" onclick="toggleProfileMenu()" aria-haspopup="true" aria-expanded="false" aria-label="Profile menu">
+                <span class="topbar-avatar" id="topbar-avatar">?</span>
+            </button>
+            <div class="topbar-dropdown" id="topbar-dropdown">
+                <div class="topbar-dropdown-email" id="topbar-dropdown-email">Loading...</div>
+                <a href="/admin?tab=society" class="topbar-dropdown-item" id="topbar-society-profile-link" style="display:none; text-decoration:none;">Society Profile</a>
+                <button class="topbar-dropdown-item" onclick="openSupportModal()">Contact Support</button>
+                <button class="logout-btn" id="logout-btn" onclick="localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';">Log Out</button>
+            </div>
+        </div>
     </div>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="help-panel-overlay" id="help-panel-overlay" onclick="closeHelpPanel()"></div>
+    <aside class="help-panel" id="help-panel" role="dialog" aria-modal="true" aria-labelledby="help-panel-title">
+        <div class="help-panel-header">
+            <h2 id="help-panel-title">Page Help</h2>
+            <button class="help-panel-close" onclick="closeHelpPanel()" aria-label="Close help">&times;</button>
+        </div>
+        <div class="help-panel-body" id="help-panel-body"></div>
+    </aside>
+
+    <div id="support-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10000; justify-content:center; align-items:center;" onclick="if (event.target === this) closeSupportModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Contact Support</h3>
+            <p class="card-desc" style="margin-top:0;">Support, a suggestion, a feature request, anything.</p>
+            <div class="form-group">
+                <label for="support-message">Message</label>
+                <textarea id="support-message" rows="5" placeholder="What's going on?"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="support-image">Screenshot (Optional)</label>
+                <input type="file" id="support-image" accept="image/png,image/jpeg,image/webp">
+            </div>
+            <div class="feedback-box" id="support-feedback"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
+                <button onclick="closeSupportModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button type="button" id="support-submit-btn" class="btn" onclick="submitSupportTicket()">Send</button>
+            </div>
+        </div>
+    </div>
 
     <div class="layout-container">
         <aside class="sidebar" id="sidebar">
@@ -178,7 +266,7 @@ const HTML: &str = r##"
             <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom: 4px;">
                 <div>
                     <h2>Accounting &amp; Billing</h2>
-                    <p class="section-desc">Maintenance billing, payments, vendor expenses, and the books — in one place.</p>
+                    <p class="section-desc">Maintenance billing, payments, vendor expenses, and the books - in one place.</p>
                 </div>
             </div>
 
@@ -253,6 +341,190 @@ const HTML: &str = r##"
             document.body.style.overflow = '';
         }
 
+        function toggleProfileMenu() {
+            const dropdown = document.getElementById('topbar-dropdown');
+            const btn = document.getElementById('topbar-profile-btn');
+            const isOpen = dropdown.classList.toggle('open');
+            btn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        document.addEventListener('click', (e) => {
+            const profile = document.getElementById('topbar-profile');
+            if (profile && !profile.contains(e.target)) {
+                document.getElementById('topbar-dropdown').classList.remove('open');
+                document.getElementById('topbar-profile-btn').setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        const HELP_CONTENT = {
+            overview: {
+                title: 'Overview',
+                body: `
+                    <h3>What this shows</h3>
+                    <p>Unpaid and partially-paid invoices, pending payment claims, pending expense approvals, and this month's collection summary - everything that needs attention at a glance.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            billing: {
+                title: 'Billing & Invoices',
+                body: `
+                    <h3>Billing plans</h3>
+                    <p>Flat-rate, per-sqft, or slab-based plans, assigned per flat. Generate invoices for a billing period once plans are set.</p>
+                    <h3>Recording a payment</h3>
+                    <p>Confirm a resident's bank transfer, cheque, or cash payment against their invoice. Overpayment is credited as advance for next time.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            payments: {
+                title: 'Payments & Claims',
+                body: `
+                    <h3>Payment claims</h3>
+                    <p>Residents report a payment themselves with a reference number; confirm or reject the claim here once you've verified it against the bank statement.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            vendors: {
+                title: 'Vendors & Expenses',
+                body: `
+                    <h3>Vendors & purchase orders</h3>
+                    <p>Register vendors and raise purchase orders before an expense is submitted against them.</p>
+                    <h3>Expenses</h3>
+                    <p>Submitted expenses need approval before they post to the books. TDS is applied automatically where a matching rule exists.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            bankrecon: {
+                title: 'Bank Reconciliation',
+                body: `
+                    <h3>Importing a statement</h3>
+                    <p>Upload a bank statement CSV. Each line can be auto-matched, manually matched to a ledger transaction, or ignored.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            budgets: {
+                title: 'Budgets',
+                body: `
+                    <h3>Setting a budget</h3>
+                    <p>Enter a budgeted amount per account for the fiscal year. The variance report compares it against actuals as the year goes.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            reports: {
+                title: 'Reports',
+                body: `
+                    <h3>What's here</h3>
+                    <p>GST summary, defaulters, collection efficiency, and other standard reports. Generated PDFs use the society profile details set under Settings.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+            settings: {
+                title: 'Settings',
+                body: `
+                    <h3>What's here</h3>
+                    <p>GST, interest, and TDS rules, chart of accounts, and payment instructions shown to residents. These are society-wide and apply to every invoice generated after a change.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
+        };
+
+        function renderHelpContent() {
+            const activeBtn = document.querySelector('#acct-subtab-bar .subtab-btn.active');
+            const tab = (activeBtn && activeBtn.dataset.tab) || 'overview';
+            const content = HELP_CONTENT[tab] || HELP_CONTENT.overview;
+            document.getElementById('help-panel-title').innerHTML = content.title;
+            document.getElementById('help-panel-body').innerHTML = content.body;
+        }
+
+        let helpPanelOpener = null;
+        function openHelpPanel(e) {
+            helpPanelOpener = (e && e.currentTarget) || document.activeElement;
+            renderHelpContent();
+            document.getElementById('help-panel').classList.add('open');
+            document.getElementById('help-panel-overlay').classList.add('open');
+            document.querySelector('.help-panel-close').focus();
+        }
+        function closeHelpPanel() {
+            document.getElementById('help-panel').classList.remove('open');
+            document.getElementById('help-panel-overlay').classList.remove('open');
+            if (helpPanelOpener) helpPanelOpener.focus();
+        }
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && document.getElementById('help-panel').classList.contains('open')) {
+                closeHelpPanel();
+            }
+        });
+
+        function openSupportModal() {
+            document.getElementById('topbar-dropdown').classList.remove('open');
+            document.getElementById('support-message').value = '';
+            document.getElementById('support-image').value = '';
+            const feedback = document.getElementById('support-feedback');
+            feedback.style.display = 'none';
+            feedback.innerHTML = '';
+            document.getElementById('support-modal').style.display = 'flex';
+        }
+        function closeSupportModal() {
+            document.getElementById('support-modal').style.display = 'none';
+        }
+        async function submitSupportTicket() {
+            const message = document.getElementById('support-message').value.trim();
+            const imageInput = document.getElementById('support-image');
+            const feedback = document.getElementById('support-feedback');
+            const btn = document.getElementById('support-submit-btn');
+
+            if (!message) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Message is required.`;
+                return;
+            }
+            const image = imageInput.files[0];
+            if (image && image.size > 5 * 1024 * 1024) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Image must be under 5MB.`;
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('message', message);
+            if (image) formData.append('image', image);
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/support/ticket`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                if (response.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">&#10003;</span> Sent. We usually reply within a day.`;
+                    setTimeout(closeSupportModal, 1200);
+                } else {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.innerHTML = `<span class="icon">!</span> ${escapeHtml(await readErrorMessage(response))}`;
+                }
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.innerHTML = `<span class="icon">!</span> Network error communicating with server.`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send';
+            }
+        }
+
         function escapeHtml(v) {
             if (v === null || v === undefined) return '';
             return v.toString().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -297,13 +569,13 @@ const HTML: &str = r##"
         }
 
         function money(v) {
-            if (v === null || v === undefined) return '—';
+            if (v === null || v === undefined) return '-';
             const n = typeof v === 'string' ? parseFloat(v) : v;
-            if (Number.isNaN(n)) return '—';
+            if (Number.isNaN(n)) return '-';
             return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
         function fmtDate(v) {
-            if (!v) return '—';
+            if (!v) return '-';
             const d = new Date(v);
             if (Number.isNaN(d.getTime())) return v;
             return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -343,7 +615,7 @@ const HTML: &str = r##"
             if (plan.billing_type === 'SLAB' && Array.isArray(cfg.slabs)) {
                 return cfg.slabs.map(s => `up to ${s.max_sqft} sqft: ${money(s.amount)}`).join(', ');
             }
-            return '—';
+            return '-';
         }
 
         function info(text) {
@@ -381,6 +653,112 @@ const HTML: &str = r##"
             window.location.hash = tab;
             loadTab(tab);
         }
+
+        function searchDestinations() {
+            return [
+                { label: 'Overview', action: () => switchAcctTab('overview'), show: true },
+                { label: 'Billing & Invoices', action: () => switchAcctTab('billing'), show: true },
+                { label: 'Payments & Claims', action: () => switchAcctTab('payments'), show: true },
+                { label: 'Vendors & Expenses', action: () => switchAcctTab('vendors'), show: true },
+                { label: 'Bank Reconciliation', action: () => switchAcctTab('bankrecon'), show: true },
+                { label: 'Budgets', action: () => switchAcctTab('budgets'), show: true },
+                { label: 'Reports', action: () => switchAcctTab('reports'), show: true },
+                { label: 'Settings', action: () => switchAcctTab('settings'), show: true },
+                { label: 'Back to Admin', action: () => { window.location.href = '/admin'; }, show: true },
+                { label: 'Processes', action: () => { window.location.href = '/process'; }, show: true },
+            ];
+        }
+
+        function levenshteinDistance(a, b) {
+            const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+            for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+            for (let i = 1; i <= a.length; i++) {
+                for (let j = 1; j <= b.length; j++) {
+                    dp[i][j] = a[i - 1] === b[j - 1]
+                        ? dp[i - 1][j - 1]
+                        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+                }
+            }
+            return dp[a.length][b.length];
+        }
+
+        function fuzzyMatchesDestination(label, query) {
+            const l = label.toLowerCase();
+            if (l.includes(query)) return true;
+            if (query.length > 64) return false;
+            return l.split(/[^a-z0-9]+/).some(word => word.length > 2 && levenshteinDistance(word, query) <= 2);
+        }
+
+        let searchMatches = [];
+        let searchActiveIndex = -1;
+
+        function renderSearchResults(query) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            const q = query.trim().toLowerCase();
+            if (!q) {
+                searchResults.classList.remove('open');
+                searchResults.innerHTML = '';
+                searchInput.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            searchMatches = searchDestinations().filter(d => d.show && fuzzyMatchesDestination(d.label, q));
+            searchActiveIndex = -1;
+            searchResults.innerHTML = searchMatches.length === 0
+                ? '<div class="topbar-search-empty">No matches</div>'
+                : searchMatches.map((d, i) => `<button type="button" class="topbar-search-result" id="topbar-search-option-${i}" role="option" aria-selected="false" data-index="${i}">${escapeHtml(d.label)}</button>`).join('');
+            searchResults.classList.add('open');
+            searchInput.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeSearchResults() {
+            document.getElementById('topbar-search-results').classList.remove('open');
+            document.getElementById('topbar-search-input').setAttribute('aria-expanded', 'false');
+        }
+
+        function runSearchMatch(index) {
+            const searchInput = document.getElementById('topbar-search-input');
+            const match = searchMatches[index];
+            if (!match) return;
+            match.action();
+            searchInput.value = '';
+            closeSearchResults();
+            searchInput.blur();
+        }
+
+        (function initTopbarSearch() {
+            const searchInput = document.getElementById('topbar-search-input');
+            const searchResults = document.getElementById('topbar-search-results');
+            if (!searchInput) return;
+            searchInput.addEventListener('input', (e) => renderSearchResults(e.target.value));
+            searchInput.addEventListener('keydown', (e) => {
+                const items = Array.from(searchResults.querySelectorAll('.topbar-search-result'));
+                if (e.key === 'ArrowDown' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex + 1) % items.length;
+                } else if (e.key === 'ArrowUp' && items.length > 0) {
+                    e.preventDefault();
+                    searchActiveIndex = (searchActiveIndex - 1 + items.length) % items.length;
+                } else if (e.key === 'Enter' && searchActiveIndex >= 0) {
+                    e.preventDefault();
+                    runSearchMatch(searchActiveIndex);
+                    return;
+                } else if (e.key === 'Escape') {
+                    closeSearchResults();
+                    return;
+                } else {
+                    return;
+                }
+                items.forEach((el, i) => el.classList.toggle('active', i === searchActiveIndex));
+            });
+            searchResults.addEventListener('click', (e) => {
+                const btn = e.target.closest('.topbar-search-result');
+                if (btn) runSearchMatch(Number(btn.dataset.index));
+            });
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.topbar-search')) closeSearchResults();
+            });
+        })();
 
         const _loadedTabs = new Set();
         function loadTab(tab) {
@@ -437,8 +815,8 @@ const HTML: &str = r##"
                         </tbody></table></div>` : '<div class="empty-state">Nothing outstanding right now.</div>'}`;
 
                 let pendingHtml = '';
-                if (claims.length) pendingHtml += `<div style="margin-bottom:14px;"><strong>${claims.length}</strong> payment claim(s) awaiting review — see Payments &amp; Claims tab.</div>`;
-                if (expenses.length) pendingHtml += `<div><strong>${expenses.length}</strong> vendor expense(s) awaiting approval — see Vendors &amp; Expenses tab.</div>`;
+                if (claims.length) pendingHtml += `<div style="margin-bottom:14px;"><strong>${claims.length}</strong> payment claim(s) awaiting review - see Payments &amp; Claims tab.</div>`;
+                if (expenses.length) pendingHtml += `<div><strong>${expenses.length}</strong> vendor expense(s) awaiting approval - see Vendors &amp; Expenses tab.</div>`;
                 document.getElementById('overview-pending-actions').innerHTML = `
                     <h3>Needs Your Attention</h3>
                     <p class="card-desc">Things sitting in a queue somewhere else in this module.</p>
@@ -465,7 +843,7 @@ const HTML: &str = r##"
         function loadBillingTab() {
             const panel = document.getElementById('panel-billing');
             panel.innerHTML = `
-                <div class="info-banner">${info('')}<span>Generating a bill posts it straight to the ledger (accrual accounting) — use <strong>Preview</strong> first to catch a bad plan/rate before residents see anything.</span></div>
+                <div class="info-banner">${info('')}<span>Generating a bill posts it straight to the ledger (accrual accounting) - use <strong>Preview</strong> first to catch a bad plan/rate before residents see anything.</span></div>
                 <div class="card">
                     <div class="settings-category-header"><h3>Billing Plans ${info('A billing plan defines how a unit\'s maintenance is calculated: a flat fixed amount, a rate per sqft, or a slab table by area.')}</h3>
                         ${canManageAccounting ? '<button class="btn" onclick="openCreatePlanModal()">+ New Plan</button>' : ''}</div>
@@ -484,12 +862,12 @@ const HTML: &str = r##"
                         <div class="feedback-box" id="assign-plan-feedback"></div>
                         <div class="btn-row">
                             <button class="btn" onclick="submitAssignPlan()" ${canManageAccounting ? '' : 'disabled'}>Assign</button>
-                            <button class="btn btn-secondary" onclick="submitBulkAssignPlan()" ${canManageAccounting ? '' : 'disabled'}>Assign to All Unassigned Units ${info('Only works for Flat Rate plans, since Per Sqft and Slab plans need an area entered per flat. Skips any flat that already has a plan assigned — it never overwrites an existing assignment.')}</button>
+                            <button class="btn btn-secondary" onclick="submitBulkAssignPlan()" ${canManageAccounting ? '' : 'disabled'}>Assign to All Unassigned Units ${info('Only works for Flat Rate plans, since Per Sqft and Slab plans need an area entered per flat. Skips any flat that already has a plan assigned - it never overwrites an existing assignment.')}</button>
                         </div>
                     </div>
                     <div class="card">
-                        <h3>Generate Bills ${info('Creates one invoice per flat for the billing period. A flat already billed for that period is skipped, not double-billed — safe to run again.')}</h3>
-                        <p class="card-desc">Preview computes amounts without saving anything — always check it first for a new period.</p>
+                        <h3>Generate Bills ${info('Creates one invoice per flat for the billing period. A flat already billed for that period is skipped, not double-billed - safe to run again.')}</h3>
+                        <p class="card-desc">Preview computes amounts without saving anything - always check it first for a new period.</p>
                         <div class="form-row-2">
                             <div class="form-group"><label>Period Start</label><input id="gen-period-start" type="date"></div>
                             <div class="form-group"><label>Period End</label><input id="gen-period-end" type="date"></div>
@@ -503,7 +881,7 @@ const HTML: &str = r##"
                     </div>
                 </div>
                 <div class="card">
-                    <div class="settings-category-header"><h3>Unit Assignments ${info('Every flat and whichever billing plan is currently linked to it. A flat with no plan here will never get billed — check this before generating invoices.')}</h3>
+                    <div class="settings-category-header"><h3>Unit Assignments ${info('Every flat and whichever billing plan is currently linked to it. A flat with no plan here will never get billed - check this before generating invoices.')}</h3>
                         <label style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--muted-foreground);">
                             <input type="checkbox" id="assignments-unassigned-only" onchange="loadBillingAssignments()"> Unassigned only
                         </label>
@@ -539,8 +917,8 @@ const HTML: &str = r##"
                     ${filtered.map(r => `<tr>
                         <td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td>
                         <td>${r.billing_plan_name ? escapeHtml(r.billing_plan_name) : '<span class="badge badge-red">No plan assigned</span>'}</td>
-                        <td>${r.billing_type ? billingTypeLabel(r.billing_type) : '—'}</td>
-                        <td class="num">${r.area_sqft ? r.area_sqft : '—'}</td>
+                        <td>${r.billing_type ? billingTypeLabel(r.billing_type) : '-'}</td>
+                        <td class="num">${r.area_sqft ? r.area_sqft : '-'}</td>
                     </tr>`).join('')}
                     </tbody></table></div>`;
             } catch (e) {
@@ -573,9 +951,9 @@ const HTML: &str = r##"
                     <h3>New Billing Plan</h3>
                     <div class="form-group"><label>Name</label><input id="plan-name" placeholder="e.g. Standard Maintenance"></div>
                     <div class="form-group"><label>Type</label><select id="plan-type" onchange="renderPlanConfigFields()">
-                        <option value="FLAT_RATE">Flat Rate — same amount for every unit</option>
-                        <option value="PER_SQFT">Per Sqft — rate × unit area</option>
-                        <option value="SLAB">Slab — amount depends on area bracket</option>
+                        <option value="FLAT_RATE">Flat Rate - same amount for every unit</option>
+                        <option value="PER_SQFT">Per Sqft - rate × unit area</option>
+                        <option value="SLAB">Slab - amount depends on area bracket</option>
                     </select></div>
                     <div id="plan-config-fields"></div>
                     <div class="form-group"><label>Frequency</label><select id="plan-frequency"><option value="MONTHLY">Monthly</option><option value="QUARTERLY">Quarterly</option></select></div>
@@ -667,7 +1045,7 @@ const HTML: &str = r##"
             if (!plan) { feedback.className = 'feedback-box error'; feedback.textContent = 'Pick a billing plan first'; return; }
             if (plan.billing_type !== 'FLAT_RATE') {
                 feedback.className = 'feedback-box error';
-                feedback.textContent = 'Only Flat Rate plans can be bulk-assigned — assign Per Sqft/Slab plans one flat at a time so each gets its own area.';
+                feedback.textContent = 'Only Flat Rate plans can be bulk-assigned - assign Per Sqft/Slab plans one flat at a time so each gets its own area.';
                 return;
             }
             const ok = await confirmCritical(
@@ -696,7 +1074,7 @@ const HTML: &str = r##"
                 el.innerHTML = `<div class="table-container" style="max-height:300px;"><table><thead><tr><th>Flat</th><th>Plan</th><th class="num">Base</th><th class="num">GST</th><th class="num">Total</th></tr></thead><tbody>
                     ${rows.map(r => r.error
                         ? `<tr><td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td><td colspan="4" style="color:var(--danger);">${escapeHtml(r.error)}</td></tr>`
-                        : `<tr><td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td><td>${escapeHtml(r.billing_plan_name)}</td><td class="num">${money(r.base_amount)}</td><td class="num">${r.gst_applicable ? money(r.gst_amount) : '—'}</td><td class="num"><strong>${money(r.total_amount)}</strong></td></tr>`
+                        : `<tr><td>${escapeHtml(r.wing)}-${escapeHtml(r.flat_number)}</td><td>${escapeHtml(r.billing_plan_name)}</td><td class="num">${money(r.base_amount)}</td><td class="num">${r.gst_applicable ? money(r.gst_amount) : '-'}</td><td class="num"><strong>${money(r.total_amount)}</strong></td></tr>`
                     ).join('')}
                     </tbody></table></div>`;
             } catch (e) {
@@ -774,7 +1152,7 @@ const HTML: &str = r##"
                 <div class="modal-content">
                     <button class="close-modal-btn" onclick="document.getElementById('void-invoice-modal').style.display='none'">&times;</button>
                     <h3>Void Invoice <span id="void-invoice-number"></span></h3>
-                    <div class="info-banner warn">${info('')}<span>Voiding is permanent and only allowed before any payment is recorded. This does not delete the invoice — it's kept, marked VOID, for audit history.</span></div>
+                    <div class="info-banner warn">${info('')}<span>Voiding is permanent and only allowed before any payment is recorded. This does not delete the invoice - it's kept, marked VOID, for audit history.</span></div>
                     <div class="form-group"><label>Reason (required)</label><textarea id="void-reason" rows="3" placeholder="e.g. Duplicate bill generated by mistake"></textarea></div>
                     <div class="feedback-box" id="void-feedback"></div>
                     <button class="btn btn-danger" onclick="submitVoidInvoice()">Void This Invoice</button>
@@ -793,7 +1171,7 @@ const HTML: &str = r##"
             const reason = document.getElementById('void-reason').value.trim();
             const feedback = document.getElementById('void-feedback');
             if (!reason) { feedback.className = 'feedback-box error'; feedback.textContent = 'A reason is required.'; return; }
-            const ok = await confirmCritical(`This permanently voids invoice — it can never be un-voided.`, 'Void Invoice', 'Are you absolutely sure?');
+            const ok = await confirmCritical(`This permanently voids invoice - it can never be un-voided.`, 'Void Invoice', 'Are you absolutely sure?');
             if (!ok) return;
             try {
                 await apiPost(`/invoices/${_voidInvoiceId}/void`, { reason });
@@ -856,7 +1234,7 @@ const HTML: &str = r##"
                 const invoices = [...unpaid, ...partial];
                 if (!invoices.length) { el.innerHTML = `<div class="empty-state">${flat.wing}-${flat.flat_number} has no outstanding invoices.</div>`; return; }
                 el.innerHTML = `<div class="form-group"><label>Invoice</label><select id="pay-invoice-select">
-                        ${invoices.map(i => `<option value="${i.invoice_id}" data-outstanding="${(parseFloat(i.total_amount) - parseFloat(i.amount_paid)).toFixed(2)}">${escapeHtml(i.invoice_number)} — outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')}
+                        ${invoices.map(i => `<option value="${i.invoice_id}" data-outstanding="${(parseFloat(i.total_amount) - parseFloat(i.amount_paid)).toFixed(2)}">${escapeHtml(i.invoice_number)} - outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')}
                     </select></div>
                     <div class="form-row-3">
                         <div class="form-group"><label>Amount</label><input id="pay-amount" type="number" step="0.01"></div>
@@ -884,7 +1262,7 @@ const HTML: &str = r##"
                     payment_date: document.getElementById('pay-date').value,
                 });
                 feedback.className = 'feedback-box success';
-                feedback.textContent = result.newly_recorded ? `Recorded. Receipt ${result.receipt_number}.` : `Already recorded earlier as receipt ${result.receipt_number} — not double-posted.`;
+                feedback.textContent = result.newly_recorded ? `Recorded. Receipt ${result.receipt_number}.` : `Already recorded earlier as receipt ${result.receipt_number} - not double-posted.`;
                 loadFlatInvoicesForPayment();
             } catch (e) {
                 feedback.className = 'feedback-box error'; feedback.textContent = e.message;
@@ -911,7 +1289,7 @@ const HTML: &str = r##"
                     const invoices = [...unpaid, ...partial];
                     const sel = document.getElementById('credit-apply-invoice');
                     sel.innerHTML = invoices.length
-                        ? invoices.map(i => `<option value="${i.invoice_id}">${escapeHtml(i.invoice_number)} — outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')
+                        ? invoices.map(i => `<option value="${i.invoice_id}">${escapeHtml(i.invoice_number)} - outstanding ${money(parseFloat(i.total_amount) - parseFloat(i.amount_paid))}</option>`).join('')
                         : '<option value="">No outstanding invoices for this flat</option>';
                 }
             } catch (e) {
@@ -957,7 +1335,7 @@ const HTML: &str = r##"
                 if (!claims.length) { el.innerHTML = '<div class="empty-state">No pending claims.</div>'; return; }
                 el.innerHTML = `<div class="table-container"><table><thead><tr><th>Flat</th><th>Invoice</th><th class="num">Amount</th><th>Method</th><th>Reference</th><th>Note</th><th>Submitted</th><th>Actions</th></tr></thead><tbody>
                     ${claims.map(c => `<tr>
-                        <td>${escapeHtml(c.wing)}-${escapeHtml(c.flat_number)}</td><td>${escapeHtml(c.invoice_number)}</td><td class="num">${money(c.amount)}</td><td>${paymentMethodLabel(c.payment_method)}</td><td>${escapeHtml(c.reference_number)}</td><td>${escapeHtml(c.note || '—')}</td><td>${fmtDate(c.submitted_at)}</td>
+                        <td>${escapeHtml(c.wing)}-${escapeHtml(c.flat_number)}</td><td>${escapeHtml(c.invoice_number)}</td><td class="num">${money(c.amount)}</td><td>${paymentMethodLabel(c.payment_method)}</td><td>${escapeHtml(c.reference_number)}</td><td>${escapeHtml(c.note || '-')}</td><td>${fmtDate(c.submitted_at)}</td>
                         <td><div class="btn-row">
                             <button class="btn btn-success btn-sm" onclick="confirmClaim('${c.claim_id}')">Confirm</button>
                             <button class="btn btn-danger btn-sm" onclick="rejectClaim('${c.claim_id}')">Reject</button>
@@ -1010,7 +1388,7 @@ const HTML: &str = r##"
                         </div>` : ''}
                     </div>
                     <div class="card">
-                        <div class="settings-category-header"><h3>Purchase Orders ${info('Optional — only needed if you want to track a committed amount before the vendor bill arrives.')}</h3></div>
+                        <div class="settings-category-header"><h3>Purchase Orders ${info('Optional - only needed if you want to track a committed amount before the vendor bill arrives.')}</h3></div>
                         <div id="pos-table"><div class="empty-state">Loading…</div></div>
                         ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
                             <div class="form-group"><label>Vendor</label><select id="po-vendor-select"></select></div>
@@ -1022,7 +1400,7 @@ const HTML: &str = r##"
                     </div>
                 </div>
                 <div class="card">
-                    <h3>Submit Vendor Expense ${info('TDS (if any rule matches) is computed automatically and shown before you approve — the vendor is paid net of TDS, and TDS itself is tracked separately for Form 16A.')}</h3>
+                    <h3>Submit Vendor Expense ${info('TDS (if any rule matches) is computed automatically and shown before you approve - the vendor is paid net of TDS, and TDS itself is tracked separately for Form 16A.')}</h3>
                     <div class="form-row-3">
                         <div class="form-group"><label>Vendor</label><select id="exp-vendor-select"></select></div>
                         <div class="form-group"><label>Purchase Order (optional)</label><select id="exp-po-select"><option value="">None</option></select></div>
@@ -1063,7 +1441,7 @@ const HTML: &str = r##"
                 selects.forEach(s => { if (s) s.innerHTML = vendors.map(v => `<option value="${v.vendor_id}">${escapeHtml(v.name)} (${escapeHtml(v.category)})</option>`).join('') || '<option>No vendors yet</option>'; });
                 const el = document.getElementById('vendors-table');
                 el.innerHTML = vendors.length ? `<div class="table-container" style="max-height:260px;"><table><thead><tr><th>Name</th><th>Category</th><th>GSTIN</th></tr></thead><tbody>
-                    ${vendors.map(v => `<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(v.category)}</td><td>${escapeHtml(v.gstin || '—')}</td></tr>`).join('')}
+                    ${vendors.map(v => `<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(v.category)}</td><td>${escapeHtml(v.gstin || '-')}</td></tr>`).join('')}
                     </tbody></table></div>` : '<div class="empty-state">No vendors yet.</div>';
             } catch (e) {
                 document.getElementById('vendors-table').innerHTML = `<div class="feedback-box error" style="display:block;">${escapeHtml(e.message)}</div>`;
@@ -1087,7 +1465,7 @@ const HTML: &str = r##"
             try {
                 const pos = await apiPost('/purchase-orders/list', {});
                 const select = document.getElementById('exp-po-select');
-                if (select) select.innerHTML = '<option value="">None</option>' + pos.map(p => `<option value="${p.po_id}" data-vendor="${p.vendor_id}">${escapeHtml(p.po_number)} — ${escapeHtml(p.description)} (${money(p.amount)})</option>`).join('');
+                if (select) select.innerHTML = '<option value="">None</option>' + pos.map(p => `<option value="${p.po_id}" data-vendor="${p.vendor_id}">${escapeHtml(p.po_number)} - ${escapeHtml(p.description)} (${money(p.amount)})</option>`).join('');
                 const el = document.getElementById('pos-table');
                 el.innerHTML = pos.length ? `<div class="table-container" style="max-height:260px;"><table><thead><tr><th>PO #</th><th>Description</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
                     ${pos.map(p => `<tr><td>${escapeHtml(p.po_number)}</td><td>${escapeHtml(p.description)}</td><td class="num">${money(p.amount)}</td><td>${statusBadge(p.status)}</td></tr>`).join('')}
@@ -1114,7 +1492,7 @@ const HTML: &str = r##"
             try {
                 const accounts = await apiPost('/accounts/list', { account_type: 'EXPENSE', active_only: true });
                 const select = document.getElementById('exp-account-select');
-                if (select) select.innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} — ${escapeHtml(a.name)}</option>`).join('') || '<option>No expense accounts</option>';
+                if (select) select.innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} - ${escapeHtml(a.name)}</option>`).join('') || '<option>No expense accounts</option>';
             } catch (e) { }
         }
 
@@ -1152,7 +1530,7 @@ const HTML: &str = r##"
                         <td>${e.status === 'PENDING_APPROVAL' && canManageAccounting ? `<div class="btn-row">
                             <button class="btn btn-success btn-sm" onclick="approveExpense('${e.expense_id}')">Approve</button>
                             <button class="btn btn-danger btn-sm" onclick="rejectExpense('${e.expense_id}')">Reject</button>
-                        </div>` : '—'}</td>
+                        </div>` : '-'}</td>
                     </tr>`).join('')}
                     </tbody></table></div>`;
             } catch (e) {
@@ -1258,7 +1636,7 @@ const HTML: &str = r##"
                         ${canManageAccounting ? `<td>${l.match_status === 'UNMATCHED' ? `<div class="btn-row">
                             <button class="btn btn-secondary btn-sm" onclick="manualMatchLine(${l.line_id})">Match…</button>
                             <button class="btn btn-secondary btn-sm" onclick="ignoreLine(${l.line_id})">Ignore</button>
-                        </div>` : '—'}</td>` : ''}
+                        </div>` : '-'}</td>` : ''}
                     </tr>`).join('')}
                     </tbody></table></div>`;
             } catch (e) {
@@ -1268,7 +1646,7 @@ const HTML: &str = r##"
         async function manualMatchLine(lineId) {
             const line = _bankReconLinesCache.find(l => l.line_id === lineId);
             document.getElementById('match-line-summary').textContent = line
-                ? `Statement line: ${fmtDate(line.transaction_date)} — ${line.description} — ${money(line.amount)}`
+                ? `Statement line: ${fmtDate(line.transaction_date)} - ${line.description} - ${money(line.amount)}`
                 : `Statement line #${lineId}`;
             const list = document.getElementById('match-candidates-list');
             list.innerHTML = '<div class="empty-state">Loading…</div>';
@@ -1297,7 +1675,7 @@ const HTML: &str = r##"
             } catch (e) { await showAlert(e.message); }
         }
         async function ignoreLine(lineId) {
-            const ok = await showConfirm('This marks the line as reviewed-and-ignored — it will no longer show as unmatched.', 'Ignore Line', 'Ignore this statement line?');
+            const ok = await showConfirm('This marks the line as reviewed-and-ignored - it will no longer show as unmatched.', 'Ignore Line', 'Ignore this statement line?');
             if (!ok) return;
             try {
                 await apiPost(`/bank-reconciliation/lines/${lineId}/ignore`, {});
@@ -1320,7 +1698,7 @@ const HTML: &str = r##"
                     <button class="btn" style="margin-top:8px;" onclick="submitBudget()">Save Budget</button>
                 </div>` : ''}
                 <div class="card">
-                    <h3>Budget vs Actuals ${info('Actual is signed by each account\'s own normal balance, so it always compares directly against the budgeted amount — over-budget on an expense shows as a positive variance, same as under-collecting on income.')}</h3>
+                    <h3>Budget vs Actuals ${info('Actual is signed by each account\'s own normal balance, so it always compares directly against the budgeted amount - over-budget on an expense shows as a positive variance, same as under-collecting on income.')}</h3>
                     <div id="budget-variance-table"><div class="empty-state">Pick a fiscal year above.</div></div>
                 </div>
             `;
@@ -1346,7 +1724,7 @@ const HTML: &str = r##"
                 <button type="button" class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">✕</button>`;
             container.appendChild(row);
             apiPost('/accounts/list', { active_only: true }).then(accounts => {
-                row.querySelector('.budget-line-account').innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} — ${escapeHtml(a.name)} (${titleCase(a.account_type)})</option>`).join('');
+                row.querySelector('.budget-line-account').innerHTML = accounts.map(a => `<option value="${a.account_id}">${escapeHtml(a.code)} - ${escapeHtml(a.name)} (${titleCase(a.account_type)})</option>`).join('');
             }).catch(() => {});
         }
 
@@ -1377,7 +1755,7 @@ const HTML: &str = r##"
                 el.innerHTML = `<div class="table-container"><table><thead><tr><th>Account</th><th>Type</th><th class="num">Budgeted</th><th class="num">Actual</th><th class="num">Variance</th></tr></thead><tbody>
                     ${rows.map(r => {
                         const over = parseFloat(r.variance_amount) > 0;
-                        return `<tr><td>${escapeHtml(r.account_code)} — ${escapeHtml(r.account_name)}</td><td><span class="badge badge-blue">${r.account_type}</span></td>
+                        return `<tr><td>${escapeHtml(r.account_code)} - ${escapeHtml(r.account_name)}</td><td><span class="badge badge-blue">${r.account_type}</span></td>
                             <td class="num">${money(r.budgeted_amount)}</td><td class="num">${money(r.actual_amount)}</td>
                             <td class="num" style="color:${over ? 'var(--danger)' : 'var(--secondary)'}; font-weight:700;">${money(r.variance_amount)}${r.variance_pct !== null ? ` (${r.variance_pct}%)` : ''}</td></tr>`;
                     }).join('')}
@@ -1402,14 +1780,14 @@ const HTML: &str = r##"
                     ${reportButtonCard('Invoice Register', 'Every invoice generated in the period.', 'downloadInvoiceRegister()')}
                     ${reportButtonCard('GST Summary', 'Taxable value and GST collected, by rate.', 'downloadGstSummary()')}
                     ${reportButtonCard('Interest Report', 'Every interest charge posted in the period.', 'downloadInterestReport()')}
-                    ${reportButtonCard('Receipt Register', 'All receipts issued, in sequence — check for gaps.', 'downloadReceiptRegister()')}
+                    ${reportButtonCard('Receipt Register', 'All receipts issued, in sequence - check for gaps.', 'downloadReceiptRegister()')}
                     ${reportButtonCard('Payment Mode Summary', 'Collections broken down by payment method.', 'downloadPaymentModeSummary()')}
                     ${reportButtonCard('Income Summary', 'Income-side totals by account for the period.', 'downloadIncomeSummary()')}
                     ${reportButtonCard('Outstanding Dues', 'Every unit with a pending balance, as of today.', 'downloadOutstandingDues()')}
                     ${reportButtonCard('Ageing Summary', 'Outstanding dues bucketed 0-30/31-60/61-90/90+ days.', 'downloadAgeingSummary()')}
                 </div>
                 <div class="card">
-                    <h3>Defaulter List ${info('For legal/notice action — units that have been unpaid for longer than the number of days you choose below.')}</h3>
+                    <h3>Defaulter List ${info('For legal/notice action - units that have been unpaid for longer than the number of days you choose below.')}</h3>
                     <div class="form-group" style="max-width:220px;"><label>Minimum Days Overdue</label><input id="defaulters-min-days" type="number" value="90"></div>
                     <button class="btn btn-secondary" onclick="downloadDefaulters()">Download CSV</button>
                 </div>
@@ -1477,6 +1855,7 @@ const HTML: &str = r##"
             try {
                 const overview = await apiPost('/settings/overview', {});
                 const fiscalYears = await apiPost('/fiscal-years/list', {});
+                const duesStatements = await loadDuesStatements();
                 panel.innerHTML = `
                     ${settingsCategoryGst(overview.gst)}
                     ${settingsCategoryInterest(overview.interest)}
@@ -1484,6 +1863,7 @@ const HTML: &str = r##"
                     ${settingsCategoryFunds(overview.funds, overview.fund_contribution_rules)}
                     ${settingsCategoryAccounts(overview.chart_of_accounts)}
                     ${settingsCategoryPaymentInstructions(overview.payment_instructions)}
+                    ${settingsCategoryDuesStatements(duesStatements)}
                     ${settingsCategoryFiscalYears(fiscalYears)}
                 `;
             } catch (e) {
@@ -1493,10 +1873,10 @@ const HTML: &str = r##"
 
         function settingsCategoryGst(rules) {
             return `<div class="settings-category">
-                <div class="settings-category-header"><h3>GST Rules ${info('Below the exempt threshold, GST does not apply at all. Above it, GST applies to the full billed amount, not just the excess. Get these figures confirmed by your CA — they change with CBIC circulars.')}</h3></div>
+                <div class="settings-category-header"><h3>GST Rules ${info('Below the exempt threshold, GST does not apply at all. Above it, GST applies to the full billed amount, not just the excess. Get these figures confirmed by your CA - they change with CBIC circulars.')}</h3></div>
                 ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th>Exempt Threshold</th><th>Turnover Threshold</th><th class="num">Rate</th><th>HSN/SAC</th><th>GSTIN</th><th>Effective From</th></tr></thead><tbody>
-                    ${rules.map(r => `<tr><td>${money(r.per_member_monthly_exempt_threshold)}</td><td>${money(r.society_turnover_registration_threshold)}</td><td class="num">${r.gst_rate_pct}%</td><td>${escapeHtml(r.hsn_sac_code)}</td><td>${escapeHtml(r.society_gstin || '—')}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
-                    </tbody></table></div>` : '<div class="empty-state">No GST rule configured yet — GST will not be applied to any invoice until one exists.</div>'}
+                    ${rules.map(r => `<tr><td>${money(r.per_member_monthly_exempt_threshold)}</td><td>${money(r.society_turnover_registration_threshold)}</td><td class="num">${r.gst_rate_pct}%</td><td>${escapeHtml(r.hsn_sac_code)}</td><td>${escapeHtml(r.society_gstin || '-')}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No GST rule configured yet - GST will not be applied to any invoice until one exists.</div>'}
                 ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
                     <div class="form-row-3">
                         <div class="form-group"><label>Exempt Threshold (₹/month)</label><input id="gst-exempt-threshold" type="number" step="0.01"></div>
@@ -1532,12 +1912,12 @@ const HTML: &str = r##"
         function settingsCategoryInterest(rules) {
             return `<div class="settings-category">
                 <div class="settings-category-header"><h3>Late Payment Interest ${info('Simple interest is charged once on the overdue amount for the days it\'s overdue. Monthly compounds every elapsed month. Confirm the rate against your society bylaws / state Cooperative Societies Act cap.')}</h3>
-                    ${canManageAccounting ? `<button class="btn btn-secondary btn-sm" onclick="runInterestJob()">Run Interest Job Now ${info('Charges interest on every currently-overdue invoice using the active rule below. Safe to re-run the same day — an invoice already charged today is skipped, not double-charged. There is no automatic scheduler in this app; this button (or an external cron hitting the same endpoint) is the only way interest actually gets applied.')}</button>` : ''}
+                    ${canManageAccounting ? `<button class="btn btn-secondary btn-sm" onclick="runInterestJob()">Run Interest Job Now ${info('Charges interest on every currently-overdue invoice using the active rule below. Safe to re-run the same day - an invoice already charged today is skipped, not double-charged. There is no automatic scheduler in this app; this button (or an external cron hitting the same endpoint) is the only way interest actually gets applied.')}</button>` : ''}
                 </div>
                 <div class="feedback-box" id="interest-run-feedback" style="margin-bottom:12px;"></div>
                 ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th class="num">Annual Rate</th><th>Grace Period</th><th>Compounding</th><th>Effective From</th></tr></thead><tbody>
                     ${rules.map(r => `<tr><td class="num">${r.annual_rate_pct}%</td><td>${r.grace_period_days} day(s)</td><td>${titleCase(r.compounding)}</td><td>${fmtDate(r.effective_from)}</td></tr>`).join('')}
-                    </tbody></table></div>` : '<div class="empty-state">No interest rule configured — overdue invoices will never accrue interest until one exists.</div>'}
+                    </tbody></table></div>` : '<div class="empty-state">No interest rule configured - overdue invoices will never accrue interest until one exists.</div>'}
                 ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
                     <div class="form-row-3">
                         <div class="form-group"><label>Annual Rate (%)</label><input id="interest-rate" type="number" step="0.01"></div>
@@ -1581,10 +1961,10 @@ const HTML: &str = r##"
 
         function settingsCategoryTds(rules) {
             return `<div class="settings-category">
-                <div class="settings-category-header"><h3>TDS Rules ${info('Applies once either a single vendor payment or the running total paid to that vendor this fiscal year crosses these limits. Confirm section/rate/thresholds with your CA — they change with the Union Budget.')}</h3></div>
+                <div class="settings-category-header"><h3>TDS Rules ${info('Applies once either a single vendor payment or the running total paid to that vendor this fiscal year crosses these limits. Confirm section/rate/thresholds with your CA - they change with the Union Budget.')}</h3></div>
                 ${rules.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th>Section</th><th>Category</th><th class="num">Rate</th><th class="num">Single Payment Threshold</th><th class="num">Annual Threshold</th></tr></thead><tbody>
                     ${rules.map(r => `<tr><td>${escapeHtml(r.section)}</td><td>${escapeHtml(r.payment_category)}</td><td class="num">${r.rate_pct}%</td><td class="num">${money(r.threshold_single_payment)}</td><td class="num">${money(r.threshold_annual_aggregate)}</td></tr>`).join('')}
-                    </tbody></table></div>` : '<div class="empty-state">No TDS rules yet — vendor expenses will attract no TDS until one is added.</div>'}
+                    </tbody></table></div>` : '<div class="empty-state">No TDS rules yet - vendor expenses will attract no TDS until one is added.</div>'}
                 ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
                     <div class="form-row-3">
                         <div class="form-group"><label>Section</label><input id="tds-section" placeholder="194C"></div>
@@ -1620,7 +2000,7 @@ const HTML: &str = r##"
         function settingsCategoryFunds(funds, rules) {
             const fundName = (id) => (funds.find(f => f.fund_id === id) || {}).name || `#${id}`;
             return `<div class="settings-category">
-                <div class="settings-category-header"><h3>Sinking &amp; Repair Funds ${info('A flat assigned to a fund with an active contribution rule gets an extra line item on its regular maintenance bill — fixed amount or a % of that bill\'s base maintenance charge.')}</h3></div>
+                <div class="settings-category-header"><h3>Sinking &amp; Repair Funds ${info('A flat assigned to a fund with an active contribution rule gets an extra line item on its regular maintenance bill - fixed amount or a % of that bill\'s base maintenance charge.')}</h3></div>
                 <div class="table-container" style="max-height:160px;">
                     <table><thead><tr><th>Code</th><th>Name</th><th>Restricted</th></tr></thead><tbody>
                     ${funds.map(f => `<tr><td>${escapeHtml(f.code)}</td><td>${escapeHtml(f.name)}</td><td>${f.is_restricted ? 'Yes' : 'No'}</td></tr>`).join('')}
@@ -1718,7 +2098,7 @@ const HTML: &str = r##"
         function settingsCategoryPaymentInstructions(pi) {
             return `<div class="settings-category">
                 <div class="settings-category-header"><h3>Payment Instructions ${info('Printed on every generated invoice PDF so residents know where to NEFT/transfer payment.')}</h3></div>
-                ${pi ? `<p class="card-desc"><strong>${escapeHtml(pi.account_holder_name)}</strong> — ${escapeHtml(pi.bank_name)}, A/C ${escapeHtml(pi.account_number)}, IFSC ${escapeHtml(pi.ifsc_code)}${pi.branch ? ', ' + escapeHtml(pi.branch) : ''}</p>` : '<div class="empty-state">Not set yet — invoices will be generated without bank details.</div>'}
+                ${pi ? `<p class="card-desc"><strong>${escapeHtml(pi.account_holder_name)}</strong> - ${escapeHtml(pi.bank_name)}, A/C ${escapeHtml(pi.account_number)}, IFSC ${escapeHtml(pi.ifsc_code)}${pi.branch ? ', ' + escapeHtml(pi.branch) : ''}</p>` : '<div class="empty-state">Not set yet - invoices will be generated without bank details.</div>'}
                 ${canManageAccounting ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
                     <div class="form-row-2">
                         <div class="form-group"><label>Account Holder Name</label><input id="pi-holder" value="${escapeHtml(pi?.account_holder_name || '')}"></div>
@@ -1758,6 +2138,85 @@ const HTML: &str = r##"
                 feedback.className = 'feedback-box success'; feedback.textContent = 'Saved.';
                 loadSettingsTab();
             } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = e.message; }
+        }
+
+        async function loadDuesStatements() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {
+                    method: 'POST', headers: authHeaders()
+                });
+                if (!resp.ok) return null;
+                const docs = await resp.json();
+                return docs
+                    .filter(d => d.document.category === 'DUES_STATEMENTS' && !d.document.is_deleted)
+                    .sort((a, b) => new Date(b.document.uploaded_date) - new Date(a.document.uploaded_date));
+            } catch (e) { return null; }
+        }
+
+        function settingsCategoryDuesStatements(docs) {
+            return `<div class="settings-category">
+                <div class="settings-category-header"><h3>Dues Statements ${info('A whole-society dues snapshot uploaded periodically, for societies not running the full billing/ledger workflow here. Just stored for admins to open and review - nothing here feeds invoices or the ledger.')}</h3></div>
+                ${docs === null ? `<div class="empty-state">This category isn\\'t visible to you yet - ask a super admin to grant "Dues Statements" document access to your designation under Roles &amp; Designations.</div>` :
+                  docs.length ? `<div class="table-container" style="max-height:220px;"><table><thead><tr><th>File</th><th>Uploaded</th><th></th></tr></thead><tbody>
+                    ${docs.map(d => `<tr><td>${escapeHtml(d.document.title)}</td><td>${fmtDate(d.document.uploaded_date)}</td><td><button class="btn btn-secondary btn-sm" onclick="downloadDuesStatement('${d.document.document_id}')">Download</button></td></tr>`).join('')}
+                    </tbody></table></div>` : '<div class="empty-state">No dues statement uploaded yet.</div>'}
+                ${canManageAccounting && docs !== null ? `<div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                    <div class="form-row-2">
+                        <div class="form-group"><label>Title</label><input id="dues-statement-title" placeholder="e.g. Dues as of Aug 2026"></div>
+                        <div class="form-group"><label>File (Excel/PDF)</label><input id="dues-statement-file" type="file" accept=".xlsx,.xls,.pdf"></div>
+                    </div>
+                    <div class="feedback-box" id="dues-statement-feedback"></div>
+                    <button class="btn" onclick="uploadDuesStatement()">Upload</button>
+                </div>` : ''}
+            </div>`;
+        }
+        async function uploadDuesStatement() {
+            const feedback = document.getElementById('dues-statement-feedback');
+            const fileInput = document.getElementById('dues-statement-file');
+            const titleInput = document.getElementById('dues-statement-title');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                feedback.className = 'feedback-box error'; feedback.textContent = 'Please select a file to upload.';
+                return;
+            }
+            const file = fileInput.files[0];
+            const title = titleInput.value.trim() || file.name;
+            try {
+                feedback.className = 'feedback-box'; feedback.textContent = 'Requesting upload URL...';
+                const urlRes = await fetch(`${API_BASE}/api/v1/admin/documents/upload-url`, {
+                    method: 'POST', headers: authHeaders(),
+                    body: JSON.stringify({
+                        title, category: 'DUES_STATEMENTS',
+                        filename: file.name, content_type: file.type || 'application/octet-stream'
+                    })
+                });
+                if (!urlRes.ok) { feedback.className = 'feedback-box error'; feedback.textContent = await readErrorMessage(urlRes); return; }
+                const { document_id, upload_url } = await urlRes.json();
+
+                feedback.textContent = 'Uploading file...';
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file
+                });
+                if (!putRes.ok) { feedback.className = 'feedback-box error'; feedback.textContent = 'Upload to storage failed. Please try again.'; return; }
+
+                feedback.textContent = 'Confirming upload...';
+                const confirmRes = await fetch(`${API_BASE}/api/v1/admin/documents/confirm-upload`, {
+                    method: 'POST', headers: authHeaders(), body: JSON.stringify({ document_id })
+                });
+                if (!confirmRes.ok) { feedback.className = 'feedback-box error'; feedback.textContent = await readErrorMessage(confirmRes); return; }
+
+                feedback.className = 'feedback-box success'; feedback.textContent = 'Uploaded.';
+                loadSettingsTab();
+            } catch (e) { feedback.className = 'feedback-box error'; feedback.textContent = 'Connection error.'; }
+        }
+        async function downloadDuesStatement(documentId) {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/${documentId}/get`, {
+                    method: 'POST', headers: authHeaders()
+                });
+                if (!resp.ok) { await showAlert(await readErrorMessage(resp)); return; }
+                const data = await resp.json();
+                if (data.download_url) { window.open(data.download_url, '_blank'); }
+            } catch (e) { await showAlert('Connection error.'); }
         }
 
         function settingsCategoryFiscalYears(years) {
@@ -1810,7 +2269,6 @@ const HTML: &str = r##"
         }
 
         (function renderSidebar() {
-            const logoutOnClick = `localStorage.removeItem('vfs_token'); localStorage.removeItem('vfs_user'); window.location.href='/login';`;
             const canManageRoles = !!(user && (user.can_manage_roles || user.can_manage_designations));
             const canViewUsers = !!(user && user.can_view_users);
             const canManageDocuments = !!(user && (user.can_manage_documents || user.can_manage_categories));
@@ -1838,21 +2296,23 @@ const HTML: &str = r##"
             const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');
             const myFlatDashboardLink = hasFlat ? `<a href="/dashboard" class="admin-btn">My Flat Dashboard &rarr;</a>` : '';
             const isSuperAdmin = !!(user && user.designations && user.designations.includes('super_admin'));
-            const societyProfileLink = isSuperAdmin ? `<a href="/admin?tab=society" class="nav-item" style="text-decoration:none;">Society Profile</a>` : '';
 
             document.getElementById('sidebar-brand-container').innerHTML = `
-                <h1>Admin</h1>
-                <p>Raheja Vistas Admin Room</p>
                 <nav class="nav-menu">
                     ${residentsGroup}
                     ${documentsLink}
                     ${processesGroup}
                     <a href="/admin-accounting" class="nav-item active" style="text-decoration:none;">Accounting &amp; Billing</a>
-                    ${societyProfileLink}
                     ${myFlatDashboardLink}
-                    <button class="logout-btn" style="margin-top:8px;" onclick="${logoutOnClick}">Log Out</button>
                 </nav>
             `;
+            if (user) {
+                document.getElementById('topbar-avatar').textContent = user.email.charAt(0).toUpperCase();
+                document.getElementById('topbar-dropdown-email').textContent = user.email;
+                if (isSuperAdmin) {
+                    document.getElementById('topbar-society-profile-link').style.display = 'block';
+                }
+            }
         })();
 
         function toggleNavGroup(id) {

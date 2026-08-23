@@ -11,13 +11,17 @@ Three things are **not** permissions but still gate UI:
   personal `/process` page, and the `/dashboard` profile view.
 - **`super_admin` designation** — a seed-only designation that holds all 12 permissions.
   Nothing in the UI hardcodes a `super_admin` check for capability gating; it just happens
-  to unlock everything because it holds every permission.
+  to unlock everything because it holds every permission — except the **Society Profile**
+  tab (society identity, Flat Setup — wings, floors, flats, fire-flat marking — and Public
+  Holidays), which genuinely is hardcoded to this designation and isn't gated by any
+  permission at all.
 - **Whether accounting is turned on for the society at all** — a separate on/off switch
-  from `accounting.view`/`accounting.manage`. If it's off, the Accounting & Billing tab and
-  the resident Billing tab stay hidden even for someone holding those permissions. The
-  Society Profile tab (see below) is the one exception — it's `super_admin`-only and
-  visible regardless, since a super admin needs it to see the society's own identity
-  either way.
+  from `accounting.view`/`accounting.manage`. If it's off, the Accounting & Billing tab
+  stays hidden even for someone holding those permissions. The Society Profile tab is the
+  one exception — visible regardless, since a super admin needs it to see the society's
+  own identity either way. The resident-facing Billing tab has been removed from the UI
+  entirely for now (the underlying accounting data/permissions are unchanged; it's just
+  not linked to from the resident dashboard).
 
 ---
 
@@ -95,6 +99,11 @@ Three things are **not** permissions but still gate UI:
 - `/admin-process` shows every resident's process queue, tabs (Admin Review Required /
   User Input Required / Completed), and process detail view with admin-role fields and
   reviewer comments visible.
+- For any template with TAT tracking on, the queue also shows a "Time Running" /
+  "TAT Due" column pair (sortable), and the process detail view shows a TAT-due badge and
+  an **Audit Trail** button — a popup with the status timeline (every completion/
+  approval/return, who and when) and field-change history (every value a resident or
+  admin saved, who saved it), plus a "Export PDF" button for the same content.
 - No write actions: no approve/reject, no "upload as admin", no admin note submission.
   (Combined with `process.reviewer` below for the write side — this permission alone is
   strictly read/oversight.)
@@ -125,6 +134,8 @@ Three things are **not** permissions but still gate UI:
 - Preview modal: read-only render of a version's stages/substeps/fields, matching the
   resident-facing `/process` page's visual language, so an admin can check how a template
   will actually look before activating it.
+- Versions popup also has a **Deactivate** button — hides the template from the resident
+  "Start Process" picker without touching any process already in progress on it.
 - This permission does not itself grant `process.view`/`process.reviewer` — it only manages
   template *definitions*, not any resident's in-progress process data.
 
@@ -154,6 +165,13 @@ Three things are **not** permissions but still gate UI:
   when the account was created) is a separate, tighter gate — restricted to the
   `super_admin` designation specifically, not this permission. Holding `accounting.manage`
   does not unlock it.
+- Settings → **Dues Statements**: upload a whole-society dues snapshot (Excel/PDF) for
+  societies not running the full billing/ledger workflow here — stored for admins to open
+  and review, doesn't feed invoices or the ledger. Uploading requires `accounting.manage`;
+  seeing the list at all is gated separately, by read access to the `DUES_STATEMENTS`
+  document category (see `documents.categories.manage`'s Document Category Access above) —
+  a designation with `accounting.view`/`accounting.manage` but no grant on that category
+  sees a message pointing them to ask a super admin for access, instead of the list.
 
 ---
 
@@ -168,8 +186,8 @@ Three things are **not** permissions but still gate UI:
 | `designations.manage` | Roles → Manage Designations | Designation CRUD, permission matrix, category access |
 | `documents.all.manage` | Documents → Explorer/Add Document | Full document lifecycle |
 | `documents.categories.manage` | Documents → Categories | Category CRUD |
-| `process.view` | Process Review (`/admin-process`) | Read-only process oversight |
+| `process.view` | Process Review (`/admin-process`) | Read-only process oversight, TAT columns, Audit Trail popup/PDF |
 | `process.reviewer` | Process Review (`/admin-process`) | Approve/reject/upload/notes |
-| `process.templates.manage` | Process Templates | Builder: create/edit/version/activate templates |
+| `process.templates.manage` | Process Templates | Builder: create/edit/version/activate/deactivate templates |
 | `accounting.view` | Accounting & Billing | Read-only: ledger, invoices, receipts, payments, reports |
 | `accounting.manage` | Accounting & Billing | Full control: billing, invoicing, payments, vendors, TDS, bank reconciliation, budgets, fiscal year close |

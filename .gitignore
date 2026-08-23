@@ -25,3 +25,5 @@ bazel-*
 
 *.env*
 config_*.toml
+
+scripts/seed_dev_data.sh

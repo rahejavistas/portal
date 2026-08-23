@@ -54,6 +54,7 @@ async fn send_mfa_otp_email(to: &str, code: &str) {
         ],
         code: Some(code.to_string()),
         cta: None,
+        attachment: None,
     };
     if let Err(e) = email::send_email(&payload).await {
         eprintln!("MFA OTP email send error: {}", e);
@@ -72,9 +73,10 @@ pub async fn login(
     State(state): State<AppState>,
     Json(payload): Json<LoginPayload>,
 ) -> impl IntoResponse {
+    let email = payload.email.trim().to_lowercase();
     match state
         .permissions_manager
-        .check_authenticated(&payload.email, &payload.password)
+        .check_authenticated(&email, &payload.password)
         .await
     {
         Ok(authentication::AuthResult::Success(user)) => {
@@ -87,7 +89,10 @@ pub async fn login(
                             status: "error".to_string(),
                             user: None,
                             token: None,
-                            message: Some(format!("Database error: {}", e)),
+                            message: Some({
+                                eprintln!("Auth handler DB error: {}", e);
+                                "An internal error occurred. Please try again.".to_string()
+                            }),
                             mfa_required: false,
                             pending_token: None,
                             accounting_enabled: false,
@@ -116,7 +121,10 @@ pub async fn login(
                             status: "error".to_string(),
                             user: None,
                             token: None,
-                            message: Some(format!("Database error: {}", e)),
+                            message: Some({
+                                eprintln!("Auth handler DB error: {}", e);
+                                "An internal error occurred. Please try again.".to_string()
+                            }),
                             mfa_required: false,
                             pending_token: None,
                             accounting_enabled: false,
@@ -206,7 +214,10 @@ pub async fn login(
                 status: "error".to_string(),
                 user: None,
                 token: None,
-                message: Some(format!("Database error: {}", e)),
+                message: Some({
+                    eprintln!("Auth handler DB error: {}", e);
+                    "An internal error occurred. Please try again.".to_string()
+                }),
                 mfa_required: false,
                 pending_token: None,
                 accounting_enabled: false,
@@ -311,7 +322,10 @@ pub async fn mfa_verify(
                 status: "error".to_string(),
                 user: None,
                 token: None,
-                message: Some(format!("Database error: {}", e)),
+                message: Some({
+                    eprintln!("Auth handler DB error: {}", e);
+                    "An internal error occurred. Please try again.".to_string()
+                }),
                 mfa_required: false,
                 pending_token: None,
                 accounting_enabled: false,
@@ -357,7 +371,10 @@ pub async fn mfa_resend(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(MfaResendResponse {
                     status: "error".to_string(),
-                    message: format!("Database error: {}", e),
+                    message: {
+                        eprintln!("Auth handler DB error: {}", e);
+                        "An internal error occurred. Please try again.".to_string()
+                    },
                 }),
             )
                 .into_response();
@@ -398,7 +415,10 @@ pub async fn mfa_resend(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(MfaResendResponse {
                     status: "error".to_string(),
-                    message: format!("Database error: {}", e),
+                    message: {
+                        eprintln!("Auth handler DB error: {}", e);
+                        "An internal error occurred. Please try again.".to_string()
+                    },
                 }),
             )
                 .into_response();
@@ -473,11 +493,12 @@ pub async fn forgot_password(
                 .into_response();
         }
         Err(e) => {
+            eprintln!("Auth handler DB error: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
                     "status": "error",
-                    "message": format!("Database error: {}", e)
+                    "message": "An internal error occurred. Please try again."
                 })),
             )
                 .into_response();
@@ -503,6 +524,7 @@ pub async fn forgot_password(
             label: "Set Password".to_string(),
             url: reset_link,
         }),
+        attachment: None,
     };
 
     // Fire-and-forget: an email delivery failure shouldn't fail the request.
@@ -587,10 +609,10 @@ pub async fn profile(
         )
             .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "User not found").into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {}", e),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, {
+            eprintln!("Auth handler DB error: {}", e);
+            "An internal error occurred. Please try again.".to_string()
+        })
             .into_response(),
     }
 }
@@ -620,10 +642,10 @@ pub async fn get_mfa_settings(
             }),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {}", e),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, {
+            eprintln!("Auth handler DB error: {}", e);
+            "An internal error occurred. Please try again.".to_string()
+        })
             .into_response(),
     }
 }
@@ -653,10 +675,10 @@ pub async fn set_mfa_settings(
             }),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {}", e),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, {
+            eprintln!("Auth handler DB error: {}", e);
+            "An internal error occurred. Please try again.".to_string()
+        })
             .into_response(),
     }
 }
@@ -672,10 +694,10 @@ pub async fn get_notification_settings(
         .await
     {
         Ok(prefs) => (StatusCode::OK, Json(prefs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {}", e),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, {
+            eprintln!("Auth handler DB error: {}", e);
+            "An internal error occurred. Please try again.".to_string()
+        })
             .into_response(),
     }
 }
@@ -692,10 +714,10 @@ pub async fn set_notification_settings(
         .await
     {
         Ok(()) => (StatusCode::OK, Json(prefs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Database error: {}", e),
-        )
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, {
+            eprintln!("Auth handler DB error: {}", e);
+            "An internal error occurred. Please try again.".to_string()
+        })
             .into_response(),
     }
 }

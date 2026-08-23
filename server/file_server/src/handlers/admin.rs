@@ -21,7 +21,7 @@ pub async fn list_users(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "status": "error",
-                "message": format!("Database error: {}", e)
+                "message": ({ eprintln!("Admin handler DB error: {}", e); "An internal error occurred. Please try again." })
             })),
         )
             .into_response(),
@@ -77,7 +77,7 @@ pub async fn create_user(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "status": "error",
-                "message": format!("Failed to create user: {}", e)
+                "message": ({ eprintln!("Failed to create user: {}", e); "Could not create user. Please try again." })
             })),
         )
             .into_response(),
@@ -118,7 +118,7 @@ pub async fn create_staff(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "status": "error",
-                "message": format!("Failed to create staff account: {}", e)
+                "message": ({ eprintln!("Failed to create staff account: {}", e); "Could not create staff account. Please try again." })
             })),
         )
             .into_response(),
@@ -225,7 +225,7 @@ pub async fn admin_revoke_flat(
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "status": "error",
-                "message": format!("Failed to revoke flat mapping: {}", e)
+                "message": ({ eprintln!("Failed to revoke flat mapping: {}", e); "Could not revoke flat mapping. Please try again." })
             })),
         )
             .into_response(),
