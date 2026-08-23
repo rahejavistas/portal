@@ -16,10 +16,10 @@ def process_file(module_name, out_filename, replacements=None):
 
     with open(filepath, "r") as f:
         content = f.read()
-        # Extract the raw string between r#" and "#
-        match = re.search(r'r#"\s*(.*?)\s*"#', content, re.DOTALL)
+        # Extract the raw string, matching any hash count (r#"..."#, r##"..."##, ...)
+        match = re.search(r'r(#*)"\s*(.*?)\s*"\1', content, re.DOTALL)
         if match:
-            html = match.group(1)
+            html = match.group(2)
 
             # Replace the local dev API_BASE logic with the hardcoded API_BASE URL
             # This matches `const API_BASE = ...;`
@@ -51,6 +51,7 @@ process_file("process", "admin-process.html", {
     "__PROCESS_MODE__": "true",
     "<title>Vistas Portal - Processes</title>": "<title>Vistas Portal - Process Review</title>",
 })
+process_file("accounting", "admin-accounting.html")
 
 # Generate index.html redirect
 with open(f"{dist_dir}/index.html", "w") as f:
