@@ -269,6 +269,105 @@ async fn test_sla_clock_pauses_on_return_and_resumes_on_resubmission() {
     assert!(resumed.sla_paused_working_days >= 0);
 }
 
+/// A step that was returned, then resubmitted straight into full process closure
+/// (approved, closing the only step) must never leave the process looking paused —
+/// the clock has to resume regardless of whether the ball lands back with the admin
+/// or the process closes outright on that same transition.
+#[tokio::test]
+async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    let user_id = seed_user(&pool, "sla_close_user@vistas.test").await;
+    let admin_id = seed_user(&pool, "sla_close_admin@vistas.test").await;
+    let template = sla_template(Some(5));
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
+        .await
+        .unwrap();
+
+    process::db::save_step(
+        &mut conn,
+        process_id,
+        &template,
+        2,
+        &[SaveFieldInput {
+            template_field_id: 201,
+            text_value: Some("first submission".to_string()),
+            document_id: None,
+        }],
+        false,
+        user_id,
+    )
+    .await
+    .unwrap();
+
+    process::db::review_step(
+        &mut conn,
+        process_id,
+        &template,
+        process::db::ReviewStepParams {
+            step_id: 2,
+            reviewer_user_id: Some(admin_id),
+            is_approved: false,
+            notes: Some("Please fix the note."),
+            flagged_step_ids: &[2],
+        },
+    )
+    .await
+    .unwrap();
+    assert!(load_sla_row(&mut conn, process_id)
+        .await
+        .sla_paused_at
+        .is_some());
+
+    process::db::save_step(
+        &mut conn,
+        process_id,
+        &template,
+        2,
+        &[SaveFieldInput {
+            template_field_id: 201,
+            text_value: Some("fixed submission".to_string()),
+            document_id: None,
+        }],
+        false,
+        user_id,
+    )
+    .await
+    .unwrap();
+    assert!(
+        load_sla_row(&mut conn, process_id)
+            .await
+            .sla_paused_at
+            .is_none(),
+        "resubmission must resume the clock even though this template's only step \
+         requires another review round before the process can close"
+    );
+
+    process::db::review_step(
+        &mut conn,
+        process_id,
+        &template,
+        process::db::ReviewStepParams {
+            step_id: 2,
+            reviewer_user_id: Some(admin_id),
+            is_approved: true,
+            notes: None,
+            flagged_step_ids: &[],
+        },
+    )
+    .await
+    .unwrap();
+
+    let closed = load_sla_row(&mut conn, process_id).await;
+    assert!(
+        closed.sla_paused_at.is_none(),
+        "a closed process must never be left looking paused"
+    );
+}
+
 #[tokio::test]
 async fn test_sla_due_date_honors_configured_public_holidays() {
     let env = setup_db_test_env().await;

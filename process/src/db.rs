@@ -158,12 +158,15 @@ pub async fn save_step(
         .map_err(|e| e.to_string())?;
     }
 
-    let post_save_turn = state_machine::determine_turn(template, &post_save_state);
-    if post_save_turn == state_machine::ProcessTurn::Admin {
+    // Resume on an actual completion of this step (whether that hands the process back
+    // to the admin for re-review, or — if this was the last outstanding step — closes
+    // the process directly): a partial/incomplete save must never resume the clock.
+    if matches!(status, StepStatus::Completed | StepStatus::PendingReview) {
         resume_sla_clock_if_paused(&mut *conn, process_id)
             .await
             .map_err(|e| e.to_string())?;
     }
+    let post_save_turn = state_machine::determine_turn(template, &post_save_state);
     maybe_start_sla_clock(&mut *conn, process_id, template, post_save_turn)
         .await
         .map_err(|e| e.to_string())?;
