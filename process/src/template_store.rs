@@ -39,6 +39,8 @@ impl From<serde_json::Error> for TemplateStoreError {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FieldDraft {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub r#type: crate::FieldType,
     #[serde(default)]
     pub is_optional: bool,
@@ -123,6 +125,7 @@ fn assign_field_ids(
                 crate::ProcessFieldTemplate {
                     field_id,
                     name: f.name,
+                    description: f.description,
                     r#type: f.r#type,
                     is_optional: f.is_optional,
                     filled_by: f.filled_by,

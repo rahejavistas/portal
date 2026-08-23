@@ -635,6 +635,7 @@ mod tests {
         let field = |field_id: i32| crate::ProcessFieldTemplate {
             field_id,
             name: "Note".to_string(),
+            description: None,
             r#type: crate::FieldType::Text,
             is_optional: false,
             filled_by: "user".to_string(),

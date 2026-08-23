@@ -27,6 +27,8 @@ pub enum FieldType {
 pub struct ProcessFieldTemplate {
     pub field_id: i32,
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     pub r#type: FieldType,
     pub is_optional: bool,
     pub filled_by: String, // "user", "admin"
@@ -92,6 +94,7 @@ pub(crate) mod test_fixtures {
         ProcessFieldTemplate {
             field_id,
             name: name.to_string(),
+            description: None,
             r#type,
             is_optional,
             filled_by: filled_by.to_string(),

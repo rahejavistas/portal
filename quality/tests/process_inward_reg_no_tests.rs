@@ -22,6 +22,7 @@ fn inward_reg_no_template() -> ProcessTemplate {
             fields: Some(vec![ProcessFieldTemplate {
                 field_id: 201,
                 name: "Note".to_string(),
+                description: None,
                 r#type: FieldType::Text,
                 is_optional: false,
                 filled_by: "user".to_string(),

@@ -26,6 +26,7 @@ fn sla_template(tat_working_days: Option<i32>) -> ProcessTemplate {
             fields: Some(vec![ProcessFieldTemplate {
                 field_id: 201,
                 name: "Note".to_string(),
+                description: None,
                 r#type: FieldType::Text,
                 is_optional: false,
                 filled_by: "user".to_string(),

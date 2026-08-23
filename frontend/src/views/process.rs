@@ -2103,9 +2103,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         <div style="margin-top: 4px;">
                             <span style="display:inline-flex;align-items:center;background:var(--muted);color:var(--muted-foreground);font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                         </div>
-                        <div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${isAdmin ? truncTitle(p.user_email) : ''}">
-                            ID: ${p.process_id.substring(0, 8)} ${isAdmin ? `(${escapeHtml(truncText(p.user_email, 30))})` : ''}
-                        </div>
+                        ${isAdmin ? `<div class="truncate" style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 4px; max-width:240px;" title="${truncTitle(p.user_email)}">${escapeHtml(truncText(p.user_email, 30))}</div>` : ''}
                     </td>
                     <td>
                         <strong>${p.flat_label ? escapeHtml(p.flat_label) : 'TBD'}</strong>
@@ -2512,6 +2510,34 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             renderProcessDetails();
         }
 
+        function fieldDraftKey(processId, fieldId) {
+            return `process_field_draft:${processId}:${fieldId}`;
+        }
+        function saveFieldDraft(fieldId) {
+            const el = document.getElementById(`text-input-${fieldId}`);
+            if (!el || !currentProcessDetails) return;
+            const key = fieldDraftKey(currentProcessDetails.process_id, fieldId);
+            try {
+                if (el.value) {
+                    localStorage.setItem(key, el.value);
+                } else {
+                    localStorage.removeItem(key);
+                }
+            } catch (e) {}
+        }
+        function loadFieldDraft(processId, fieldId) {
+            try {
+                return localStorage.getItem(fieldDraftKey(processId, fieldId));
+            } catch (e) {
+                return null;
+            }
+        }
+        function clearFieldDraft(processId, fieldId) {
+            try {
+                localStorage.removeItem(fieldDraftKey(processId, fieldId));
+            } catch (e) {}
+        }
+
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
@@ -2580,35 +2606,36 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         `;
                     } else {
                         hasEditableTextField = true;
-                        if (!f.is_optional && !val.text_value) anyRequiredEmpty = true;
+                        const restoredVal = val.text_value || loadFieldDraft(currentProcessDetails.process_id, fieldId) || '';
+                        if (!f.is_optional && !restoredVal) anyRequiredEmpty = true;
                         const inputStyle = 'flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;';
-                        const onInputAttr = `oninput="updateSaveButtonState(${stepId})"`;
-                        const onChangeAttr = `onchange="updateSaveButtonState(${stepId})"`;
+                        const onInputAttr = `oninput="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
+                        const onChangeAttr = `onchange="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
                         let fieldInputHtml;
                         if (type === 'int') {
-                            fieldInputHtml = `<input type="number" step="1" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(val.text_value || '')}" placeholder="Enter a whole number..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="number" step="1" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter a whole number..." ${onInputAttr}>`;
                         } else if (type === 'decimal') {
-                            fieldInputHtml = `<input type="number" step="any" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(val.text_value || '')}" placeholder="Enter an amount..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="number" step="any" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter an amount..." ${onInputAttr}>`;
                         } else if (type === 'date') {
-                            fieldInputHtml = `<input type="date" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(val.text_value || '')}" ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="date" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" ${onInputAttr}>`;
                         } else if (type === 'bool') {
                             fieldInputHtml = `
                                 <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
-                                    <option value="" ${!val.text_value ? 'selected' : ''}>Select...</option>
-                                    <option value="true" ${val.text_value === 'true' ? 'selected' : ''}>Yes</option>
-                                    <option value="false" ${val.text_value === 'false' ? 'selected' : ''}>No</option>
+                                    <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
+                                    <option value="true" ${restoredVal === 'true' ? 'selected' : ''}>Yes</option>
+                                    <option value="false" ${restoredVal === 'false' ? 'selected' : ''}>No</option>
                                 </select>
                             `;
                         } else if (type === 'enum') {
                             const opts = f.options || [];
                             fieldInputHtml = `
                                 <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
-                                    <option value="" ${!val.text_value ? 'selected' : ''}>Select...</option>
-                                    ${opts.map(o => `<option value="${escapeHtml(o)}" ${val.text_value === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+                                    <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
+                                    ${opts.map(o => `<option value="${escapeHtml(o)}" ${restoredVal === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
                                 </select>
                             `;
                         } else {
-                            fieldInputHtml = `<input type="text" id="text-input-${fieldId}" class="text-value-input" style="${inputStyle}" value="${escapeHtml(val.text_value || '')}" placeholder="Enter details..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="text" id="text-input-${fieldId}" class="text-value-input" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter details..." ${onInputAttr}>`;
                         }
                         inputHtml = `<div style="max-width: 700px;">${fieldInputHtml}</div>`;
                     }
@@ -2655,6 +2682,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         <span class="field-label" style="font-size: 0.95rem; font-weight: 700; display: block; margin-bottom: 4px;">
                             ${escapeHtml(f.name)} ${f.is_optional ? '<span style="color: var(--muted-foreground); font-weight: normal; font-size: 0.8125rem;">(Optional)</span>' : ''}
                         </span>
+                        ${f.description ? `<p style="font-size: 0.8125rem; color: var(--muted-foreground); margin: 0 0 8px 0;">${escapeHtml(f.description)}</p>` : ''}
                         ${filledByHtml}
                         ${(signatureBadgeHtml || addSignersHtml) ? `<div>${signatureBadgeHtml}${addSignersHtml}</div>` : ''}
                         <div style="margin-top: 6px; margin-bottom: 6px;">${inputHtml}</div>
@@ -3381,13 +3409,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (!step) return;
 
             const fieldsPayload = [];
+            const editableTextFieldIds = [];
             let hasError = false;
             const isCurrentAdmin = canReviewProcess(user);
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
                 const isFieldEditable = (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) || (f.filled_by === 'admin' && isCurrentAdmin);
-                
+
                 if (isFieldEditable) {
                     if (f.type !== 'document') {
                         const inputEl = document.getElementById(`text-input-${fieldId}`);
@@ -3416,6 +3445,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                                 text_value: val ? val : null,
                                 document_id: null
                             });
+                            editableTextFieldIds.push(fieldId);
                         }
                     } else if (f.type === 'document') {
                         const existingDocId = f.value ? f.value.document_id : null;
@@ -3458,6 +3488,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 if (response.ok) {
                     showAlert('Step inputs saved successfully!');
+                    editableTextFieldIds.forEach(fid => clearFieldDraft(currentProcessDetails.process_id, fid));
                     await viewProcessDetail(currentProcessDetails.process_id);
                 } else {
                     const errText = await readErrorMessage(response);

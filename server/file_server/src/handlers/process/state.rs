@@ -69,6 +69,7 @@ pub struct FieldSignatureStatus {
 pub struct FieldResponse {
     pub template_field_id: i32,
     pub name: String,
+    pub description: Option<String>,
     pub r#type: process::FieldType,
     pub filled_by: String,
     pub is_optional: bool,
@@ -309,6 +310,7 @@ fn map_step_template(
             fields.push(FieldResponse {
                 template_field_id: field_id,
                 name: f.name.clone(),
+                description: f.description.clone(),
                 r#type: f.r#type,
                 filled_by: f.filled_by.clone(),
                 is_optional: f.is_optional,
