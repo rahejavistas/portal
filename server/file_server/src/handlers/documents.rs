@@ -532,15 +532,9 @@ pub async fn admin_bulk_delete_documents(
         return Err(bad_request("No documents selected."));
     }
 
-    let manageable = state
-        .document_manager
-        .manageable_categories(&user)
-        .await
-        .map_err(internal_err)?;
-
     let result = state
         .document_manager
-        .bulk_soft_delete_documents(&payload.document_ids, manageable.as_ref())
+        .bulk_soft_delete_documents(&payload.document_ids, &user)
         .await
         .map_err(internal_err)?;
 
@@ -562,18 +556,12 @@ pub async fn admin_bulk_update_subcategory(
         return Err(bad_request("No documents selected."));
     }
 
-    let manageable = state
-        .document_manager
-        .manageable_categories(&user)
-        .await
-        .map_err(internal_err)?;
-
     let result = state
         .document_manager
         .bulk_update_subcategory(
             &payload.document_ids,
             payload.subcategory_code.as_deref(),
-            manageable.as_ref(),
+            &user,
         )
         .await
         .map_err(internal_err)?;
@@ -642,7 +630,7 @@ pub async fn admin_bulk_update_category(
             &payload.document_ids,
             &payload.category,
             flat_id.as_ref(),
-            manageable.as_ref(),
+            &user,
         )
         .await
         .map_err(bad_request)?;

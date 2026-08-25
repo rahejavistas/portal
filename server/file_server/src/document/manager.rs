@@ -661,12 +661,15 @@ impl DocumentManager {
         Ok(rows.into_iter().collect())
     }
 
-    /// Re-checks manage access atomically in the UPDATE, not just against the earlier read.
+    /// Re-checks manage access atomically in the UPDATE against the caller's *current*
+    /// grants, not a snapshot taken before the write — a grant revoked mid-request can't
+    /// let a pending mutation through.
     pub async fn bulk_soft_delete_documents(
         &self,
         document_ids: &[Uuid],
-        manageable: Option<&std::collections::HashSet<String>>,
+        user: &authentication::User,
     ) -> Result<crate::document::BulkActionResult, String> {
+        let manageable = self.manageable_categories(user).await?;
         let found = self.fetch_categories_for(document_ids).await?;
         let mut result = crate::document::BulkActionResult::default();
         let mut candidate_ids: Vec<Uuid> = Vec::new();
@@ -677,7 +680,9 @@ impl DocumentManager {
                     document_id: id,
                     reason: "Document not found".to_string(),
                 }),
-                Some(category) if Self::can_manage(manageable, category) => candidate_ids.push(id),
+                Some(category) if Self::can_manage(manageable.as_ref(), category) => {
+                    candidate_ids.push(id)
+                }
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -689,17 +694,22 @@ impl DocumentManager {
             return Ok(result);
         }
 
-        let manageable_categories: Option<Vec<String>> =
-            manageable.map(|set| set.iter().cloned().collect());
+        let has_all_manage = user.has_permission(authentication::Permission::DocumentsAllManage);
 
         let deleted_ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE documents SET is_deleted = TRUE \
              WHERE document_id = ANY($1) AND NOT is_deleted \
-               AND ($2::text[] IS NULL OR category = ANY($2::text[])) \
+               AND ($2 OR EXISTS ( \
+                    SELECT 1 FROM document_category_designations dcd \
+                    JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                    WHERE dcd.category = documents.category AND dcd.can_manage = TRUE \
+                      AND ud.user_id = $3 AND ud.is_active = TRUE \
+               )) \
              RETURNING document_id",
         )
         .bind(&candidate_ids)
-        .bind(&manageable_categories)
+        .bind(has_all_manage)
+        .bind(user.user_id)
         .fetch_all(&self.pg_pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -724,8 +734,9 @@ impl DocumentManager {
         &self,
         document_ids: &[Uuid],
         subcategory_code: Option<&str>,
-        manageable: Option<&std::collections::HashSet<String>>,
+        user: &authentication::User,
     ) -> Result<crate::document::BulkActionResult, String> {
+        let manageable = self.manageable_categories(user).await?;
         let found = self.fetch_categories_for(document_ids).await?;
         let mut result = crate::document::BulkActionResult::default();
         let mut resolved_ids: Vec<Uuid> = Vec::new();
@@ -742,7 +753,7 @@ impl DocumentManager {
                 }
                 Some(category) => category,
             };
-            if !Self::can_manage(manageable, category) {
+            if !Self::can_manage(manageable.as_ref(), category) {
                 result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -772,20 +783,26 @@ impl DocumentManager {
         }
 
         if !resolved_ids.is_empty() {
-            let manageable_categories: Option<Vec<String>> =
-                manageable.map(|set| set.iter().cloned().collect());
+            let has_all_manage =
+                user.has_permission(authentication::Permission::DocumentsAllManage);
 
             let updated: Vec<Uuid> = sqlx::query_scalar(
                 "UPDATE generic_document_metadata AS g SET subcategory_id = t.subcategory_id \
                  FROM UNNEST($1::uuid[], $2::int[]) AS t(document_id, subcategory_id) \
                  JOIN documents d ON d.document_id = t.document_id \
                  WHERE g.document_id = t.document_id \
-                   AND ($3::text[] IS NULL OR d.category = ANY($3::text[])) \
+                   AND ($3 OR EXISTS ( \
+                        SELECT 1 FROM document_category_designations dcd \
+                        JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                        WHERE dcd.category = d.category AND dcd.can_manage = TRUE \
+                          AND ud.user_id = $4 AND ud.is_active = TRUE \
+                   )) \
                  RETURNING g.document_id",
             )
             .bind(&resolved_ids)
             .bind(&resolved_subcategory_ids)
-            .bind(&manageable_categories)
+            .bind(has_all_manage)
+            .bind(user.user_id)
             .fetch_all(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -815,8 +832,9 @@ impl DocumentManager {
         document_ids: &[Uuid],
         new_category: &str,
         flat: Option<&FlatIdentifier>,
-        manageable: Option<&std::collections::HashSet<String>>,
+        user: &authentication::User,
     ) -> Result<crate::document::BulkActionResult, String> {
+        let manageable = self.manageable_categories(user).await?;
         let found = self.fetch_categories_for(document_ids).await?;
         let mut result = crate::document::BulkActionResult::default();
         let mut candidate_ids: Vec<Uuid> = Vec::new();
@@ -833,7 +851,9 @@ impl DocumentManager {
                         reason: format!("Already in category '{}'", new_category),
                     })
                 }
-                Some(category) if Self::can_manage(manageable, category) => candidate_ids.push(id),
+                Some(category) if Self::can_manage(manageable.as_ref(), category) => {
+                    candidate_ids.push(id)
+                }
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -849,18 +869,23 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
-        let manageable_categories: Option<Vec<String>> =
-            manageable.map(|set| set.iter().cloned().collect());
+        let has_all_manage = user.has_permission(authentication::Permission::DocumentsAllManage);
 
         let moved_ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE documents SET category = $2, updated_at = NOW() \
              WHERE document_id = ANY($1) AND category != $2 \
-               AND ($3::text[] IS NULL OR category = ANY($3::text[])) \
+               AND ($3 OR EXISTS ( \
+                    SELECT 1 FROM document_category_designations dcd \
+                    JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                    WHERE dcd.category = documents.category AND dcd.can_manage = TRUE \
+                      AND ud.user_id = $4 AND ud.is_active = TRUE \
+               )) \
              RETURNING document_id",
         )
         .bind(&candidate_ids)
         .bind(new_category)
-        .bind(&manageable_categories)
+        .bind(has_all_manage)
+        .bind(user.user_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
