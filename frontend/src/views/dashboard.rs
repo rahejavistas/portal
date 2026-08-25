@@ -1179,6 +1179,16 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        function jsAttrEscape(str) {
+            return String(str)
+                .replace(/\\/g, '\\\\')
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, "\\'")
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -1661,7 +1671,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             bar.innerHTML = '<button class="filter-chip active" id="user-filter-all" onclick="filterDocs(\'ALL\')">All</button>' +
                 categories.map(cat => {
                     const chipId = 'user-filter-' + cat.toLowerCase().replace(/_/g, '-');
-                    return `<button class="filter-chip" id="${chipId}" onclick="filterDocs('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                    return `<button class="filter-chip" id="${escapeHtml(chipId)}" onclick="filterDocs('${jsAttrEscape(cat)}')">${escapeHtml(formatCategory(cat))}</button>`;
                 }).join('');
 
             if (currentCategoryFilter !== 'ALL' && !categories.includes(currentCategoryFilter)) {
@@ -1696,7 +1706,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
             bar.innerHTML = '<button class="sub-filter-chip active" id="user-subfilter-all" onclick="filterBySubcategory(\'ALL\')">All</button>' +
                 subcats.map(([code, label]) => {
                     const chipId = 'user-subfilter-' + code.toLowerCase().replace(/_/g, '-');
-                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterBySubcategory('${code}')">${escapeHtml(label)}</button>`;
+                    return `<button class="sub-filter-chip" id="${escapeHtml(chipId)}" onclick="filterBySubcategory('${jsAttrEscape(code)}')">${escapeHtml(label)}</button>`;
                 }).join('');
 
             if (currentSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === currentSubcategoryFilter)) {

@@ -2296,6 +2296,16 @@ pub(crate) const ADMIN_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        function jsAttrEscape(str) {
+            return String(str)
+                .replace(/\\/g, '\\\\')
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, "\\'")
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -3403,7 +3413,7 @@ function openDesignationPicker(field) {
 
             const availableList = document.getElementById('designation-picker-available');
             availableList.innerHTML = available.length > 0 ? available.map(d => `
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; cursor:pointer; border-bottom:1px solid var(--border);" onclick="addDesignationToPicker('${escapeHtml(d.code)}')">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; cursor:pointer; border-bottom:1px solid var(--border);" onclick="addDesignationToPicker('${jsAttrEscape(d.code)}')">
                     <span style="font-size:13px;">${escapeHtml(d.label)}</span>
                     <span style="font-weight:800; color:var(--primary);">+</span>
                 </div>
@@ -4307,7 +4317,7 @@ function openDesignationPicker(field) {
                 <tr>
                     <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(c.label)}">${escapeHtml(truncText(c.label, 50))}</span></td>
                     <td style="text-align:center;">
-                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="editDocumentCategory('${escapeHtml(c.code)}', '${escapeHtml(c.label)}', ${c.is_system})">Edit</button>` : ''}
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="editDocumentCategory('${jsAttrEscape(c.code)}', '${jsAttrEscape(c.label)}', ${c.is_system})">Edit</button>` : ''}
                     </td>
                 </tr>
             `).join('');
@@ -4445,7 +4455,7 @@ function openDesignationPicker(field) {
                 <tr>
                     <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 50))}</span></td>
                     <td style="text-align:center;">
-                        <button class="action-select" style="cursor:pointer;" onclick="editDesignation('${escapeHtml(d.code)}', '${escapeHtml(d.label)}', ${d.is_system})">Edit</button>
+                        <button class="action-select" style="cursor:pointer;" onclick="editDesignation('${jsAttrEscape(d.code)}', '${jsAttrEscape(d.label)}', ${d.is_system})">Edit</button>
                     </td>
                 </tr>
             `).join('');
@@ -4786,7 +4796,7 @@ function openDesignationPicker(field) {
                 <tr>
                     <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(d.label)}">${escapeHtml(truncText(d.label, 50))}</span></td>
                     <td>${canManageDesignations
-                        ? `<button class="action-select" style="cursor:pointer;" onclick="openManageCategoryAccessModal('${escapeHtml(d.code)}', '${escapeHtml(d.label)}')">Manage Access</button>`
+                        ? `<button class="action-select" style="cursor:pointer;" onclick="openManageCategoryAccessModal('${jsAttrEscape(d.code)}', '${jsAttrEscape(d.label)}')">Manage Access</button>`
                         : ''}</td>
                 </tr>
             `).join('');
@@ -5094,7 +5104,7 @@ function openDesignationPicker(field) {
             bar.innerHTML = '<button class="filter-chip" id="admin-filter-all" onclick="filterAdminDocsBySubbar(\'ALL\')">All</button>' +
                 categories.map(cat => {
                     const chipId = 'admin-filter-' + cat.toLowerCase().replace(/_/g, '-');
-                    return `<button class="filter-chip" id="${chipId}" onclick="filterAdminDocsBySubbar('${cat}')">${escapeHtml(formatCategory(cat))}</button>`;
+                    return `<button class="filter-chip" id="${escapeHtml(chipId)}" onclick="filterAdminDocsBySubbar('${jsAttrEscape(cat)}')">${escapeHtml(formatCategory(cat))}</button>`;
                 }).join('') +
                 '<button class="filter-chip" id="admin-filter-deleted" onclick="filterAdminDocsBySubbar(\'DELETED\')">Deleted Files</button>';
 
@@ -5137,7 +5147,7 @@ function openDesignationPicker(field) {
             bar.innerHTML = '<button class="sub-filter-chip active" id="admin-subfilter-all" onclick="filterAdminDocsBySubcategory(\'ALL\')">All</button>' +
                 subcats.map(([code, label]) => {
                     const chipId = 'admin-subfilter-' + code.toLowerCase().replace(/_/g, '-');
-                    return `<button class="sub-filter-chip" id="${chipId}" onclick="filterAdminDocsBySubcategory('${code}')">${escapeHtml(label)}</button>`;
+                    return `<button class="sub-filter-chip" id="${escapeHtml(chipId)}" onclick="filterAdminDocsBySubcategory('${jsAttrEscape(code)}')">${escapeHtml(label)}</button>`;
                 }).join('');
 
             if (subbarSubcategoryFilter !== 'ALL' && !subcats.some(([code]) => code === subbarSubcategoryFilter)) {

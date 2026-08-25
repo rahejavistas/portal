@@ -661,7 +661,7 @@ impl DocumentManager {
         Ok(rows.into_iter().collect())
     }
 
-    /// Skips (doesn't fail the batch on) documents the caller can't manage.
+    /// Re-checks manage access atomically in the UPDATE, not just against the earlier read.
     pub async fn bulk_soft_delete_documents(
         &self,
         document_ids: &[Uuid],
@@ -669,7 +669,7 @@ impl DocumentManager {
     ) -> Result<crate::document::BulkActionResult, String> {
         let found = self.fetch_categories_for(document_ids).await?;
         let mut result = crate::document::BulkActionResult::default();
-        let mut allowed_ids: Vec<Uuid> = Vec::new();
+        let mut candidate_ids: Vec<Uuid> = Vec::new();
 
         for &id in document_ids {
             match found.get(&id) {
@@ -677,7 +677,9 @@ impl DocumentManager {
                     document_id: id,
                     reason: "Document not found".to_string(),
                 }),
-                Some(category) if Self::can_manage(manageable, category) => allowed_ids.push(id),
+                Some(category) if Self::can_manage(manageable, category) => {
+                    candidate_ids.push(id)
+                }
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -685,14 +687,36 @@ impl DocumentManager {
             }
         }
 
-        if !allowed_ids.is_empty() {
-            sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = ANY($1)")
-                .bind(&allowed_ids)
-                .execute(&self.pg_pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            result.succeeded = allowed_ids;
+        if candidate_ids.is_empty() {
+            return Ok(result);
         }
+
+        let manageable_categories: Option<Vec<String>> =
+            manageable.map(|set| set.iter().cloned().collect());
+
+        let deleted_ids: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE documents SET is_deleted = TRUE \
+             WHERE document_id = ANY($1) AND NOT is_deleted \
+               AND ($2::text[] IS NULL OR category = ANY($2::text[])) \
+             RETURNING document_id",
+        )
+        .bind(&candidate_ids)
+        .bind(&manageable_categories)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let deleted_set: std::collections::HashSet<Uuid> = deleted_ids.iter().copied().collect();
+        for id in candidate_ids {
+            if !deleted_set.contains(&id) {
+                result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: "Document changed before this request completed; please retry"
+                        .to_string(),
+                });
+            }
+        }
+        result.succeeded = deleted_ids;
 
         Ok(result)
     }
@@ -750,14 +774,20 @@ impl DocumentManager {
         }
 
         if !resolved_ids.is_empty() {
+            let manageable_categories: Option<Vec<String>> =
+                manageable.map(|set| set.iter().cloned().collect());
+
             let updated: Vec<Uuid> = sqlx::query_scalar(
                 "UPDATE generic_document_metadata AS g SET subcategory_id = t.subcategory_id \
                  FROM UNNEST($1::uuid[], $2::int[]) AS t(document_id, subcategory_id) \
+                 JOIN documents d ON d.document_id = t.document_id \
                  WHERE g.document_id = t.document_id \
+                   AND ($3::text[] IS NULL OR d.category = ANY($3::text[])) \
                  RETURNING g.document_id",
             )
             .bind(&resolved_ids)
             .bind(&resolved_subcategory_ids)
+            .bind(&manageable_categories)
             .fetch_all(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -769,7 +799,9 @@ impl DocumentManager {
                 } else {
                     result.skipped.push(crate::document::BulkActionSkip {
                         document_id: id,
-                        reason: "Document has no existing metadata to update".to_string(),
+                        reason: "Document has no existing metadata, or changed before this \
+                                 request completed"
+                            .to_string(),
                     });
                 }
             }
@@ -778,7 +810,8 @@ impl DocumentManager {
         Ok(result)
     }
 
-    /// Bad flat aborts the whole batch (not a per-document skip like permission checks).
+    /// Bad flat aborts the whole batch. Already-correct-category docs are left untouched,
+    /// and the manage check is re-verified atomically in the category UPDATE itself.
     pub async fn bulk_update_category(
         &self,
         document_ids: &[Uuid],
@@ -788,7 +821,7 @@ impl DocumentManager {
     ) -> Result<crate::document::BulkActionResult, String> {
         let found = self.fetch_categories_for(document_ids).await?;
         let mut result = crate::document::BulkActionResult::default();
-        let mut allowed_ids: Vec<Uuid> = Vec::new();
+        let mut candidate_ids: Vec<Uuid> = Vec::new();
 
         for &id in document_ids {
             match found.get(&id) {
@@ -796,7 +829,15 @@ impl DocumentManager {
                     document_id: id,
                     reason: "Document not found".to_string(),
                 }),
-                Some(category) if Self::can_manage(manageable, category) => allowed_ids.push(id),
+                Some(category) if category == new_category => {
+                    result.skipped.push(crate::document::BulkActionSkip {
+                        document_id: id,
+                        reason: format!("Already in category '{}'", new_category),
+                    })
+                }
+                Some(category) if Self::can_manage(manageable, category) => {
+                    candidate_ids.push(id)
+                }
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -804,7 +845,7 @@ impl DocumentManager {
             }
         }
 
-        if allowed_ids.is_empty() {
+        if candidate_ids.is_empty() {
             return Ok(result);
         }
 
@@ -812,28 +853,51 @@ impl DocumentManager {
             .await
             .map_err(|e| e.to_string())?;
 
+        let manageable_categories: Option<Vec<String>> =
+            manageable.map(|set| set.iter().cloned().collect());
+
+        let moved_ids: Vec<Uuid> = sqlx::query_scalar(
+            "UPDATE documents SET category = $2, updated_at = NOW() \
+             WHERE document_id = ANY($1) AND category != $2 \
+               AND ($3::text[] IS NULL OR category = ANY($3::text[])) \
+             RETURNING document_id",
+        )
+        .bind(&candidate_ids)
+        .bind(new_category)
+        .bind(&manageable_categories)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let moved_set: std::collections::HashSet<Uuid> = moved_ids.iter().copied().collect();
+        for &id in &candidate_ids {
+            if !moved_set.contains(&id) {
+                result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: "Category changed before this request completed; please retry"
+                        .to_string(),
+                });
+            }
+        }
+
+        if moved_ids.is_empty() {
+            tx.commit().await.map_err(|e| e.to_string())?;
+            return Ok(result);
+        }
+
         sqlx::query(
             "UPDATE generic_document_metadata SET subcategory_id = NULL WHERE document_id = ANY($1)",
         )
-        .bind(&allowed_ids)
+        .bind(&moved_ids)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
         sqlx::query("DELETE FROM document_flats WHERE document_id = ANY($1)")
-            .bind(&allowed_ids)
+            .bind(&moved_ids)
             .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
-
-        sqlx::query(
-            "UPDATE documents SET category = $2, updated_at = NOW() WHERE document_id = ANY($1)",
-        )
-        .bind(&allowed_ids)
-        .bind(new_category)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
 
         if let Some(flat) = flat {
             let inserted = sqlx::query(
@@ -842,7 +906,7 @@ impl DocumentManager {
                  WHERE wing = $2 AND flat_number = $3 \
                  ON CONFLICT DO NOTHING",
             )
-            .bind(&allowed_ids)
+            .bind(&moved_ids)
             .bind(flat.wing())
             .bind(flat.flat_number())
             .execute(&mut *tx)
@@ -856,7 +920,7 @@ impl DocumentManager {
 
         tx.commit().await.map_err(|e| e.to_string())?;
 
-        result.succeeded = allowed_ids;
+        result.succeeded = moved_ids;
         Ok(result)
     }
 
