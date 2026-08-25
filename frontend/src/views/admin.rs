@@ -524,6 +524,31 @@ pub(crate) const ADMIN_HTML: &str = r#"
             color: var(--background);
             border-color: var(--primary);
         }
+        .doc-mode-switch {
+            display: inline-flex;
+            border: 2px solid var(--border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+        }
+        .doc-mode-btn {
+            background-color: var(--background);
+            border: none;
+            color: var(--foreground);
+            padding: 10px 24px;
+            font-weight: 700;
+            font-size: 0.8125rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .doc-mode-btn:first-child {
+            border-right: 2px solid var(--border);
+        }
+        .doc-mode-btn.active {
+            background-color: var(--primary);
+            color: var(--background);
+        }
         .sub-filter-chip {
             flex-shrink: 0;
             background-color: var(--background);
@@ -887,11 +912,29 @@ pub(crate) const ADMIN_HTML: &str = r#"
             color: var(--background);
             transform: scale(1.05);
         }
+        .bulk-action-btn {
+            background-color: var(--background);
+            border: 1px solid var(--border);
+            color: var(--foreground);
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            font-size: 12.5px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .bulk-action-btn:hover {
+            background-color: var(--primary);
+            color: var(--background);
+            border-color: var(--primary);
+        }
 
         @media (max-width: 768px) {
             .hamburger-btn { display: flex; }
             .topbar-brand { font-size: 1.0625rem; }
             .topbar-search { display: none; }
+            .help-btn { margin-left: auto; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
@@ -1201,11 +1244,33 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     <div class="card">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Explorer</h3>
 
+                        <div class="form-group" style="max-width:480px;">
+                            <input type="text" id="admin-doc-search" placeholder="Search by title, flat number, or resident email..." oninput="filterAdminDocs()" style="padding:10px 12px; width:100%; box-sizing:border-box; background-color: var(--muted); border:1px solid var(--border); border-radius:6px;">
+                        </div>
+
+                        <div id="admin-doc-bulk-bar" style="display:none; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; padding:12px 16px; background: var(--muted); border-radius:8px;">
+                            <span id="admin-doc-bulk-count" style="font-weight:700; font-size:13px;"></span>
+                            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-left:auto;">
+                                <button type="button" class="bulk-action-btn" onclick="openBulkSubcategoryModal()">Change Subcategory</button>
+                                <button type="button" class="bulk-action-btn" onclick="openBulkCategoryModal()">Change Category</button>
+                                <button type="button" class="del-action-btn" onclick="bulkDeleteDocuments()">Delete</button>
+                                <button type="button" onclick="clearAdminDocSelection()" style="background:transparent; border:none; color:var(--muted-foreground); font-size:12.5px; cursor:pointer; text-decoration:underline;">Clear selection</button>
+                            </div>
+                        </div>
+
                         <div class="table-container">
                             <table>
+                                <thead>
+                                    <tr>
+                                        <th style="width:32px;"><input type="checkbox" id="admin-doc-select-all" onchange="toggleAdminDocSelectAll(this.checked)"></th>
+                                        <th>Document</th>
+                                        <th>Category</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
                                 <tbody id="admin-doc-rows-target">
                                     <tr>
-                                        <td colspan="3" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</td>
+                                        <td colspan="4" style="text-align: center; color: var(--muted-foreground); font-weight: 600;">Loading documents...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -1217,7 +1282,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     <div class="card" style="width: 100%; max-width: 700px;">
                         <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Add Document</h3>
                         <form id="register-doc-form">
-                            <div class="form-group">
+                            <div class="form-group" id="doc-title-group">
                                 <label for="doc-title">Title</label>
                                 <input type="text" id="doc-title" required placeholder="e.g. General Body Meeting Minutes May 2026">
                             </div>
@@ -1226,8 +1291,21 @@ pub(crate) const ADMIN_HTML: &str = r#"
                                 <textarea id="doc-desc" placeholder="e.g. Summary of structural paint vendors..."></textarea>
                             </div>
                             <div class="form-group">
+                                <label>Upload</label>
+                                <input type="checkbox" id="doc-folder-mode" style="display:none;">
+                                <div class="doc-mode-switch">
+                                    <button type="button" id="doc-mode-file-btn" class="doc-mode-btn active" onclick="setDocFolderMode(false)">File</button>
+                                    <button type="button" id="doc-mode-folder-btn" class="doc-mode-btn" onclick="setDocFolderMode(true)">Folder</button>
+                                </div>
+                            </div>
+                            <div class="form-group" id="doc-file-group">
                                 <label for="doc-file">Document File</label>
                                 <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required style="padding: 8px; width: 100%; background-color: var(--muted);">
+                            </div>
+                            <div class="form-group" id="doc-folder-group" style="display: none;">
+                                <label for="doc-folder">Folder</label>
+                                <input type="file" id="doc-folder" webkitdirectory directory multiple style="padding: 8px; width: 100%; background-color: var(--muted);">
+                                <div id="doc-folder-hint" style="font-size:12.5px; color:var(--muted-foreground); margin-top:6px;">Every file inside the selected folder will be added as its own document.</div>
                             </div>
                             <div class="form-group">
                                 <label for="doc-category">Document Category</label>
@@ -1241,15 +1319,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
                                 <div class="form-row-2">
                                     <div class="form-group">
                                         <label for="doc-flat-wing">Wing</label>
-                                        <select id="doc-flat-wing" onchange="onDocFormWingChange()">
-                                            <option value="">Select wing...</option>
-                                        </select>
+                                        <input type="text" id="doc-flat-wing" list="doc-flat-wing-options" placeholder="Type or pick a wing..." autocomplete="off" oninput="onDocFormWingChange()" onkeydown="focusNextOnEnter(event, 'doc-flat-number')">
+                                        <datalist id="doc-flat-wing-options"></datalist>
                                     </div>
                                     <div class="form-group">
                                         <label for="doc-flat-number">Flat Number</label>
-                                        <select id="doc-flat-number" disabled onchange="scheduleFlatOwnerLookup()">
-                                            <option value="">Select wing first...</option>
-                                        </select>
+                                        <input type="text" id="doc-flat-number" list="doc-flat-number-options" placeholder="Select wing first..." autocomplete="off" disabled oninput="scheduleFlatOwnerLookup()">
+                                        <datalist id="doc-flat-number-options"></datalist>
                                     </div>
                                 </div>
                                 <div id="flat-owner-preview" style="font-size:12.5px; color:var(--muted-foreground); margin-top:-8px; margin-bottom:15px; min-height:16px;"></div>
@@ -1837,6 +1913,57 @@ pub(crate) const ADMIN_HTML: &str = r#"
         </div>
     </div>
 
+    <div id="bulk-subcategory-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; overflow-y:auto;" onclick="if (event.target === this) closeBulkSubcategoryModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(420px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin:32px 0;">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Change Subcategory</h3>
+            <p id="bulk-subcategory-count" style="margin:0 0 16px 0; font-size:13px; color:var(--muted-foreground);"></p>
+            <div class="form-group">
+                <label for="bulk-subcategory-select">Subcategory</label>
+                <select id="bulk-subcategory-select">
+                    <option value="">None (clear subcategory)</option>
+                </select>
+            </div>
+            <p style="margin:0 0 16px 0; font-size:12px; color:var(--muted-foreground); line-height:1.5;">Each document is matched against its own category's subcategories; documents where this subcategory doesn't apply are skipped and reported.</p>
+            <div class="feedback-box" id="bulk-subcategory-feedback" style="margin-top: 4px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button onclick="closeBulkSubcategoryModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button id="bulk-subcategory-save-btn" onclick="submitBulkSubcategory()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="bulk-category-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; overflow-y:auto;" onclick="if (event.target === this) closeBulkCategoryModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(420px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin:32px 0; max-height:calc(100vh - 64px); overflow-y:auto;">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Change Category</h3>
+            <p id="bulk-category-count" style="margin:0 0 16px 0; font-size:13px; color:var(--muted-foreground);"></p>
+            <div class="form-group">
+                <label for="bulk-category-select">New Category</label>
+                <select id="bulk-category-select" onchange="handleBulkCategoryChange()"></select>
+            </div>
+            <div id="bulk-category-flat-section" style="display:none;">
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label for="bulk-category-flat-wing">Wing</label>
+                        <input type="text" id="bulk-category-flat-wing" list="bulk-category-flat-wing-options" placeholder="Type or pick a wing..." autocomplete="off" oninput="onBulkCategoryWingChange()" onkeydown="focusNextOnEnter(event, 'bulk-category-flat-number')">
+                        <datalist id="bulk-category-flat-wing-options"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="bulk-category-flat-number">Flat Number</label>
+                        <input type="text" id="bulk-category-flat-number" list="bulk-category-flat-number-options" placeholder="Select wing first..." autocomplete="off" disabled>
+                        <datalist id="bulk-category-flat-number-options"></datalist>
+                    </div>
+                </div>
+                <p style="margin:-8px 0 16px 0; font-size:12px; color:var(--muted-foreground);">This flat will be applied to every selected document.</p>
+            </div>
+            <p style="margin:0 0 16px 0; font-size:12px; color:var(--muted-foreground); line-height:1.5;">Each document's subcategory is cleared on category change. Documents you can't manage in either category are skipped and reported.</p>
+            <div class="feedback-box" id="bulk-category-feedback" style="margin-top: 4px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button onclick="closeBulkCategoryModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button id="bulk-category-save-btn" onclick="submitBulkCategory()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Apply</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         function isAdminUser(user) {
             return !!(user && (
@@ -2364,8 +2491,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const select = document.getElementById('doc-category');
             const cat = select.value;
 
+            const isResidentSpecific = (cat === 'RESIDENT_SPECIFIC');
             const flatSection = document.getElementById('flat-mapping-section');
-            flatSection.style.display = (cat === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
+            flatSection.style.display = isResidentSpecific ? 'block' : 'none';
+
+            document.getElementById('doc-folder-hint').textContent = isResidentSpecific
+                ? 'Every file inside the selected folder will be added as its own document, all mapped to the flat below.'
+                : 'Every file inside the selected folder will be added as its own document.';
 
             const subcatSelect = document.getElementById('doc-subcategory');
             const selectedCat = uploadFormCategories.find(c => c.code === cat);
@@ -2374,6 +2506,22 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 matching.map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`).join('');
 
             select.blur();
+        }
+
+        function toggleDocFolderMode() {
+            const folderMode = document.getElementById('doc-folder-mode').checked;
+            document.getElementById('doc-file-group').style.display = folderMode ? 'none' : '';
+            document.getElementById('doc-file').required = !folderMode;
+            document.getElementById('doc-folder-group').style.display = folderMode ? '' : 'none';
+            document.getElementById('doc-title-group').style.display = folderMode ? 'none' : '';
+            document.getElementById('doc-title').required = !folderMode;
+        }
+
+        function setDocFolderMode(folderMode) {
+            document.getElementById('doc-folder-mode').checked = folderMode;
+            document.getElementById('doc-mode-file-btn').classList.toggle('active', !folderMode);
+            document.getElementById('doc-mode-folder-btn').classList.toggle('active', folderMode);
+            toggleDocFolderMode();
         }
 
         let docFormFlatsCache = [];
@@ -2389,33 +2537,40 @@ pub(crate) const ADMIN_HTML: &str = r#"
             } catch (err) {
                 docFormFlatsCache = [];
             }
-            const wingSelect = document.getElementById('doc-flat-wing');
+            const wingInput = document.getElementById('doc-flat-wing');
             const wings = [...new Set(docFormFlatsCache.filter(f => !f.is_fire_flat).map(f => f.wing))].sort();
-            const currentWing = wingSelect.value;
-            wingSelect.innerHTML = '<option value="">Select wing...</option>' +
-                wings.map(w => `<option value="${escapeHtml(w)}">Wing ${escapeHtml(w)}</option>`).join('');
-            wingSelect.value = currentWing;
+            document.getElementById('doc-flat-wing-options').innerHTML =
+                wings.map(w => `<option value="${escapeHtml(w)}">`).join('');
             onDocFormWingChange();
         }
 
         function onDocFormWingChange() {
-            const wing = document.getElementById('doc-flat-wing').value;
-            const flatSelect = document.getElementById('doc-flat-number');
+            const wing = document.getElementById('doc-flat-wing').value.trim().toUpperCase();
+            const flatInput = document.getElementById('doc-flat-number');
+            const flatOptions = document.getElementById('doc-flat-number-options');
             if (!wing) {
-                flatSelect.innerHTML = '<option value="">Select wing first...</option>';
-                flatSelect.disabled = true;
+                flatInput.value = '';
+                flatInput.disabled = true;
+                flatInput.placeholder = 'Select wing first...';
+                flatOptions.innerHTML = '';
                 document.getElementById('flat-owner-preview').textContent = '';
                 return;
             }
             const flats = docFormFlatsCache
                 .filter(f => f.wing === wing && !f.is_fire_flat)
                 .sort((a, b) => a.flat_number.localeCompare(b.flat_number));
-            flatSelect.disabled = false;
-            flatSelect.innerHTML = flats.length === 0
-                ? '<option value="">No flats set up for this wing</option>'
-                : '<option value="">Select flat...</option>' +
-                    flats.map(f => `<option value="${escapeHtml(f.flat_number)}">${escapeHtml(f.flat_number)}${f.owner_email ? ' (occupied)' : ''}</option>`).join('');
+            flatInput.disabled = false;
+            flatInput.placeholder = flats.length === 0 ? 'No flats set up for this wing' : 'Type or pick a flat...';
+            flatOptions.innerHTML = flats
+                .map(f => `<option value="${escapeHtml(f.flat_number)}">${f.owner_email ? ' (occupied)' : ''}</option>`)
+                .join('');
             scheduleFlatOwnerLookup();
+        }
+
+        function focusNextOnEnter(event, nextFieldId) {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            document.getElementById(nextFieldId).focus();
         }
 
         let flatOwnerLookupTimer = null;
@@ -2468,6 +2623,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 if (resp.ok) {
                     uploadFormCategories = await resp.json();
                     select.innerHTML = uploadFormCategories.map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`).join('');
+                    if (uploadFormCategories.some(c => c.code === 'RESIDENT_SPECIFIC')) {
+                        select.value = 'RESIDENT_SPECIFIC';
+                    }
                 } else {
                     select.innerHTML = '<option value="">No categories available</option>';
                 }
@@ -4922,10 +5080,10 @@ function openDesignationPicker(field) {
                     renderAdminCategoryFilterChips();
                     filterAdminDocs();
                 } else {
-                    document.getElementById('admin-doc-rows-target').innerHTML = `<tr><td colspan="3" style="text-align: center; color: var(--foreground);">Failed to fetch database files.</td></tr>`;
+                    document.getElementById('admin-doc-rows-target').innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--foreground);">Failed to fetch database files.</td></tr>`;
                 }
             } catch (err) {
-                document.getElementById('admin-doc-rows-target').innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--foreground);">Database connection offline.</td></tr>';
+                document.getElementById('admin-doc-rows-target').innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--foreground);">Database connection offline.</td></tr>';
             }
         }
 
@@ -5013,15 +5171,24 @@ function openDesignationPicker(field) {
 
         function filterAdminDocs() {
             const showingDeleted = subbarCategoryFilter === 'DELETED';
+            const searchTerm = (document.getElementById('admin-doc-search').value || '').trim().toLowerCase();
 
             const filtered = allAdminDocs.filter(d => {
                 const doc = d.document;
-                if (showingDeleted) return doc.is_deleted;
+                if (showingDeleted) {
+                    if (!doc.is_deleted) return false;
+                } else {
+                    const matchesCat = (subbarCategoryFilter === 'ALL' || doc.category === subbarCategoryFilter);
+                    const matchesSubcat = (subbarSubcategoryFilter === 'ALL' ||
+                        (d.metadata && d.metadata.subcategory_code === subbarSubcategoryFilter));
+                    if (!matchesCat || !matchesSubcat || doc.is_deleted) return false;
+                }
 
-                const matchesCat = (subbarCategoryFilter === 'ALL' || doc.category === subbarCategoryFilter);
-                const matchesSubcat = (subbarSubcategoryFilter === 'ALL' ||
-                    (d.metadata && d.metadata.subcategory_code === subbarSubcategoryFilter));
-                return matchesCat && matchesSubcat && !doc.is_deleted;
+                if (!searchTerm) return true;
+                const flatCode = d.flat ? `${d.flat.wing}-${d.flat.flat_number}` : '';
+                const haystack = [doc.title, doc.description, flatCode, d.owner_email]
+                    .filter(Boolean).join(' ').toLowerCase();
+                return haystack.includes(searchTerm);
             });
 
             renderAdminDocsTable(filtered);
@@ -5043,12 +5210,53 @@ function openDesignationPicker(field) {
             }
         }
 
+        let adminDocSelection = new Set();
+
+        function updateAdminDocBulkBar() {
+            const bar = document.getElementById('admin-doc-bulk-bar');
+            const count = adminDocSelection.size;
+            bar.style.display = count > 0 ? 'flex' : 'none';
+            document.getElementById('admin-doc-bulk-count').textContent =
+                `${count} document${count === 1 ? '' : 's'} selected`;
+            const allCheckboxes = document.querySelectorAll('#admin-doc-rows-target input[type="checkbox"]');
+            const selectAll = document.getElementById('admin-doc-select-all');
+            selectAll.checked = allCheckboxes.length > 0 &&
+                Array.from(allCheckboxes).every(cb => cb.checked);
+        }
+
+        function toggleAdminDocSelection(docId, checked) {
+            if (checked) adminDocSelection.add(docId);
+            else adminDocSelection.delete(docId);
+            updateAdminDocBulkBar();
+        }
+
+        function toggleAdminDocSelectAll(checked) {
+            document.querySelectorAll('#admin-doc-rows-target input[type="checkbox"]').forEach(cb => {
+                cb.checked = checked;
+                if (checked) adminDocSelection.add(cb.dataset.docId);
+                else adminDocSelection.delete(cb.dataset.docId);
+            });
+            updateAdminDocBulkBar();
+        }
+
+        function clearAdminDocSelection() {
+            adminDocSelection.clear();
+            renderAdminDocsTable(lastRenderedAdminDocs);
+        }
+
+        let lastRenderedAdminDocs = [];
+
         function renderAdminDocsTable(docsList) {
+            lastRenderedAdminDocs = docsList;
             const tbody = document.getElementById('admin-doc-rows-target');
             tbody.innerHTML = '';
-            
+
+            const visibleIds = new Set(docsList.map(d => d.document.document_id));
+            adminDocSelection.forEach(id => { if (!visibleIds.has(id)) adminDocSelection.delete(id); });
+
             if (docsList.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted-foreground); padding: 32px; font-weight: 500;">No documents found.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--muted-foreground); padding: 32px; font-weight: 500;">No documents found.</td></tr>';
+                updateAdminDocBulkBar();
                 return;
             }
 
@@ -5087,6 +5295,11 @@ function openDesignationPicker(field) {
 
                 tr.innerHTML = `
                     <td>
+                        ${!doc.is_deleted
+                            ? `<input type="checkbox" data-doc-id="${escapeHtml(doc.document_id)}" ${adminDocSelection.has(doc.document_id) ? 'checked' : ''} onchange="toggleAdminDocSelection('${escapeHtml(doc.document_id)}', this.checked)">`
+                            : ''}
+                    </td>
+                    <td>
                         <div style="display:flex; align-items:center; gap:8px; max-width:min(480px, 70vw);">
                             <div class="truncate" style="font-weight: 700; color: var(--primary); cursor: pointer; font-size: 1.125rem;" title="${truncTitle(doc.title)}" onclick="downloadDocument('${escapeHtml(doc.document_id)}', true)">${escapeHtml(truncText(doc.title, 70))}</div>
                             ${badgeHtml}
@@ -5111,6 +5324,208 @@ function openDesignationPicker(field) {
                 `;
                 tbody.appendChild(tr);
             });
+
+            updateAdminDocBulkBar();
+        }
+
+        function selectedAdminDocIds() {
+            return Array.from(adminDocSelection);
+        }
+
+        function openBulkSubcategoryModal() {
+            const ids = selectedAdminDocIds();
+            if (ids.length === 0) return;
+
+            const categories = [...new Set(ids.map(id => {
+                const d = allAdminDocs.find(x => x.document.document_id === id);
+                return d ? d.document.category : null;
+            }).filter(Boolean))];
+
+            const options = [];
+            categories.forEach(catCode => {
+                const cat = uploadFormCategories.find(c => c.code === catCode);
+                if (!cat) return;
+                cat.subcategories.forEach(s => {
+                    const prefix = categories.length > 1 ? `${escapeHtml(formatCategory(catCode))}: ` : '';
+                    options.push(`<option value="${escapeHtml(s.code)}">${prefix}${escapeHtml(s.label)}</option>`);
+                });
+            });
+
+            document.getElementById('bulk-subcategory-select').innerHTML =
+                '<option value="">None (clear subcategory)</option>' + options.join('');
+            document.getElementById('bulk-subcategory-count').textContent =
+                `${ids.length} document${ids.length === 1 ? '' : 's'} selected`;
+            document.getElementById('bulk-subcategory-feedback').style.display = 'none';
+            document.getElementById('bulk-subcategory-modal').style.display = 'flex';
+        }
+
+        function closeBulkSubcategoryModal() {
+            document.getElementById('bulk-subcategory-modal').style.display = 'none';
+        }
+
+        async function submitBulkSubcategory() {
+            const ids = selectedAdminDocIds();
+            const subcategory_code = document.getElementById('bulk-subcategory-select').value || null;
+            const feedback = document.getElementById('bulk-subcategory-feedback');
+            const btn = document.getElementById('bulk-subcategory-save-btn');
+            btn.disabled = true;
+            feedback.style.display = 'none';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/bulk-update-subcategory`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: ids, subcategory_code })
+                });
+                if (!resp.ok) {
+                    feedback.textContent = `Error: ${await readErrorMessage(resp)}`;
+                    feedback.className = 'feedback-box error';
+                    feedback.style.display = 'block';
+                    return;
+                }
+                const result = await resp.json();
+                closeBulkSubcategoryModal();
+                adminDocSelection.clear();
+                await loadAdminDocuments();
+                if (result.skipped.length > 0) {
+                    await showAlert(`Updated ${result.succeeded.length}. Skipped ${result.skipped.length}: ${result.skipped.map(s => s.reason).join('; ')}`);
+                }
+            } catch (err) {
+                feedback.textContent = 'Connection error.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function openBulkCategoryModal() {
+            const ids = selectedAdminDocIds();
+            if (ids.length === 0) return;
+
+            document.getElementById('bulk-category-select').innerHTML = uploadFormCategories
+                .map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(formatCategory(c.code))}</option>`)
+                .join('');
+            document.getElementById('bulk-category-count').textContent =
+                `${ids.length} document${ids.length === 1 ? '' : 's'} selected`;
+            document.getElementById('bulk-category-feedback').style.display = 'none';
+            document.getElementById('bulk-category-flat-wing').value = '';
+            document.getElementById('bulk-category-flat-number').value = '';
+            handleBulkCategoryChange();
+            document.getElementById('bulk-category-modal').style.display = 'flex';
+        }
+
+        function closeBulkCategoryModal() {
+            document.getElementById('bulk-category-modal').style.display = 'none';
+        }
+
+        function handleBulkCategoryChange() {
+            const category = document.getElementById('bulk-category-select').value;
+            document.getElementById('bulk-category-flat-section').style.display =
+                (category === 'RESIDENT_SPECIFIC') ? 'block' : 'none';
+            if (category === 'RESIDENT_SPECIFIC') {
+                const wings = [...new Set(docFormFlatsCache.filter(f => !f.is_fire_flat).map(f => f.wing))].sort();
+                document.getElementById('bulk-category-flat-wing-options').innerHTML =
+                    wings.map(w => `<option value="${escapeHtml(w)}">`).join('');
+                onBulkCategoryWingChange();
+            }
+        }
+
+        function onBulkCategoryWingChange() {
+            const wing = document.getElementById('bulk-category-flat-wing').value.trim().toUpperCase();
+            const flatInput = document.getElementById('bulk-category-flat-number');
+            const flatOptions = document.getElementById('bulk-category-flat-number-options');
+            if (!wing) {
+                flatInput.value = '';
+                flatInput.disabled = true;
+                flatInput.placeholder = 'Select wing first...';
+                flatOptions.innerHTML = '';
+                return;
+            }
+            const flats = docFormFlatsCache
+                .filter(f => f.wing === wing && !f.is_fire_flat)
+                .sort((a, b) => a.flat_number.localeCompare(b.flat_number));
+            flatInput.disabled = false;
+            flatInput.placeholder = flats.length === 0 ? 'No flats set up for this wing' : 'Type or pick a flat...';
+            flatOptions.innerHTML = flats.map(f => `<option value="${escapeHtml(f.flat_number)}">`).join('');
+        }
+
+        async function submitBulkCategory() {
+            const ids = selectedAdminDocIds();
+            const category = document.getElementById('bulk-category-select').value;
+            const feedback = document.getElementById('bulk-category-feedback');
+
+            let flat = null;
+            if (category === 'RESIDENT_SPECIFIC') {
+                const wing = document.getElementById('bulk-category-flat-wing').value.trim().toUpperCase();
+                const flat_number = document.getElementById('bulk-category-flat-number').value.trim();
+                if (!wing || !flat_number) {
+                    feedback.textContent = 'RESIDENT_SPECIFIC documents require a flat mapping (wing + flat number).';
+                    feedback.className = 'feedback-box error';
+                    feedback.style.display = 'block';
+                    return;
+                }
+                flat = { wing, flat_number };
+            }
+
+            const btn = document.getElementById('bulk-category-save-btn');
+            btn.disabled = true;
+            feedback.style.display = 'none';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/bulk-update-category`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: ids, category, flat })
+                });
+                if (!resp.ok) {
+                    feedback.textContent = `Error: ${await readErrorMessage(resp)}`;
+                    feedback.className = 'feedback-box error';
+                    feedback.style.display = 'block';
+                    return;
+                }
+                const result = await resp.json();
+                closeBulkCategoryModal();
+                adminDocSelection.clear();
+                await loadAdminDocuments();
+                if (result.skipped.length > 0) {
+                    await showAlert(`Updated ${result.succeeded.length}. Skipped ${result.skipped.length}: ${result.skipped.map(s => s.reason).join('; ')}`);
+                }
+            } catch (err) {
+                feedback.textContent = 'Connection error.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function bulkDeleteDocuments() {
+            const ids = selectedAdminDocIds();
+            if (ids.length === 0) return;
+            const confirmed = await showConfirm(
+                `Delete ${ids.length} document${ids.length === 1 ? '' : 's'}? They'll disappear from residents' views immediately.`,
+                'Delete'
+            );
+            if (!confirmed) return;
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/bulk-delete`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: ids })
+                });
+                if (!resp.ok) {
+                    await showAlert(`Error: ${await readErrorMessage(resp)}`);
+                    return;
+                }
+                const result = await resp.json();
+                adminDocSelection.clear();
+                await loadAdminDocuments();
+                if (result.skipped.length > 0) {
+                    await showAlert(`Deleted ${result.succeeded.length}. Skipped ${result.skipped.length}: ${result.skipped.map(s => s.reason).join('; ')}`);
+                }
+            } catch (err) {
+                await showAlert('Connection error.');
+            }
         }
 
         async function downloadDocument(docId, isAdmin = false) {
@@ -5290,14 +5705,72 @@ function openDesignationPicker(field) {
 
         const regDocForm = document.getElementById('register-doc-form');
         const docFeedback = document.getElementById('doc-feedback');
+        const docAllowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
+        const docMaxSize = 1024 * 1024 * 1024;
+
+        function validateDocFile(file) {
+            if (file.size > docMaxSize) {
+                return `${file.name}: file size must be 1GB or less.`;
+            }
+            const fileName = file.name.toLowerCase();
+            if (!docAllowedExtensions.some(ext => fileName.endsWith(ext))) {
+                return `${file.name}: invalid file type. Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.`;
+            }
+            return null;
+        }
+
+        async function uploadOneDocument(title, description, category, flat, metadata, file) {
+            const urlRes = await fetch(`${API_BASE}/api/v1/admin/documents/upload-url`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    title, description, category, flat, metadata,
+                    filename: file.name,
+                    content_type: file.type || 'application/octet-stream'
+                })
+            });
+            if (!urlRes.ok) {
+                throw new Error(await readErrorMessage(urlRes));
+            }
+            const { document_id, upload_url } = await urlRes.json();
+
+            const putRes = await fetch(upload_url, {
+                method: 'PUT',
+                headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                body: file
+            });
+            if (!putRes.ok) {
+                throw new Error('Upload to storage failed.');
+            }
+
+            const confirmRes = await fetch(`${API_BASE}/api/v1/admin/documents/confirm-upload`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ document_id })
+            });
+            if (!confirmRes.ok) {
+                throw new Error(await readErrorMessage(confirmRes));
+            }
+        }
+
+        function titleFromFileName(name) {
+            const base = name.split('/').pop();
+            const dot = base.lastIndexOf('.');
+            return dot > 0 ? base.slice(0, dot) : base;
+        }
 
         regDocForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             docFeedback.style.display = 'none';
 
-            const title = document.getElementById('doc-title').value.trim();
-            const description = document.getElementById('doc-desc').value.trim() || null;
             const category = document.getElementById('doc-category').value;
+            const folderMode = document.getElementById('doc-folder-mode').checked;
 
             let flat = null;
             if (category === 'RESIDENT_SPECIFIC') {
@@ -5312,6 +5785,7 @@ function openDesignationPicker(field) {
                 flat = { wing, flat_number };
             }
 
+            const description = document.getElementById('doc-desc').value.trim() || null;
             const subcategory_code = document.getElementById('doc-subcategory').value || null;
             const tagsInput = document.getElementById('doc-tags').value.trim();
             const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
@@ -5320,21 +5794,62 @@ function openDesignationPicker(field) {
             const valid_until = document.getElementById('doc-valid-until').value || null;
             const hasMetadata = subcategory_code || tags.length > 0 || document_date || valid_from || valid_until;
             const today = new Date().toISOString().slice(0, 10);
+            const metadata = hasMetadata ? {
+                subcategory_code,
+                tags,
+                document_date: document_date || today,
+                valid_from,
+                valid_until
+            } : null;
 
-            const payload = {
-                title,
-                description,
-                category,
-                flat,
-                metadata: hasMetadata ? {
-                    subcategory_code,
-                    tags,
-                    document_date: document_date || today,
-                    valid_from,
-                    valid_until
-                } : null
-            };
+            if (folderMode) {
+                const folderInput = document.getElementById('doc-folder');
+                const files = Array.from(folderInput.files || []).filter(f => !f.name.startsWith('.'));
+                if (files.length === 0) {
+                    docFeedback.textContent = 'Please select a folder with at least one file.';
+                    docFeedback.className = 'feedback-box error';
+                    docFeedback.style.display = 'block';
+                    return;
+                }
+                const badFile = files.map(validateDocFile).find(err => err);
+                if (badFile) {
+                    docFeedback.textContent = badFile;
+                    docFeedback.className = 'feedback-box error';
+                    docFeedback.style.display = 'block';
+                    return;
+                }
 
+                let succeeded = 0;
+                const failures = [];
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    docFeedback.textContent = `Uploading ${i + 1} of ${files.length}: ${file.name}...`;
+                    docFeedback.className = 'feedback-box';
+                    docFeedback.style.display = 'block';
+                    try {
+                        await uploadOneDocument(titleFromFileName(file.name), description, category, flat, metadata, file);
+                        succeeded++;
+                    } catch (err) {
+                        failures.push(`${file.name}: ${err.message}`);
+                    }
+                }
+
+                if (failures.length === 0) {
+                    docFeedback.textContent = `✓ ${succeeded} document${succeeded === 1 ? '' : 's'} added!`;
+                    docFeedback.className = 'feedback-box success';
+                } else {
+                    docFeedback.textContent = `${succeeded} of ${files.length} uploaded. Failed: ${failures.join('; ')}`;
+                    docFeedback.className = 'feedback-box error';
+                }
+                regDocForm.reset();
+                setDocFolderMode(false);
+                handleCategoryChange();
+                onDocFormWingChange();
+                loadAdminDocuments();
+                return;
+            }
+
+            const title = document.getElementById('doc-title').value.trim();
             const fileInput = document.getElementById('doc-file');
             if (!fileInput.files || fileInput.files.length === 0) {
                 docFeedback.textContent = 'Please select a file to upload.';
@@ -5343,92 +5858,30 @@ function openDesignationPicker(field) {
                 return;
             }
             const file = fileInput.files[0];
-
-            const MAX_SIZE = 1024 * 1024 * 1024;
-            if (file.size > MAX_SIZE) {
-                docFeedback.textContent = 'File size must be 1GB or less.';
-                docFeedback.className = 'feedback-box error';
-                docFeedback.style.display = 'block';
-                return;
-            }
-
-            const allowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
-            const fileName = file.name.toLowerCase();
-            const isValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
-            if (!isValidExtension) {
-                docFeedback.textContent = 'Invalid file type. Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.';
+            const fileError = validateDocFile(file);
+            if (fileError) {
+                docFeedback.textContent = fileError;
                 docFeedback.className = 'feedback-box error';
                 docFeedback.style.display = 'block';
                 return;
             }
 
             try {
-                const urlRes = await fetch(`${API_BASE}/api/v1/admin/documents/upload-url`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        ...payload,
-                        filename: file.name,
-                        content_type: file.type || 'application/octet-stream'
-                    })
-                });
-
-                if (!urlRes.ok) {
-                    const errText = await readErrorMessage(urlRes);
-                    docFeedback.textContent = `Error: ${errText}`;
-                    docFeedback.className = 'feedback-box error';
-                    docFeedback.style.display = 'block';
-                    return;
-                }
-
-                const { document_id, upload_url } = await urlRes.json();
-
                 docFeedback.textContent = 'Uploading file...';
                 docFeedback.className = 'feedback-box';
                 docFeedback.style.display = 'block';
 
-                const putRes = await fetch(upload_url, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-                    body: file
-                });
-
-                if (!putRes.ok) {
-                    docFeedback.textContent = 'Upload to storage failed. Please try again.';
-                    docFeedback.className = 'feedback-box error';
-                    return;
-                }
-
-                docFeedback.textContent = 'Confirming upload...';
-                
-                const confirmRes = await fetch(`${API_BASE}/api/v1/admin/documents/confirm-upload`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ document_id })
-                });
-
-                if (!confirmRes.ok) {
-                    const errText = await readErrorMessage(confirmRes);
-                    docFeedback.textContent = `Confirmation failed: ${errText}`;
-                    docFeedback.className = 'feedback-box error';
-                    return;
-                }
+                await uploadOneDocument(title, description, category, flat, metadata, file);
 
                 docFeedback.textContent = '✓ Document added!';
                 docFeedback.className = 'feedback-box success';
                 regDocForm.reset();
+                setDocFolderMode(false);
                 handleCategoryChange();
                 onDocFormWingChange();
                 loadAdminDocuments();
-                
             } catch (err) {
-                docFeedback.textContent = 'Connection error.';
+                docFeedback.textContent = `Error: ${err.message}`;
                 docFeedback.className = 'feedback-box error';
                 docFeedback.style.display = 'block';
             }

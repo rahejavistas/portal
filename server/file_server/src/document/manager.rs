@@ -261,6 +261,7 @@ impl DocumentManager {
                 document: doc,
                 metadata: meta,
                 flat: None,
+                owner_email: None,
                 download_url: None,
             },
             upload_url,
@@ -326,6 +327,7 @@ impl DocumentManager {
                 document: doc,
                 metadata: meta,
                 flat: None,
+                owner_email: None,
                 download_url: None,
             },
             upload_url,
@@ -380,6 +382,7 @@ impl DocumentManager {
             document: doc,
             metadata: None,
             flat: None,
+            owner_email: None,
             download_url: None,
         })
     }
@@ -538,13 +541,16 @@ impl DocumentManager {
                 d.document_id, d.title, d.description, d.category, d.uploaded_date, d.updated_at, d.is_deleted, d.is_user_uploaded, d.is_upload_confirmed, d.uploaded_by, d.content_type, \
                 g.subcategory_id, sc.code AS subcategory_code, sc.label AS subcategory_label, \
                 g.tags, g.document_date, g.valid_from, g.valid_until, \
-                f.wing, f.flat_number \
+                f.wing, f.flat_number, f.owner_email \
              FROM documents d \
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
              LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              LEFT JOIN LATERAL ( \
-                SELECT fl.wing, fl.flat_number FROM document_flats df \
+                SELECT fl.wing, fl.flat_number, u.email AS owner_email \
+                FROM document_flats df \
                 JOIN flats fl ON fl.flat_id = df.flat_id \
+                LEFT JOIN flat_ownerships fo ON fo.flat_id = fl.flat_id AND fo.is_active = TRUE \
+                LEFT JOIN users u ON u.user_id = fo.user_id \
                 WHERE df.document_id = d.document_id \
                 LIMIT 1 \
              ) f ON TRUE \
@@ -633,6 +639,227 @@ impl DocumentManager {
         Ok(())
     }
 
+    fn can_manage(manageable: Option<&std::collections::HashSet<String>>, category: &str) -> bool {
+        match manageable {
+            None => true,
+            Some(set) => set.contains(category),
+        }
+    }
+
+    /// Fetches (document_id, category) for every requested, non-deleted document.
+    async fn fetch_categories_for(
+        &self,
+        document_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, String>, String> {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT document_id, category FROM documents WHERE document_id = ANY($1) AND NOT is_deleted",
+        )
+        .bind(document_ids)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Skips (doesn't fail the batch on) documents the caller can't manage.
+    pub async fn bulk_soft_delete_documents(
+        &self,
+        document_ids: &[Uuid],
+        manageable: Option<&std::collections::HashSet<String>>,
+    ) -> Result<crate::document::BulkActionResult, String> {
+        let found = self.fetch_categories_for(document_ids).await?;
+        let mut result = crate::document::BulkActionResult::default();
+        let mut allowed_ids: Vec<Uuid> = Vec::new();
+
+        for &id in document_ids {
+            match found.get(&id) {
+                None => result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: "Document not found".to_string(),
+                }),
+                Some(category) if Self::can_manage(manageable, category) => allowed_ids.push(id),
+                Some(category) => result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: format!("Cannot manage category '{}'", category),
+                }),
+            }
+        }
+
+        if !allowed_ids.is_empty() {
+            sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = ANY($1)")
+                .bind(&allowed_ids)
+                .execute(&self.pg_pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            result.succeeded = allowed_ids;
+        }
+
+        Ok(result)
+    }
+
+    /// Resolves `subcategory_code` per document's own category, so mixed-category selections work.
+    pub async fn bulk_update_subcategory(
+        &self,
+        document_ids: &[Uuid],
+        subcategory_code: Option<&str>,
+        manageable: Option<&std::collections::HashSet<String>>,
+    ) -> Result<crate::document::BulkActionResult, String> {
+        let found = self.fetch_categories_for(document_ids).await?;
+        let mut result = crate::document::BulkActionResult::default();
+        let mut resolved_ids: Vec<Uuid> = Vec::new();
+        let mut resolved_subcategory_ids: Vec<Option<i32>> = Vec::new();
+
+        for &id in document_ids {
+            let category = match found.get(&id) {
+                None => {
+                    result.skipped.push(crate::document::BulkActionSkip {
+                        document_id: id,
+                        reason: "Document not found".to_string(),
+                    });
+                    continue;
+                }
+                Some(category) => category,
+            };
+            if !Self::can_manage(manageable, category) {
+                result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: format!("Cannot manage category '{}'", category),
+                });
+                continue;
+            }
+
+            let subcategory_id = match subcategory_code {
+                None => None,
+                Some(code) => match self.resolve_subcategory_id(category, code).await {
+                    Ok(subcategory_id) => Some(subcategory_id),
+                    Err(_) => {
+                        result.skipped.push(crate::document::BulkActionSkip {
+                            document_id: id,
+                            reason: format!(
+                                "No subcategory '{}' under category '{}'",
+                                code, category
+                            ),
+                        });
+                        continue;
+                    }
+                },
+            };
+
+            resolved_ids.push(id);
+            resolved_subcategory_ids.push(subcategory_id);
+        }
+
+        if !resolved_ids.is_empty() {
+            let updated: Vec<Uuid> = sqlx::query_scalar(
+                "UPDATE generic_document_metadata AS g SET subcategory_id = t.subcategory_id \
+                 FROM UNNEST($1::uuid[], $2::int[]) AS t(document_id, subcategory_id) \
+                 WHERE g.document_id = t.document_id \
+                 RETURNING g.document_id",
+            )
+            .bind(&resolved_ids)
+            .bind(&resolved_subcategory_ids)
+            .fetch_all(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            let updated_set: std::collections::HashSet<Uuid> = updated.into_iter().collect();
+            for id in resolved_ids {
+                if updated_set.contains(&id) {
+                    result.succeeded.push(id);
+                } else {
+                    result.skipped.push(crate::document::BulkActionSkip {
+                        document_id: id,
+                        reason: "Document has no existing metadata to update".to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Bad flat aborts the whole batch (not a per-document skip like permission checks).
+    pub async fn bulk_update_category(
+        &self,
+        document_ids: &[Uuid],
+        new_category: &str,
+        flat: Option<&FlatIdentifier>,
+        manageable: Option<&std::collections::HashSet<String>>,
+    ) -> Result<crate::document::BulkActionResult, String> {
+        let found = self.fetch_categories_for(document_ids).await?;
+        let mut result = crate::document::BulkActionResult::default();
+        let mut allowed_ids: Vec<Uuid> = Vec::new();
+
+        for &id in document_ids {
+            match found.get(&id) {
+                None => result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: "Document not found".to_string(),
+                }),
+                Some(category) if Self::can_manage(manageable, category) => allowed_ids.push(id),
+                Some(category) => result.skipped.push(crate::document::BulkActionSkip {
+                    document_id: id,
+                    reason: format!("Cannot manage category '{}'", category),
+                }),
+            }
+        }
+
+        if allowed_ids.is_empty() {
+            return Ok(result);
+        }
+
+        let mut tx = base::postgres::begin_transaction(&self.pg_pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "UPDATE generic_document_metadata SET subcategory_id = NULL WHERE document_id = ANY($1)",
+        )
+        .bind(&allowed_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        sqlx::query("DELETE FROM document_flats WHERE document_id = ANY($1)")
+            .bind(&allowed_ids)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        sqlx::query(
+            "UPDATE documents SET category = $2, updated_at = NOW() WHERE document_id = ANY($1)",
+        )
+        .bind(&allowed_ids)
+        .bind(new_category)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some(flat) = flat {
+            let inserted = sqlx::query(
+                "INSERT INTO document_flats (document_id, flat_id) \
+                 SELECT d, flat_id FROM UNNEST($1::uuid[]) AS d, flats \
+                 WHERE wing = $2 AND flat_number = $3 \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(&allowed_ids)
+            .bind(flat.wing())
+            .bind(flat.flat_number())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            if inserted.rows_affected() == 0 {
+                return Err(format!("Flat not found: {}", flat));
+            }
+        }
+
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        result.succeeded = allowed_ids;
+        Ok(result)
+    }
+
     /// Fetches all non-deleted documents linked to a specific process via process_fields.
     pub async fn get_documents_for_process<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         executor: E,
@@ -712,6 +939,7 @@ impl DocumentManager {
                 document: doc,
                 metadata: None,
                 flat: None,
+                owner_email: None,
                 download_url: None,
             },
             upload_url,

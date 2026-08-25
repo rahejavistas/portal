@@ -1025,6 +1025,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             .hamburger-btn { display: flex; }
             .topbar-brand { font-size: 1.0625rem; }
             .topbar-search { display: none; }
+            .help-btn { margin-left: auto; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
@@ -1867,6 +1868,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 .replace(/'/g, "&#039;");
         }
 
+        function focusNextOnEnter(event, nextFieldId) {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const next = document.getElementById(nextFieldId);
+            if (next) next.focus();
+        }
+
         function truncText(text, maxLen) {
             const str = (text === null || text === undefined) ? '' : text.toString();
             return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
@@ -2418,7 +2426,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             metaContainer.innerHTML = `
                 <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">${escapeHtml(p.inward_reg_no)}</span>
                 ${p.flat_label ? `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">Flat&nbsp;${escapeHtml(p.flat_label)}</span>` : ''}
-                <span style="display:inline-flex;align-items:center;gap:5px;background:var(--muted);color:var(--muted-foreground);font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;letter-spacing:0.04em;">ID&nbsp;${p.process_id.substring(0, 8)}</span>
                 <span style="display:inline-flex;align-items:center;gap:5px;${statusChipClass}font-size:0.75rem;font-weight:700;padding:4px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${statusText}</span>
                 ${dueChip}
             `;
@@ -2544,6 +2551,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             let hasEditableTextField = false;
             let anyRequiredEmpty = false;
 
+            const editableFieldIds = fields.filter(f => {
+                if (f.type === 'document') return false;
+                if (!(stepStatus === 'OPEN' || parentStatus === 'OPEN')) return false;
+                if (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) return true;
+                if (f.filled_by === 'admin' && isCurrentAdmin) return true;
+                return false;
+            }).map(f => f.template_field_id);
+
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
                 const filledBy = f.filled_by;
@@ -2611,16 +2626,21 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         const inputStyle = 'flex: 1; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 0.9375rem;';
                         const onInputAttr = `oninput="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
                         const onChangeAttr = `onchange="updateSaveButtonState(${stepId}); saveFieldDraft(${fieldId})"`;
+                        const editablePos = editableFieldIds.indexOf(fieldId);
+                        const nextFocusId = (editablePos !== -1 && editablePos < editableFieldIds.length - 1)
+                            ? `text-input-${editableFieldIds[editablePos + 1]}`
+                            : `step-save-btn-${stepId}`;
+                        const onEnterAttr = `onkeydown="focusNextOnEnter(event, '${nextFocusId}')"`;
                         let fieldInputHtml;
                         if (type === 'int') {
-                            fieldInputHtml = `<input type="number" step="1" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter a whole number..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="number" step="1" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter a whole number..." ${onInputAttr} ${onEnterAttr}>`;
                         } else if (type === 'decimal') {
-                            fieldInputHtml = `<input type="number" step="any" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter an amount..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="number" step="any" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter an amount..." ${onInputAttr} ${onEnterAttr}>`;
                         } else if (type === 'date') {
-                            fieldInputHtml = `<input type="date" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="date" id="text-input-${fieldId}" style="${inputStyle}" value="${escapeHtml(restoredVal)}" ${onInputAttr} ${onEnterAttr}>`;
                         } else if (type === 'bool') {
                             fieldInputHtml = `
-                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
+                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr} ${onEnterAttr}>
                                     <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
                                     <option value="true" ${restoredVal === 'true' ? 'selected' : ''}>Yes</option>
                                     <option value="false" ${restoredVal === 'false' ? 'selected' : ''}>No</option>
@@ -2629,13 +2649,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         } else if (type === 'enum') {
                             const opts = f.options || [];
                             fieldInputHtml = `
-                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr}>
+                                <select id="text-input-${fieldId}" style="${inputStyle}" ${onChangeAttr} ${onEnterAttr}>
                                     <option value="" ${!restoredVal ? 'selected' : ''}>Select...</option>
                                     ${opts.map(o => `<option value="${escapeHtml(o)}" ${restoredVal === o ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
                                 </select>
                             `;
                         } else {
-                            fieldInputHtml = `<input type="text" id="text-input-${fieldId}" class="text-value-input" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter details..." ${onInputAttr}>`;
+                            fieldInputHtml = `<input type="text" id="text-input-${fieldId}" class="text-value-input" style="${inputStyle}" value="${escapeHtml(restoredVal)}" placeholder="Enter details..." ${onInputAttr} ${onEnterAttr}>`;
                         }
                         inputHtml = `<div style="max-width: 700px;">${fieldInputHtml}</div>`;
                     }
@@ -2960,15 +2980,17 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
                 const rejectOnClick = isCompleted ? `submitAdminRevoke(${stepId})` : `submitAdminReview(${stepId}, false)`;
                 const approveOnClick = `submitAdminReview(${stepId}, true)`;
-                const approveButtonHtml = isCompleted ? '' : `<button class="btn" onclick="${approveOnClick}">Approve Step</button>`;
-
+                const approveButtonHtml = isCompleted ? '' : `<button class="btn" onclick="${approveOnClick}">Approve Step (Ctrl+Enter)</button>`;
+                const approveShortcutAttr = isCompleted
+                    ? ''
+                    : `onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();${approveOnClick};}"`;
 
                 html += `
                     <div style="border-top: 2px solid var(--border); padding-top: 24px; margin-top: 32px;">
                         <h4 style="margin: 0 0 16px 0; font-size: 1.25rem; font-weight: 800; color: var(--foreground);">Admin Action Panel</h4>
                         <div class="form-group" style="margin-bottom: 16px;">
                             <label for="review-notes-${stepId}" style="font-weight: 700; font-size: 0.8125rem; text-transform: uppercase;">Review Remarks (Shown to Resident)</label>
-                            <textarea id="review-notes-${stepId}" style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-family: inherit; font-size: 0.9375rem; line-height: 1.5;" placeholder="Enter comments or instructions visible to the resident..."></textarea>
+                            <textarea id="review-notes-${stepId}" style="width: 100%; min-height: 100px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); font-family: inherit; font-size: 0.9375rem; line-height: 1.5;" placeholder="Enter comments or instructions visible to the resident..." ${approveShortcutAttr}></textarea>
                         </div>
                         <div class="admin-action-buttons">
                             <button class="btn admin-note-btn" onclick="openAdminNoteModal(${stepId})">

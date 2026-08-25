@@ -79,6 +79,20 @@ pub struct DocumentFlatInfo {
     pub flat: FlatIdentifier,
 }
 
+/// One document a bulk action couldn't apply to, and why (missing, or not manageable
+/// by the caller's permissions).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BulkActionSkip {
+    pub document_id: Uuid,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BulkActionResult {
+    pub succeeded: Vec<Uuid>,
+    pub skipped: Vec<BulkActionSkip>,
+}
+
 /// A single row of the `document_category_designations` access matrix: whether a
 /// designation can read and/or manage (upload, sign, delete) a document category.
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -95,6 +109,8 @@ pub struct DocumentWithMetadata {
     pub metadata: Option<GenericDocumentMetadata>,
     #[serde(default)]
     pub flat: Option<DocumentFlatInfo>,
+    #[serde(default)]
+    pub owner_email: Option<String>,
     #[serde(default)]
     pub download_url: Option<String>,
 }
@@ -125,10 +141,13 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DocumentWithMetadata {
             _ => None,
         };
 
+        let owner_email = row.try_get::<String, _>("owner_email").ok();
+
         Ok(Self {
             document,
             metadata,
             flat,
+            owner_email,
             download_url: None,
         })
     }

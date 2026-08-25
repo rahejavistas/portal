@@ -75,7 +75,7 @@ Three things are **not** permissions but still gate UI:
 
 - Admin → **Documents** tab becomes visible; **Explorer** and **Add Document** subtabs
   are shown (and are the default landing subtab).
-- Full document lifecycle across every category: browse/filter, upload, sign, delete.
+- Full document lifecycle across every category: browse/filter/search, upload (including a whole folder at once for a single flat), sign, delete — individually or selected in bulk (change subcategory, change category, delete).
 - Note: `can_manage_documents` (the underlying flag) is also true if a user's designation
   holds a per-category `can_manage` grant via Document Category Access, even without this
   permission — e.g. a designation scoped to just `FINANCE` still sees Explorer/Add Document,
