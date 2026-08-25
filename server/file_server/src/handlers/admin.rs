@@ -46,6 +46,16 @@ pub async fn create_user(
         )
             .into_response();
     }
+    if !email.contains('@') || !email.contains('.') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Invalid email address."
+            })),
+        )
+            .into_response();
+    }
 
     let flat = match FlatIdentifier::new(&payload.wing, &payload.flat_number) {
         Ok(f) => f,

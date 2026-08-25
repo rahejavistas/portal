@@ -17,7 +17,10 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> axum::respo
 
 /// Codes render into inline JS on the frontend, so the charset is restricted at creation.
 fn is_safe_code(code: &str) -> bool {
-    !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !code.is_empty()
+        && code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Emails the resident that a designation was granted/revoked. Best-effort — logged on

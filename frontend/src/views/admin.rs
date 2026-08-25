@@ -3246,7 +3246,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <div style="font-size:12px; color:var(--muted-foreground); margin-top:2px;">${new Date(v.created_at).toLocaleString()}${v.created_by_email ? ` &middot; by ${escapeHtml(v.created_by_email)}` : ''}</div>
                         </div>
                         <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
-                            <button class="action-select" style="cursor:pointer;" onclick="openTemplatePreview(${v.version_id}, '${escapeHtml(t.name).replace(/'/g, "\\'")}')">View</button>
+                            <button class="action-select" style="cursor:pointer;" onclick="openTemplatePreview(${v.version_id}, '${jsAttrEscape(t.name)}')">View</button>
                             ${isActive
                                 ? ''
                                 : `<button type="button" class="submit-btn" style="width:auto; padding:6px 14px; margin:0; font-size:12px;" onclick="activateTemplateVersion(${t.template_id}, ${v.version_id})">Activate</button>`}
@@ -3698,7 +3698,7 @@ function openDesignationPicker(field) {
                             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
                                 <a href="/process?process_id=${escapeHtml(r.process_id)}" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">View Process</a>
                                 ${r.sign_url ? `<a href="${escapeHtml(r.sign_url)}" target="_blank" rel="noopener" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">Open Signing Page</a>` : ''}
-                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${escapeHtml(r.document_title).replace(/'/g, "\\'")}', '${escapeHtml(r.signer_name)}')">Sign manually</button>
+                                <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${jsAttrEscape(r.document_title)}', '${jsAttrEscape(r.signer_name)}')">Sign manually</button>
                             </div>
                         </td>
                     </tr>
@@ -4383,7 +4383,7 @@ function openDesignationPicker(field) {
                 <tr>
                     <td style="font-weight:700;"><span class="truncate" style="max-width:280px;" title="${truncTitle(s.label)}">${escapeHtml(truncText(s.label, 50))}</span></td>
                     <td>
-                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentSubcategory(${s.subcategory_id}, '${escapeHtml(s.label)}')">Rename</button>` : ''}
+                        ${canManageCategories ? `<button class="action-select" style="cursor:pointer;" onclick="renameDocumentSubcategory(${s.subcategory_id}, '${jsAttrEscape(s.label)}')">Rename</button>` : ''}
                     </td>
                 </tr>
             `).join('');
@@ -4606,7 +4606,7 @@ function openDesignationPicker(field) {
                     </td>
                     <td>
                         ${canManageRoles && u.user_id !== user.user_id
-                            ? `<button class="action-select" style="cursor:pointer;" onclick="openManageDesignationsModal(${u.user_id}, '${escapeHtml(u.email)}')">Manage Designations</button>`
+                            ? `<button class="action-select" style="cursor:pointer;" onclick="openManageDesignationsModal(${u.user_id}, '${jsAttrEscape(u.email)}')">Manage Designations</button>`
                             : (u.user_id === user.user_id
                                 ? '<span style="color:var(--muted-foreground); font-size:12px;">(You)</span>'
                                 : '')}

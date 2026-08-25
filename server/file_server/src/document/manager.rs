@@ -677,9 +677,7 @@ impl DocumentManager {
                     document_id: id,
                     reason: "Document not found".to_string(),
                 }),
-                Some(category) if Self::can_manage(manageable, category) => {
-                    candidate_ids.push(id)
-                }
+                Some(category) if Self::can_manage(manageable, category) => candidate_ids.push(id),
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
@@ -835,9 +833,7 @@ impl DocumentManager {
                         reason: format!("Already in category '{}'", new_category),
                     })
                 }
-                Some(category) if Self::can_manage(manageable, category) => {
-                    candidate_ids.push(id)
-                }
+                Some(category) if Self::can_manage(manageable, category) => candidate_ids.push(id),
                 Some(category) => result.skipped.push(crate::document::BulkActionSkip {
                     document_id: id,
                     reason: format!("Cannot manage category '{}'", category),
