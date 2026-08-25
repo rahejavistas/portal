@@ -513,3 +513,127 @@ pub async fn admin_delete_document(
 
     Ok(StatusCode::NO_CONTENT)
 }
+
+// ---------------------------------------------------------------------------
+// Bulk admin operations
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct BulkDocumentIdsRequest {
+    pub document_ids: Vec<Uuid>,
+}
+
+pub async fn admin_bulk_delete_documents(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkDocumentIdsRequest>,
+) -> Result<Json<crate::document::BulkActionResult>, ApiError> {
+    if payload.document_ids.is_empty() {
+        return Err(bad_request("No documents selected."));
+    }
+
+    let result = state
+        .document_manager
+        .bulk_soft_delete_documents(&payload.document_ids, &user)
+        .await
+        .map_err(internal_err)?;
+
+    Ok(Json(result))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkUpdateSubcategoryRequest {
+    pub document_ids: Vec<Uuid>,
+    pub subcategory_code: Option<String>,
+}
+
+pub async fn admin_bulk_update_subcategory(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkUpdateSubcategoryRequest>,
+) -> Result<Json<crate::document::BulkActionResult>, ApiError> {
+    if payload.document_ids.is_empty() {
+        return Err(bad_request("No documents selected."));
+    }
+
+    let result = state
+        .document_manager
+        .bulk_update_subcategory(
+            &payload.document_ids,
+            payload.subcategory_code.as_deref(),
+            &user,
+        )
+        .await
+        .map_err(internal_err)?;
+
+    Ok(Json(result))
+}
+
+#[derive(serde::Deserialize)]
+pub struct BulkUpdateCategoryRequest {
+    pub document_ids: Vec<Uuid>,
+    pub category: String,
+    pub flat: Option<FlatPayload>,
+}
+
+pub async fn admin_bulk_update_category(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+    Json(payload): Json<BulkUpdateCategoryRequest>,
+) -> Result<Json<crate::document::BulkActionResult>, ApiError> {
+    if payload.document_ids.is_empty() {
+        return Err(bad_request("No documents selected."));
+    }
+    match (
+        payload.category == RESIDENT_SPECIFIC_CATEGORY,
+        payload.flat.is_some(),
+    ) {
+        (true, false) => {
+            return Err(bad_request(
+                "RESIDENT_SPECIFIC documents require a flat mapping (wing + flat_number).",
+            ))
+        }
+        (false, true) => {
+            return Err(bad_request(
+                "Only RESIDENT_SPECIFIC documents take a flat mapping.",
+            ))
+        }
+        (true, true) | (false, false) => {}
+    }
+
+    let manageable = state
+        .document_manager
+        .manageable_categories(&user)
+        .await
+        .map_err(internal_err)?;
+
+    match &manageable {
+        None => {}
+        Some(categories) if categories.contains(payload.category.as_str()) => {}
+        Some(_) => {
+            return Err(forbidden(format!(
+                "Access denied: you cannot manage the '{}' category",
+                payload.category
+            )))
+        }
+    }
+
+    let flat_id = payload
+        .flat
+        .map(FlatPayload::into_identifier)
+        .transpose()
+        .map_err(bad_request)?;
+
+    let result = state
+        .document_manager
+        .bulk_update_category(
+            &payload.document_ids,
+            &payload.category,
+            flat_id.as_ref(),
+            &user,
+        )
+        .await
+        .map_err(bad_request)?;
+
+    Ok(Json(result))
+}

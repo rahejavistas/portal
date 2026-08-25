@@ -398,6 +398,53 @@ async fn test_documents_routes_have_no_router_level_gate() {
     assert!(cats.is_empty());
 }
 
+/// The three bulk document routes share the same no-router-gate pattern as `/list` and
+/// `/categories`: reachable by any authenticated user regardless of permissions, with
+/// per-document category-manage filtering done inside the handler. A caller with zero
+/// document permissions gets every requested document back as "skipped", never a 403.
+#[tokio::test]
+async fn test_documents_bulk_routes_have_no_router_level_gate() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "nobulkdocs", "808", &[]);
+    let a = auth(&jwt);
+
+    let doc_id = quality::quick_create_document(&env, &admin_jwt, "Doc", "PUBLIC", None);
+
+    let delete_resp: serde_json::Value =
+        ureq::post(&format!("{}/api/v1/admin/documents/bulk-delete", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({"document_ids": [doc_id.clone()]}))
+            .expect("bulk-delete should be reachable, not router-gated")
+            .into_json()
+            .unwrap();
+    assert!(delete_resp["succeeded"].as_array().unwrap().is_empty());
+    assert_eq!(delete_resp["skipped"].as_array().unwrap().len(), 1);
+
+    let subcat_resp: serde_json::Value = ureq::post(&format!(
+        "{}/api/v1/admin/documents/bulk-update-subcategory",
+        url
+    ))
+    .set("Authorization", &a)
+    .send_json(serde_json::json!({"document_ids": [doc_id.clone()], "subcategory_code": null}))
+    .expect("bulk-update-subcategory should be reachable, not router-gated")
+    .into_json()
+    .unwrap();
+    assert!(subcat_resp["succeeded"].as_array().unwrap().is_empty());
+    assert_eq!(subcat_resp["skipped"].as_array().unwrap().len(), 1);
+
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/documents/bulk-update-category",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"document_ids": [doc_id], "category": "PUBLIC"})),
+        "bulk-update-category into a category the caller can't manage",
+    );
+}
+
 /// A designation holding only `documents.signatures.sign` can list the signing queue
 /// and read a requirement's status, but cannot manage the signer directory
 /// (`process.reviewer` — there is no separate signatures-management permission).

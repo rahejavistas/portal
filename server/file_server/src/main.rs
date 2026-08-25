@@ -155,6 +155,18 @@ async fn main() {
                 .route(
                     "/documents/:id/delete",
                     post(handlers::documents::admin_delete_document),
+                )
+                .route(
+                    "/documents/bulk-delete",
+                    post(handlers::documents::admin_bulk_delete_documents),
+                )
+                .route(
+                    "/documents/bulk-update-subcategory",
+                    post(handlers::documents::admin_bulk_update_subcategory),
+                )
+                .route(
+                    "/documents/bulk-update-category",
+                    post(handlers::documents::admin_bulk_update_category),
                 );
 
             let process_reviewer_routes = Router::new()

@@ -379,11 +379,29 @@ Updates title/description/category and replaces metadata (upserted if `metadata`
   }
   ```
 * **Response (200):** `DocumentWithMetadata`.
-* **403** if the caller can't manage the document's current category, or (when changing category) the target category; **400** if title is empty/too long, or the category change moves the document into or out of `RESIDENT_SPECIFIC` — that category's visibility also depends on its flat mapping, which this endpoint doesn't touch, so such changes are rejected outright. There is no separate flat-remapping endpoint; a `RESIDENT_SPECIFIC` document's flat mapping is fixed at upload time.
+* **403** if the caller can't manage the document's current category, or (when changing category) the target category; **400** if title is empty/too long, or the category change moves the document into or out of `RESIDENT_SPECIFIC` — that category's visibility also depends on its flat mapping, which this endpoint doesn't touch, so such changes are rejected outright. Use [`/admin/documents/bulk-update-category`](#post-apiv1admindocumentsbulk-update-category) instead (it works on a single ID too) if the category needs to move into or out of `RESIDENT_SPECIFIC`.
 
 ### POST `/api/v1/admin/documents/:id/delete`
 Soft-deletes (toggles `is_deleted = true`).
 * **Response:** **204 No Content**.
+
+### POST `/api/v1/admin/documents/bulk-delete`
+Soft-deletes every requested document the caller can manage; the rest are reported as skipped instead of failing the whole request.
+* **Request:** `{ "document_ids": ["uuid", ...] }`
+* **Response (200):** `{ "succeeded": ["uuid", ...], "skipped": [{ "document_id": "uuid", "reason": "..." }, ...] }`
+* **400** if `document_ids` is empty. A document that's missing or in a category the caller can't manage lands in `skipped`, not a 403 — permission scoping is per document, not per request.
+
+### POST `/api/v1/admin/documents/bulk-update-subcategory`
+Sets (or, if `subcategory_code` is `null`, clears) the subcategory on every requested document the caller can manage. Each document's code is resolved against its own category, so a selection spanning categories works — a document whose category doesn't offer that code, or that has no metadata row at all, is skipped rather than rejecting the batch.
+* **Request:** `{ "document_ids": ["uuid", ...], "subcategory_code": "RENEWAL" }`
+* **Response (200):** same `{ succeeded, skipped }` shape as bulk-delete.
+* **400** if `document_ids` is empty.
+
+### POST `/api/v1/admin/documents/bulk-update-category`
+Moves every requested document the caller can manage into `category`, clearing its subcategory and any existing flat mapping first. If `category` is `RESIDENT_SPECIFIC`, `flat` is required and applied to every document in the batch — this is the only way to move a document into or out of `RESIDENT_SPECIFIC` (the single-document update endpoint above rejects that).
+* **Request:** `{ "document_ids": ["uuid", ...], "category": "RESIDENT_SPECIFIC", "flat": { "wing": "A", "flat_number": "301" } }` (`flat` omitted/`null` for a non-`RESIDENT_SPECIFIC` target)
+* **Response (200):** same `{ succeeded, skipped }` shape as bulk-delete.
+* **403** if the caller can't manage `category`; **400** if `document_ids` is empty, `category` is `RESIDENT_SPECIFIC` with no `flat`, or `flat` doesn't match a real flat — an invalid `flat` fails the whole batch (unlike the per-document permission skips above), since it's one value applied to every document in the request.
 
 ---
 

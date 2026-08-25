@@ -15,6 +15,14 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> axum::respo
         .into_response()
 }
 
+/// Codes render into inline JS on the frontend, so the charset is restricted at creation.
+fn is_safe_code(code: &str) -> bool {
+    !code.is_empty()
+        && code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 /// Emails the resident that a designation was granted/revoked. Best-effort — logged on
 /// failure, never allowed to fail the assign/revoke action itself.
 async fn notify_designation_change(user_email: &str, designation_code: &str, granted: bool) {
@@ -251,6 +259,12 @@ pub async fn create_designation(
     if code.is_empty() || label.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "Code and label are required.");
     }
+    if !is_safe_code(&code) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "Code must contain only letters, numbers, and underscores.",
+        );
+    }
 
     match state
         .permissions_manager
@@ -480,6 +494,12 @@ pub async fn create_document_category(
     if code.is_empty() || label.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "Code and label are required.");
     }
+    if !is_safe_code(&code) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "Code must contain only letters, numbers, and underscores.",
+        );
+    }
 
     match state
         .document_manager
@@ -568,6 +588,12 @@ pub async fn create_document_subcategory(
 
     if code.is_empty() || label.is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "Code and label are required.");
+    }
+    if !is_safe_code(&code) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "Code must contain only letters, numbers, and underscores.",
+        );
     }
 
     match state
