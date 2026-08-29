@@ -54,6 +54,8 @@ pub struct FieldDraft {
     /// `Enum` fields only — the closed list of valid values.
     #[serde(default)]
     pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub example_document_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,6 +135,7 @@ fn assign_field_ids(
                     requires_signature: f.requires_signature,
                     required_signs_from_designations: f.required_signs_from_designations,
                     options: f.options,
+                    example_document_id: f.example_document_id,
                 }
             })
             .collect()

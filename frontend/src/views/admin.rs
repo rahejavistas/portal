@@ -1779,6 +1779,17 @@ pub(crate) const ADMIN_HTML: &str = r#"
         </div>
     </div>
 
+    <div id="example-document-picker-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:10002; justify-content:center; align-items:center; padding:16px; box-sizing:border-box;" onclick="if (event.target === this) closeExampleDocumentPicker()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(480px, 92vw); max-height:90vh; overflow-y:auto; box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0; margin-bottom:6px; color:var(--foreground); font-size:16px;">Choose Example Document</h3>
+            <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Only PUBLIC documents can be set as an example.</p>
+            <div id="example-document-picker-list" style="border:1px solid var(--border); border-radius:8px; max-height:340px; overflow-y:auto;"></div>
+            <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+                <button onclick="closeExampleDocumentPicker()" style="box-sizing:border-box; height:40px; padding:0 20px; font-size:14px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <div id="rename-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;" onclick="if (event.target === this) closeRenameModal()">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 id="rename-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;">Edit</h3>
@@ -3271,7 +3282,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
 
         function emptyField() {
-            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [], options: [] };
+            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [], options: [], example_document_id: null };
         }
         function emptyStage() {
             return { name: 'New Stage', description: '', is_optional: false, is_review_required: true, fields: null, substeps: [emptySubstep()] };
@@ -3286,6 +3297,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
 
             if (allDesignations.length === 0) {
                 await loadNonSystemDesignations();
+            }
+            if (publicDocsCache.length === 0) {
+                await loadPublicDocsCache();
             }
 
             if (versionId) {
@@ -3330,7 +3344,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             };
         }
         function fieldFromServer(f) {
-            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [] };
+            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [], example_document_id: f.example_document_id || null };
         }
 
         function closeTemplateBuilder() {
@@ -3434,6 +3448,40 @@ function openDesignationPicker(field) {
             }).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No restriction - any registered signer can be picked.</p>';
         }
 
+        let exampleDocPickerField = null;
+
+        function openExampleDocumentPicker(field) {
+            exampleDocPickerField = field;
+            renderExampleDocumentPickerModal();
+            document.getElementById('example-document-picker-modal').style.display = 'flex';
+        }
+
+        function closeExampleDocumentPicker() {
+            document.getElementById('example-document-picker-modal').style.display = 'none';
+            exampleDocPickerField = null;
+            renderBuilderStageDetail();
+        }
+
+        function selectExampleDocument(docId) {
+            exampleDocPickerField.example_document_id = docId;
+            closeExampleDocumentPicker();
+        }
+
+        function clearExampleDocument(field) {
+            field.example_document_id = null;
+            renderBuilderStageDetail();
+        }
+
+        function renderExampleDocumentPickerModal() {
+            const list = document.getElementById('example-document-picker-list');
+            list.innerHTML = publicDocsCache.length > 0 ? publicDocsCache.map(d => `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; cursor:pointer; border-bottom:1px solid var(--border);" onclick="selectExampleDocument('${escapeHtml(d.document.document_id)}')">
+                    <span style="font-size:13px;">${escapeHtml(d.document.title)}</span>
+                    <span style="font-weight:800; color:var(--primary);">+</span>
+                </div>
+            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No PUBLIC documents available — upload one under Documents first.</p>';
+        }
+
         function renderFieldDesignationSummary(field, onchangePrefix) {
             const selected = field.required_signs_from_designations || [];
             const summary = selected.length > 0
@@ -3472,6 +3520,19 @@ function openDesignationPicker(field) {
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>
                     ${(field.type === 'document' && field.filled_by === 'admin' && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
+                    ${field.type === 'document' ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
+                </div>
+            `;
+        }
+
+        function renderFieldExampleDocumentSummary(field, onchangePrefix) {
+            const doc = publicDocsCache.find(d => d.document.document_id === field.example_document_id);
+            const summary = doc ? doc.document.title : 'None set';
+            return `
+                <div class="field-row-meta" style="margin-top:6px; align-items:center;">
+                    <span style="font-size:11px; color:var(--muted-foreground);">Example document: ${escapeHtml(summary)}</span>
+                    <button type="button" class="action-select" style="cursor:pointer;" onclick="openExampleDocumentPicker(${onchangePrefix})">Choose</button>
+                    ${field.example_document_id ? `<button type="button" class="action-select" style="cursor:pointer;" onclick="clearExampleDocument(${onchangePrefix})">Clear</button>` : ''}
                 </div>
             `;
         }
@@ -4429,6 +4490,23 @@ function openDesignationPicker(field) {
         }
 
         let allDesignations = [];
+        let publicDocsCache = [];
+
+        async function loadPublicDocsCache() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (resp.ok) {
+                    const docs = await resp.json();
+                    publicDocsCache = docs.filter(d => d.document.category === 'PUBLIC' && !d.document.is_deleted);
+                }
+            } catch (err) {
+                publicDocsCache = [];
+            }
+        }
 
         async function loadNonSystemDesignations() {
             try {

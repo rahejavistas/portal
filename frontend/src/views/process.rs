@@ -2601,6 +2601,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">No document uploaded yet</span>`;
                     }
 
+                    if (f.example_document_id) {
+                        inputHtml += `
+                            <div style="margin-top: 4px; margin-bottom: 8px;">
+                                <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;" onclick="downloadExampleDocument('${escapeHtml(f.example_document_id)}')">Download Example${f.example_document_title ? `: ${escapeHtml(f.example_document_title)}` : ''}</button>
+                            </div>
+                        `;
+                    }
+
                     if (!isReadOnly) {
                         inputHtml += `
                             <div class="field-input-group" style="margin-top: 12px; display: flex; align-items: center; gap: 12px;">
@@ -3266,6 +3274,31 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             } finally {
                 restoreScroll();
                 setTimeout(restoreScroll, 50);
+            }
+        }
+
+        async function downloadExampleDocument(documentId) {
+            const newTab = window.open('', '_blank');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/documents/${documentId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.download_url) {
+                        if (newTab) newTab.location = data.download_url;
+                    } else {
+                        if (newTab) newTab.close();
+                        showAlert('Download URL not returned by server.');
+                    }
+                } else {
+                    if (newTab) newTab.close();
+                    showAlert(`Download failed: ${await readErrorMessage(response)}`);
+                }
+            } catch (e) {
+                if (newTab) newTab.close();
+                showAlert('Connection error while retrieving file.');
             }
         }
 

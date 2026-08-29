@@ -3,8 +3,9 @@
 //! four admin routes.
 
 use quality::{
-    quick_assign_designation, quick_create_designation, quick_create_user, quick_onboard_user,
-    quick_setup_admin, quick_toggle_designation_permission, setup_api_test_env, TestEnv,
+    quick_assign_designation, quick_create_designation, quick_create_document, quick_create_user,
+    quick_onboard_user, quick_setup_admin, quick_toggle_designation_permission, setup_api_test_env,
+    TestEnv,
 };
 
 fn auth(jwt: &str) -> String {
@@ -719,5 +720,69 @@ async fn test_deactivate_hides_from_available_but_in_progress_process_keeps_work
     assert!(
         reload_resp.is_ok(),
         "an in-progress process must keep working after its template is deactivated"
+    );
+}
+
+/// A document field's `example_document_id` round-trips through save/get-version, and
+/// shows up (with its resolved title) in the resident-facing process state — the download
+/// affordance the resident sees is driven entirely by this template-level reference.
+#[tokio::test]
+async fn test_document_field_carries_example_document_through_to_resident_state() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let manager_jwt = seeded_manager(&env, &admin_jwt, "example", "904");
+
+    let example_doc_id =
+        quick_create_document(&env, &admin_jwt, "Sample Undertaking", "PUBLIC", None);
+
+    let mut draft = simple_draft("Template With Example Doc", None);
+    draft["substeps"][0]["substeps"][0]["fields"][1]["example_document_id"] =
+        serde_json::Value::String(example_doc_id.clone());
+
+    let resp = save(&url, &manager_jwt, &draft).unwrap();
+    let version_id = resp["version_id"].as_i64().unwrap() as i32;
+
+    let fetched = get_version(&url, &manager_jwt, version_id).unwrap();
+    let doc_field = &fetched["substeps"][0]["substeps"][0]["fields"][1];
+    assert_eq!(
+        doc_field["example_document_id"].as_str(),
+        Some(example_doc_id.as_str()),
+        "example_document_id must round-trip through save/get-version"
+    );
+
+    let templates = list_templates(&url, &manager_jwt);
+    let template_id = templates
+        .iter()
+        .find(|t| {
+            t["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["version_id"].as_i64() == Some(version_id as i64))
+        })
+        .unwrap()["template_id"]
+        .as_i64()
+        .unwrap() as i32;
+    activate(&url, &manager_jwt, template_id, version_id).expect("activate should succeed");
+
+    quick_create_user(&env, &admin_jwt, "resident_ex@tmpladmin.test", "A", "905");
+    let resident_jwt = quick_onboard_user(&env, "resident_ex@tmpladmin.test", "password123");
+    let state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&resident_jwt))
+        .send_json(serde_json::json!({ "template_id": template_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+
+    let field = &state["steps"][0]["substeps"][0]["fields"][1];
+    assert_eq!(field["name"].as_str(), Some("Field B"));
+    assert_eq!(
+        field["example_document_id"].as_str(),
+        Some(example_doc_id.as_str())
+    );
+    assert_eq!(
+        field["example_document_title"].as_str(),
+        Some("Sample Undertaking")
     );
 }

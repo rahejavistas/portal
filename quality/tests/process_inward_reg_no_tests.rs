@@ -30,6 +30,7 @@ fn inward_reg_no_template() -> ProcessTemplate {
                 requires_signature: false,
                 required_signs_from_designations: Vec::new(),
                 options: None,
+                example_document_id: None,
             }]),
             substeps: None,
         }]),

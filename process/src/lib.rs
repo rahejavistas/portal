@@ -45,6 +45,9 @@ pub struct ProcessFieldTemplate {
     /// stays a plain string list rather than a compile-time Rust enum.
     #[serde(default)]
     pub options: Option<Vec<String>>,
+    /// Document fields only — a PUBLIC document residents can download as a reference.
+    #[serde(default)]
+    pub example_document_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -102,6 +105,7 @@ pub(crate) mod test_fixtures {
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
             options: None,
+            example_document_id: None,
         }
     }
 
