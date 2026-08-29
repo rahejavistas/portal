@@ -2581,24 +2581,39 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 if (type === 'document') {
                     const awaitingSignatureSetup = f.requires_signature && signatureStatuses.length === 0 && !!val.document_id;
                     const pendingReqForCurrentUser = signatureStatuses.find(s => s.status === 'PENDING' && s.signer_user_id === (user && user.user_id));
+                    const exampleBtn = f.example_document_id
+                        ? `<button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="downloadExampleDocument('${escapeHtml(f.example_document_id)}')">Show Example Document</button>`
+                        : '';
                     if (pendingReqForCurrentUser) {
                         inputHtml = `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
                                 <span style="font-weight: 600; flex: 1; min-width: 0;">Document awaiting your signature</span>
                                 <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="viewPendingSignatureDocument(${pendingReqForCurrentUser.requirement_id})">View Document</button>
+                                ${exampleBtn}
                             </div>
                         `;
                     } else if ((hasPendingSignature || awaitingSignatureSetup) && !isCurrentAdmin) {
-                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">Submitted - under review</span>`;
+                        inputHtml = `
+                            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
+                                <span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic;">Submitted - under review</span>
+                                ${exampleBtn}
+                            </div>
+                        `;
                     } else if (val.document_id) {
                         inputHtml = `
                             <div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); font-size: 0.9375rem; margin-bottom: 8px; background-color: var(--background); border: 1px solid var(--border); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box;">
                                 <span style="font-weight: 600; flex: 1; min-width: 0; overflow-wrap: break-word; word-break: break-all;">Document: ${escapeHtml(val.document_title || 'File')}</span>
                                 <button type="button" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.75rem; flex-shrink: 0;" onclick="downloadProcessDoc('${escapeHtml(val.document_id)}')">Download</button>
+                                ${exampleBtn}
                             </div>
                         `;
                     } else {
-                        inputHtml = `<span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic; display: block; margin-bottom: 8px;">No document uploaded yet</span>`;
+                        inputHtml = `
+                            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
+                                <span style="font-size: 0.875rem; color: var(--muted-foreground); font-style: italic;">No document uploaded yet</span>
+                                ${exampleBtn}
+                            </div>
+                        `;
                     }
 
                     if (!isReadOnly) {
@@ -3266,6 +3281,31 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             } finally {
                 restoreScroll();
                 setTimeout(restoreScroll, 50);
+            }
+        }
+
+        async function downloadExampleDocument(documentId) {
+            const newTab = window.open('', '_blank');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/documents/${documentId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.download_url) {
+                        if (newTab) newTab.location = data.download_url;
+                    } else {
+                        if (newTab) newTab.close();
+                        showAlert('Download URL not returned by server.');
+                    }
+                } else {
+                    if (newTab) newTab.close();
+                    showAlert(`Download failed: ${await readErrorMessage(response)}`);
+                }
+            } catch (e) {
+                if (newTab) newTab.close();
+                showAlert('Connection error while retrieving file.');
             }
         }
 

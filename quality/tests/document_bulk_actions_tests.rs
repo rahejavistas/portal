@@ -328,3 +328,73 @@ async fn test_bulk_update_category_rejects_flat_on_non_resident_specific_target(
         "category must be untouched when the request is rejected"
     );
 }
+
+/// A caller who manages the source category but not the destination is rejected outright —
+/// destination authorization isn't a snapshot decision, it gates the write like source does.
+#[tokio::test]
+async fn test_bulk_update_category_requires_manage_access_on_destination() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_document_category(&env, &admin_jwt, "BULK_DST_SRC", "Bulk Dst Src");
+    quick_create_document_category(&env, &admin_jwt, "BULK_DST_TARGET", "Bulk Dst Target");
+    let doc_id = quick_create_document(&env, &admin_jwt, "Doc", "BULK_DST_SRC", None);
+
+    let manager_jwt = seeded_category_manager(&env, &admin_jwt, "BULK_DST_SRC", "dst1", "610");
+
+    let resp = ureq::post(&format!(
+        "{}/api/v1/admin/documents/bulk-update-category",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({
+        "document_ids": [doc_id.clone()],
+        "category": "BULK_DST_TARGET"
+    }));
+    assert!(
+        resp.is_err(),
+        "manage access on source alone must not authorize a move into an unmanaged destination"
+    );
+
+    assert_eq!(
+        get_document(&env, &admin_jwt, &doc_id)["document"]["category"],
+        "BULK_DST_SRC",
+        "category must be untouched when destination access is missing"
+    );
+}
+
+/// A caller who manages both the source and destination categories can move a document
+/// between them — the atomic destination check doesn't over-restrict the legitimate case.
+#[tokio::test]
+async fn test_bulk_update_category_succeeds_with_both_source_and_destination_access() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_document_category(&env, &admin_jwt, "BULK_BOTH_SRC", "Bulk Both Src");
+    quick_create_document_category(&env, &admin_jwt, "BULK_BOTH_DST", "Bulk Both Dst");
+    let doc_id = quick_create_document(&env, &admin_jwt, "Doc", "BULK_BOTH_SRC", None);
+
+    let manager_jwt = seeded_category_manager(&env, &admin_jwt, "BULK_BOTH_SRC", "both1", "611");
+    quick_set_category_designation(&env, &admin_jwt, "BULK_BOTH_DST", "bulk_both1", true, true);
+
+    let result: serde_json::Value = ureq::post(&format!(
+        "{}/api/v1/admin/documents/bulk-update-category",
+        url
+    ))
+    .set("Authorization", &auth(&manager_jwt))
+    .send_json(serde_json::json!({
+        "document_ids": [doc_id.clone()],
+        "category": "BULK_BOTH_DST"
+    }))
+    .unwrap()
+    .into_json()
+    .unwrap();
+    assert_eq!(result["succeeded"].as_array().unwrap().len(), 1);
+
+    assert_eq!(
+        get_document(&env, &admin_jwt, &doc_id)["document"]["category"],
+        "BULK_BOTH_DST"
+    );
+}

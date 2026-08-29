@@ -79,6 +79,8 @@ pub struct FieldResponse {
     pub required_signs_from_designations: Vec<String>,
     /// `Enum` fields only — the closed list of valid values.
     pub options: Option<Vec<String>>,
+    pub example_document_id: Option<Uuid>,
+    pub example_document_title: Option<String>,
     pub value: Option<FieldValue>,
     pub history: Vec<FieldHistoryEntry>,
     /// Empty until a reviewer attaches signers via the process review screen.
@@ -261,6 +263,21 @@ async fn resolve_or_init_process(
     Ok((process_id, version_id, selected_ownership, template))
 }
 
+fn collect_example_document_ids(
+    fields: &Option<Vec<process::ProcessFieldTemplate>>,
+    substeps: &Option<Vec<process::ProcessStepTemplate>>,
+    out: &mut Vec<Uuid>,
+) {
+    if let Some(fs) = fields {
+        out.extend(fs.iter().filter_map(|f| f.example_document_id));
+    }
+    if let Some(subs) = substeps {
+        for s in subs {
+            collect_example_document_ids(&s.fields, &s.substeps, out);
+        }
+    }
+}
+
 /// Recursively map step templates to the response structure.
 fn map_step_template(
     step_tpl: &process::ProcessStepTemplate,
@@ -268,6 +285,7 @@ fn map_step_template(
     field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
     latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
     doc_title_map: &HashMap<Uuid, (String, Option<String>)>,
+    example_doc_title_map: &HashMap<Uuid, String>,
     signature_map: &HashMap<Uuid, Vec<FieldSignatureStatus>>,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
@@ -317,6 +335,11 @@ fn map_step_template(
                 requires_signature: f.requires_signature,
                 required_signs_from_designations: f.required_signs_from_designations.clone(),
                 options: f.options.clone(),
+                example_document_id: f.example_document_id,
+                example_document_title: f
+                    .example_document_id
+                    .and_then(|id| example_doc_title_map.get(&id))
+                    .cloned(),
                 value,
                 history,
                 signature_status,
@@ -333,6 +356,7 @@ fn map_step_template(
                 field_history_map,
                 latest_field_states,
                 doc_title_map,
+                example_doc_title_map,
                 signature_map,
             ));
         }
@@ -602,6 +626,22 @@ pub async fn get_process_state(
         .map(|doc| (doc.document_id, (doc.title, doc.content_type)))
         .collect();
 
+    let mut example_doc_ids = Vec::new();
+    collect_example_document_ids(&template.fields, &template.substeps, &mut example_doc_ids);
+    let example_doc_title_map: HashMap<Uuid, String> = if example_doc_ids.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT document_id, title FROM documents WHERE document_id = ANY($1) AND category = 'PUBLIC' AND NOT is_deleted",
+        )
+        .bind(&example_doc_ids)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    };
+
     let reviews = get_process_reviews(&mut tx, process_id)
         .await
         .unwrap_or_default();
@@ -680,6 +720,7 @@ pub async fn get_process_state(
                 &field_history_map,
                 &proc_state.fields,
                 &doc_title_map,
+                &example_doc_title_map,
                 &signature_map,
             ));
         }

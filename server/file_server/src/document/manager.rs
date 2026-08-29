@@ -874,11 +874,19 @@ impl DocumentManager {
         let moved_ids: Vec<Uuid> = sqlx::query_scalar(
             "UPDATE documents SET category = $2, updated_at = NOW() \
              WHERE document_id = ANY($1) AND category != $2 \
-               AND ($3 OR EXISTS ( \
-                    SELECT 1 FROM document_category_designations dcd \
-                    JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
-                    WHERE dcd.category = documents.category AND dcd.can_manage = TRUE \
-                      AND ud.user_id = $4 AND ud.is_active = TRUE \
+               AND ($3 OR ( \
+                    EXISTS ( \
+                        SELECT 1 FROM document_category_designations dcd \
+                        JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                        WHERE dcd.category = documents.category AND dcd.can_manage = TRUE \
+                          AND ud.user_id = $4 AND ud.is_active = TRUE \
+                    ) \
+                    AND EXISTS ( \
+                        SELECT 1 FROM document_category_designations dcd \
+                        JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
+                        WHERE dcd.category = $2 AND dcd.can_manage = TRUE \
+                          AND ud.user_id = $4 AND ud.is_active = TRUE \
+                    ) \
                )) \
              RETURNING document_id",
         )

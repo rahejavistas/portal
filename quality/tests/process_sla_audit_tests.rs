@@ -34,6 +34,7 @@ fn sla_template(tat_working_days: Option<i32>) -> ProcessTemplate {
                 requires_signature: false,
                 required_signs_from_designations: Vec::new(),
                 options: None,
+                example_document_id: None,
             }]),
             substeps: None,
         }]),

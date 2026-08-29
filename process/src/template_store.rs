@@ -10,6 +10,8 @@ use sqlx::Connection;
 pub enum TemplateStoreError {
     /// A referenced template/version id doesn't exist — safe to show the caller.
     NotFound(String),
+    /// A field references a document it isn't allowed to (e.g. a non-PUBLIC example document).
+    InvalidReference(String),
     Db(sqlx::Error),
     Serialize(serde_json::Error),
 }
@@ -18,6 +20,7 @@ impl std::fmt::Display for TemplateStoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TemplateStoreError::NotFound(msg) => write!(f, "{}", msg),
+            TemplateStoreError::InvalidReference(msg) => write!(f, "{}", msg),
             TemplateStoreError::Db(e) => write!(f, "{}", e),
             TemplateStoreError::Serialize(e) => write!(f, "{}", e),
         }
@@ -54,6 +57,8 @@ pub struct FieldDraft {
     /// `Enum` fields only — the closed list of valid values.
     #[serde(default)]
     pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub example_document_id: Option<uuid::Uuid>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,10 +138,26 @@ fn assign_field_ids(
                     requires_signature: f.requires_signature,
                     required_signs_from_designations: f.required_signs_from_designations,
                     options: f.options,
+                    example_document_id: f.example_document_id,
                 }
             })
             .collect()
     })
+}
+
+fn collect_example_document_ids(
+    fields: &Option<Vec<crate::ProcessFieldTemplate>>,
+    substeps: &Option<Vec<crate::ProcessStepTemplate>>,
+    out: &mut Vec<uuid::Uuid>,
+) {
+    if let Some(fs) = fields {
+        out.extend(fs.iter().filter_map(|f| f.example_document_id));
+    }
+    if let Some(subs) = substeps {
+        for s in subs {
+            collect_example_document_ids(&s.fields, &s.substeps, out);
+        }
+    }
 }
 
 fn assign_step_ids(draft: StepDraft, next_id: &mut i32) -> crate::ProcessStepTemplate {
@@ -311,6 +332,25 @@ pub async fn save_template_version(
         fields,
         tat_working_days,
     };
+
+    let mut example_doc_ids = Vec::new();
+    collect_example_document_ids(&template.fields, &template.substeps, &mut example_doc_ids);
+    if !example_doc_ids.is_empty() {
+        example_doc_ids.sort();
+        example_doc_ids.dedup();
+        let public_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT document_id FROM documents WHERE document_id = ANY($1) AND category = 'PUBLIC' AND NOT is_deleted",
+        )
+        .bind(&example_doc_ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        let public_set: std::collections::HashSet<_> = public_ids.into_iter().collect();
+        if example_doc_ids.iter().any(|id| !public_set.contains(id)) {
+            return Err(TemplateStoreError::InvalidReference(
+                "Example document must be an existing PUBLIC document.".to_string(),
+            ));
+        }
+    }
 
     let definition = serde_json::to_value(&template)?;
 

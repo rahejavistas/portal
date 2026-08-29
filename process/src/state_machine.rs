@@ -643,6 +643,7 @@ mod tests {
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
             options: None,
+            example_document_id: None,
         };
         let template = crate::ProcessTemplate {
             name: "Mixed step".to_string(),
