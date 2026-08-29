@@ -632,7 +632,7 @@ pub async fn get_process_state(
         HashMap::new()
     } else {
         sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT document_id, title FROM documents WHERE document_id = ANY($1) AND NOT is_deleted",
+            "SELECT document_id, title FROM documents WHERE document_id = ANY($1) AND category = 'PUBLIC' AND NOT is_deleted",
         )
         .bind(&example_doc_ids)
         .fetch_all(&mut *tx)

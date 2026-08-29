@@ -786,3 +786,29 @@ async fn test_document_field_carries_example_document_through_to_resident_state(
         Some("Sample Undertaking")
     );
 }
+
+/// A non-PUBLIC document can't be set as an example — the picker only offers PUBLIC
+/// documents, but the save endpoint must reject a direct API call too, since the
+/// resolved title is disclosed to every resident who views that step.
+#[tokio::test]
+async fn test_save_rejects_non_public_example_document() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let manager_jwt = seeded_manager(&env, &admin_jwt, "examplenonpub", "906");
+
+    let private_doc_id = quick_create_document(
+        &env,
+        &admin_jwt,
+        "Someone's Private Bill",
+        "RESIDENT_SPECIFIC",
+        Some(("Z", "906")),
+    );
+
+    let mut draft = simple_draft("Template With Non-Public Example Doc", None);
+    draft["substeps"][0]["substeps"][0]["fields"][1]["example_document_id"] =
+        serde_json::Value::String(private_doc_id);
+
+    let status = save(&url, &manager_jwt, &draft).unwrap_err();
+    assert_eq!(status, 400);
+}

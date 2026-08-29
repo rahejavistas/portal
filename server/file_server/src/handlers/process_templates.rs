@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 fn map_store_err(e: TemplateStoreError) -> ApiError {
     match e {
-        TemplateStoreError::NotFound(msg) => bad_request(msg),
+        TemplateStoreError::NotFound(msg) | TemplateStoreError::InvalidReference(msg) => {
+            bad_request(msg)
+        }
         TemplateStoreError::Db(_) | TemplateStoreError::Serialize(_) => internal_err(e),
     }
 }

@@ -981,14 +981,25 @@ pub(crate) const ADMIN_HTML: &str = r#"
         }
         .builder-detail { flex: 1; overflow-y: auto; padding: 32px 40px; min-width: 0; }
         .builder-detail-inner { max-width: 760px; margin: 0 auto; }
+        .builder-sidebar-toggle { display: none; }
         @media (max-width: 768px) {
             .builder-topbar { padding: 12px 16px; }
             .builder-body { flex-direction: column; }
             .builder-sidebar {
-                width: 100%; min-width: 0; max-height: 35vh;
+                width: 100%; min-width: 0; max-height: none;
                 border-right: none; border-bottom: 1px solid var(--border);
-                padding: 16px;
+                padding: 12px 16px; gap: 8px;
             }
+            .builder-sidebar-toggle {
+                display: flex; align-items: center; justify-content: space-between;
+                width: 100%; box-sizing: border-box; padding: 12px 16px;
+                background: var(--muted); border: 1px solid var(--border);
+                border-radius: var(--radius-lg); font-weight: 700; font-size: 14px;
+                cursor: pointer;
+            }
+            .builder-sidebar:not(.expanded) .step-nav-item,
+            .builder-sidebar:not(.expanded) .step-nav-add { display: none; }
+            .builder-sidebar.expanded { max-height: 45vh; overflow-y: auto; }
             .builder-detail { padding: 20px 16px; }
         }
         .step-nav-item {
@@ -1628,7 +1639,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
         <div class="builder-topbar">
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <input type="text" id="builder-template-name" placeholder="Template name (e.g. Resident Onboarding)" style="font-size:18px; font-weight:800; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); flex:1; min-width:180px;">
-                <input type="number" id="builder-tat-days" min="1" placeholder="TAT (working days)" title="Working days to complete once fully submitted. Leave blank for no SLA tracking." style="font-size:13px; font-weight:600; padding:8px 12px; border:1px solid var(--border); border-radius:6px; background:var(--input-bg); color:var(--foreground); width:170px;" onchange="builderState.tat_working_days = this.value ? parseInt(this.value, 10) : null;">
                 <span id="builder-version-badge" style="font-size:12px; font-weight:700; color:var(--muted-foreground);"></span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -1784,6 +1794,17 @@ pub(crate) const ADMIN_HTML: &str = r#"
             <h3 style="margin-top:0; margin-bottom:6px; color:var(--foreground); font-size:16px;">Choose Example Document</h3>
             <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:16px;">Only PUBLIC documents can be set as an example.</p>
             <div id="example-document-picker-list" style="border:1px solid var(--border); border-radius:8px; max-height:340px; overflow-y:auto;"></div>
+            <div style="border-top:1px solid var(--border); margin-top:16px; padding-top:16px;">
+                <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Or upload a new one</div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                    <input type="text" id="example-doc-new-title" placeholder="Title" style="flex:1; min-width:160px;">
+                    <input type="file" id="example-doc-new-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="flex:1; min-width:160px; padding:8px; background-color:var(--muted); box-sizing:border-box;">
+                </div>
+                <div id="example-doc-new-feedback" class="feedback-box" style="display:none; margin-top:10px;"></div>
+                <div style="display:flex; justify-content:flex-end; margin-top:10px;">
+                    <button type="button" onclick="uploadNewExampleDocument()" style="box-sizing:border-box; height:36px; padding:0 16px; font-size:13px; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Upload &amp; Use</button>
+                </div>
+            </div>
             <div style="display:flex; justify-content:flex-end; margin-top:20px;">
                 <button onclick="closeExampleDocumentPicker()" style="box-sizing:border-box; height:40px; padding:0 20px; font-size:14px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
             </div>
@@ -3324,8 +3345,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
             }
 
             document.getElementById('builder-template-name').value = builderState.name || '';
-            document.getElementById('builder-tat-days').value = builderState.tat_working_days || '';
             builderSelectedPath = builderState.substeps && builderState.substeps.length > 0 ? [0] : null;
+            builderSidebarExpanded = false;
             renderBuilderStages();
             renderBuilderStageDetail();
         }
@@ -3353,19 +3374,43 @@ pub(crate) const ADMIN_HTML: &str = r#"
             builderSelectedPath = null;
         }
 
+        let builderSidebarExpanded = false;
+
+        function toggleBuilderSidebar() {
+            builderSidebarExpanded = !builderSidebarExpanded;
+            renderBuilderStages();
+        }
+
         function renderBuilderStages() {
             const container = document.getElementById('builder-stage-list');
             const stages = builderState.substeps || [];
-            let html = stages.map((stage, i) => {
-                const isSelected = builderSelectedPath && builderSelectedPath[0] === i;
-                return `<div class="step-nav-item ${isSelected ? 'active' : ''}" onclick="builderSelectedPath=[${i}]; renderBuilderStages(); renderBuilderStageDetail();">
+            container.classList.toggle('expanded', builderSidebarExpanded);
+            const isSettingsSelected = builderSelectedPath === 'settings';
+            const selectedStage = (!isSettingsSelected && builderSelectedPath) ? stages[builderSelectedPath[0]] : null;
+            const toggleLabel = isSettingsSelected
+                ? 'Process Settings'
+                : selectedStage
+                    ? `Stage ${builderSelectedPath[0] + 1}: ${selectedStage.name || '(untitled stage)'}`
+                    : 'Select a stage';
+            let html = `<div class="builder-sidebar-toggle" onclick="toggleBuilderSidebar()">
+                <span>${escapeHtml(toggleLabel)}</span>
+                <span>${builderSidebarExpanded ? '▲' : '▼'}</span>
+            </div>`;
+            html += `<div class="step-nav-item ${isSettingsSelected ? 'active' : ''}" onclick="builderSelectedPath='settings'; builderSidebarExpanded=false; renderBuilderStages(); renderBuilderStageDetail();">
+                <div class="step-nav-info">
+                    <span class="step-nav-name">⚙ Process Settings</span>
+                </div>
+            </div>`;
+            html += stages.map((stage, i) => {
+                const isSelected = !isSettingsSelected && builderSelectedPath && builderSelectedPath[0] === i;
+                return `<div class="step-nav-item ${isSelected ? 'active' : ''}" onclick="builderSelectedPath=[${i}]; builderSidebarExpanded=false; renderBuilderStages(); renderBuilderStageDetail();">
                     <div class="step-nav-info">
                         <span class="step-nav-num">Stage ${i + 1}</span>
                         <span class="step-nav-name">${escapeHtml(stage.name || '(untitled stage)')}</span>
                     </div>
                 </div>`;
             }).join('');
-            html += `<div class="step-nav-add" onclick="addBuilderStage()">+ Add Stage</div>`;
+            html += `<div class="step-nav-add" onclick="builderSidebarExpanded=false; addBuilderStage();">+ Add Stage</div>`;
             container.innerHTML = html;
         }
 
@@ -3479,7 +3524,48 @@ function openDesignationPicker(field) {
                     <span style="font-size:13px;">${escapeHtml(d.document.title)}</span>
                     <span style="font-weight:800; color:var(--primary);">+</span>
                 </div>
-            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No PUBLIC documents available — upload one under Documents first.</p>';
+            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No PUBLIC documents available — upload one below.</p>';
+        }
+
+        async function uploadNewExampleDocument() {
+            const feedback = document.getElementById('example-doc-new-feedback');
+            feedback.style.display = 'none';
+            const title = document.getElementById('example-doc-new-title').value.trim();
+            const fileInput = document.getElementById('example-doc-new-file');
+            const file = fileInput.files && fileInput.files[0];
+            if (!title || !file) {
+                feedback.textContent = 'Please provide a title and a file.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+            const fileError = validateDocFile(file);
+            if (fileError) {
+                feedback.textContent = fileError;
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+            feedback.textContent = 'Uploading...';
+            feedback.className = 'feedback-box';
+            feedback.style.display = 'block';
+            try {
+                await uploadOneDocument(title, null, 'PUBLIC', null, null, file);
+                await loadPublicDocsCache();
+                document.getElementById('example-doc-new-title').value = '';
+                fileInput.value = '';
+                const newDoc = publicDocsCache.find(d => d.document.title === title);
+                if (newDoc) {
+                    selectExampleDocument(newDoc.document.document_id);
+                } else {
+                    renderExampleDocumentPickerModal();
+                    feedback.style.display = 'none';
+                }
+            } catch (err) {
+                feedback.textContent = err.message;
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+            }
         }
 
         function renderFieldDesignationSummary(field, onchangePrefix) {
@@ -3520,7 +3606,7 @@ function openDesignationPicker(field) {
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>
                     ${(field.type === 'document' && field.filled_by === 'admin' && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
-                    ${field.type === 'document' ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
+                    ${(field.type === 'document' && field.filled_by === 'user') ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
                 </div>
             `;
         }
@@ -3537,8 +3623,30 @@ function openDesignationPicker(field) {
             `;
         }
 
+        function renderBuilderSettingsDetail(container) {
+            const tat = builderState.tat_working_days;
+            container.innerHTML = `
+                <div class="builder-detail-inner">
+                    <h4 style="margin-bottom:4px;">Turnaround Time (TAT)</h4>
+                    <p style="font-size:13px; color:var(--muted-foreground); margin-bottom:16px; max-width:520px;">
+                        Once a resident has submitted every required field across all stages, this is how many working
+                        days the society has to fully complete the process before it's flagged overdue. Leave it blank
+                        to turn off SLA tracking for this template.
+                    </p>
+                    <div class="form-group" style="max-width:260px;">
+                        <label for="builder-tat-days">Working days allowed</label>
+                        <input type="number" id="builder-tat-days" min="1" placeholder="e.g. 7" value="${tat != null ? tat : ''}" onchange="builderState.tat_working_days = this.value ? parseInt(this.value, 10) : null;">
+                    </div>
+                </div>
+            `;
+        }
+
         function renderBuilderStageDetail() {
             const container = document.getElementById('builder-stage-detail');
+            if (builderSelectedPath === 'settings') {
+                renderBuilderSettingsDetail(container);
+                return;
+            }
             if (!builderSelectedPath) {
                 container.innerHTML = '<p style="color:var(--muted-foreground);">Add a stage to get started.</p>';
                 return;
