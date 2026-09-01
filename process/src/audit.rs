@@ -55,16 +55,18 @@ pub async fn insert_audit_event(
     event_type: AuditEventType,
     detail: Option<&str>,
     actor_id: Option<i32>,
+    acted_as_designation: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO process_audit_log (process_id, template_step_id, event_type, detail, actor_id) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO process_audit_log (process_id, template_step_id, event_type, detail, actor_id, acted_as_designation) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(process_id)
     .bind(template_step_id)
     .bind(event_type.as_db_str())
     .bind(detail)
     .bind(actor_id)
+    .bind(acted_as_designation)
     .execute(conn)
     .await?;
     Ok(())
@@ -77,6 +79,7 @@ pub struct AuditLogEntry {
     pub event_type: String,
     pub detail: Option<String>,
     pub actor_email: Option<String>,
+    pub acted_as_designation: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -85,7 +88,8 @@ pub async fn get_audit_log(
     process_id: Uuid,
 ) -> Result<Vec<AuditLogEntry>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT a.audit_id, a.template_step_id, a.event_type, a.detail, u.email AS actor_email, a.created_at \
+        "SELECT a.audit_id, a.template_step_id, a.event_type, a.detail, u.email AS actor_email, \
+                a.acted_as_designation, a.created_at \
          FROM process_audit_log a \
          LEFT JOIN users u ON u.user_id = a.actor_id \
          WHERE a.process_id = $1 \

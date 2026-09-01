@@ -21,14 +21,14 @@ pub async fn next_inward_reg_no(conn: &mut sqlx::PgConnection) -> Result<String,
     Ok(format!("INW-{}-{:06}", year, n))
 }
 
-/// Create a new process and all its step rows. Returns the process_id.
+/// Create a new process and all its step rows.
 pub async fn init_process(
     conn: &mut sqlx::PgConnection,
     user_id: i32,
     template_version_id: i32,
     template: &crate::ProcessTemplate,
     ownership_id: Option<i32>,
-) -> Result<Uuid, sqlx::Error> {
+) -> Result<InitProcessOutcome, sqlx::Error> {
     let inward_reg_no = next_inward_reg_no(&mut *conn).await?;
     let process_id: Uuid = sqlx::query_scalar(
         "INSERT INTO processes (inward_reg_no, user_id, template_version_id, ownership_id) \
@@ -83,12 +83,30 @@ pub async fn init_process(
     // Set started_at for initially-open steps
     sync_start_times(&mut *conn, process_id, template).await?;
 
-    Ok(process_id)
+    // Nothing existed before creation, so "newly opened" is just whatever's Open now.
+    let initial_statuses = state_machine::compute_statuses(template, &ProcessStateInput::default());
+    let newly_opened_step_ids: Vec<i32> = initial_statuses
+        .into_iter()
+        .filter(|(_, status)| *status == StepStatus::Open)
+        .map(|(step_id, _)| step_id)
+        .collect();
+
+    Ok(InitProcessOutcome {
+        process_id,
+        newly_opened_step_ids,
+    })
+}
+
+/// Outcome of a successful `init_process` call.
+pub struct InitProcessOutcome {
+    pub process_id: Uuid,
+    pub newly_opened_step_ids: Vec<i32>,
 }
 
 /// Outcome of a successful `save_step` call.
 pub struct SaveStepOutcome {
     pub status: StepStatus,
+    pub newly_opened_step_ids: Vec<i32>,
 }
 
 /// Save fields for a step. Validates, persists fields, and updates completion.
@@ -99,13 +117,14 @@ pub async fn save_step(
     template: &crate::ProcessTemplate,
     step_id: i32,
     fields: &[state_machine::SaveFieldInput],
-    is_admin: bool,
+    actor: &state_machine::ActorContext,
     actor_user_id: i32,
 ) -> Result<SaveStepOutcome, String> {
     let state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
-    let result = state_machine::validate_save(template, &state, step_id, fields, is_admin)?;
+    let before_statuses = state_machine::compute_statuses(template, &state);
+    let result = state_machine::validate_save(template, &state, step_id, fields, actor)?;
 
     persist_fields(
         &mut *conn,
@@ -113,6 +132,7 @@ pub async fn save_step(
         step_id,
         &result.fields_to_save,
         Some(actor_user_id),
+        result.acted_as_designation.as_deref(),
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -131,7 +151,7 @@ pub async fn save_step(
             if *completed {
                 if state_machine::build_step_info_map(template)
                     .get(&step_id)
-                    .map(|i| i.is_review_required)
+                    .map(|i| i.requires_review())
                     .unwrap_or(false)
                 {
                     StepStatus::PendingReview
@@ -167,6 +187,7 @@ pub async fn save_step(
             crate::audit::AuditEventType::StepCompleted,
             None,
             Some(actor_user_id),
+            result.acted_as_designation.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -185,7 +206,14 @@ pub async fn save_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(SaveStepOutcome { status })
+    let after_statuses = state_machine::compute_statuses(template, &post_save_state);
+    let newly_opened_step_ids =
+        state_machine::newly_opened_steps(&before_statuses, &after_statuses);
+
+    Ok(SaveStepOutcome {
+        status,
+        newly_opened_step_ids,
+    })
 }
 
 /// Parameters for recording an admin review.
@@ -197,25 +225,39 @@ pub struct ReviewStepParams<'a> {
     pub notes: Option<&'a str>,
     /// Steps the admin flagged for resident attention. Informational only.
     pub flagged_step_ids: &'a [i32],
+    /// The designation that authorized this review, if `step_id` is `Designation`-owned.
+    pub acted_as_designation: Option<&'a str>,
+}
+
+/// Outcome of a successful `review_step` call.
+pub struct ReviewStepOutcome {
+    /// Whether the step is now completed (`process_steps.is_completed`).
+    pub is_completed: bool,
+    pub newly_opened_step_ids: Vec<i32>,
 }
 
 /// Record an admin review (approve/reject).
-/// Returns whether the step is now completed (`process_steps.is_completed`).
 pub async fn review_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template: &crate::ProcessTemplate,
-    params: ReviewStepParams<'_>,
-) -> Result<bool, String> {
-    let state = load_state(conn, process_id, template)
+    mut params: ReviewStepParams<'_>,
+    actor: &state_machine::ActorContext,
+) -> Result<ReviewStepOutcome, String> {
+    let mut state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
-    let (steps_to_update, is_completed) = state_machine::compute_review_updates(
+    let before_statuses = state_machine::compute_statuses(template, &state);
+    let review_result = state_machine::compute_review_updates(
         template,
         &state,
         params.step_id,
         params.is_approved,
+        actor,
     )?;
+    let steps_to_update = review_result.steps_to_update;
+    let is_completed = review_result.is_completed;
+    params.acted_as_designation = review_result.acted_as_designation.as_deref();
 
     persist_step_completions(&mut *conn, process_id, &steps_to_update)
         .await
@@ -235,10 +277,23 @@ pub async fn review_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    Ok(is_completed)
+    for &(sid, completed) in &steps_to_update {
+        if let Some(s) = state.steps.get_mut(&sid) {
+            s.is_completed = completed;
+        }
+    }
+    let after_statuses = state_machine::compute_statuses(template, &state);
+    let newly_opened_step_ids =
+        state_machine::newly_opened_steps(&before_statuses, &after_statuses);
+
+    Ok(ReviewStepOutcome {
+        is_completed,
+        newly_opened_step_ids,
+    })
 }
 
 /// Reopen a completed/pending-review step by inserting rejection reviews and resetting completion.
+/// Returns any step_ids that newly became Open as a result (e.g. the reopened step itself).
 pub async fn reopen_step(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -246,14 +301,18 @@ pub async fn reopen_step(
     step_id: i32,          // template_step_id of the step to reopen
     reviewer_user_id: i32, // users.user_id of the reviewer performing the reopen
     custom_note: Option<&str>,
-) -> Result<(), String> {
+    actor: &state_machine::ActorContext,
+) -> Result<Vec<i32>, String> {
     let mut state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
-    let steps_to_reset = state_machine::compute_reopen_updates(template, &state, step_id)?;
+    let before_statuses = state_machine::compute_statuses(template, &state);
+    let reopen_result = state_machine::compute_reopen_updates(template, &state, step_id, actor)?;
+    let steps_to_reset = reopen_result.steps_to_reset;
     let statuses = state_machine::compute_statuses(template, &state);
 
-    // Insert rejection reviews for steps that are currently closed
+    // Insert rejection reviews for steps that are currently closed. Every row records the
+    // designation that authorized this reopen action, not each cascaded step's own owner.
     for &sid in &steps_to_reset {
         let is_closed = matches!(
             statuses.get(&sid),
@@ -269,6 +328,7 @@ pub async fn reopen_step(
                     is_approved: false,
                     notes: custom_note,
                     flagged_step_ids: &[],
+                    acted_as_designation: reopen_result.acted_as_designation.as_deref(),
                 },
             )
             .await
@@ -297,7 +357,11 @@ pub async fn reopen_step(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(())
+    let after_statuses = state_machine::compute_statuses(template, &state);
+    Ok(state_machine::newly_opened_steps(
+        &before_statuses,
+        &after_statuses,
+    ))
 }
 
 /// Compute statuses for all steps in a process.
@@ -374,6 +438,7 @@ pub struct ProcessReviewHistory {
     /// Template step IDs the admin flagged during this review as needing
     /// resident attention. Purely informational — does not affect step state.
     pub flagged_step_ids: Vec<i32>,
+    pub acted_as_designation: Option<String>,
 }
 
 pub async fn get_process_reviews(
@@ -382,7 +447,7 @@ pub async fn get_process_reviews(
 ) -> Result<Vec<ProcessReviewHistory>, sqlx::Error> {
     sqlx::query_as(
         "SELECT pr.review_id, ps.template_step_id, u.email as admin_email, \
-                pr.is_approved, pr.notes, pr.created_at, pr.flagged_step_ids \
+                pr.is_approved, pr.notes, pr.created_at, pr.flagged_step_ids, pr.acted_as_designation \
          FROM process_step_reviews pr \
          JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
          LEFT JOIN users u ON pr.reviewer_user_id = u.user_id \
@@ -401,6 +466,7 @@ pub struct ProcessFieldHistoryRow {
     pub document_id: Option<Uuid>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub actor_email: Option<String>,
+    pub acted_as_designation: Option<String>,
 }
 
 pub async fn get_field_history(
@@ -408,7 +474,8 @@ pub async fn get_field_history(
     process_id: Uuid,
 ) -> Result<Vec<ProcessFieldHistoryRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT pf.template_field_id, pf.text_value, pf.document_id, pf.updated_at, u.email AS actor_email \
+        "SELECT pf.template_field_id, pf.text_value, pf.document_id, pf.updated_at, u.email AS actor_email, \
+                pf.acted_as_designation \
          FROM process_fields pf \
          JOIN process_steps ps ON pf.step_instance_id = ps.step_instance_id \
          LEFT JOIN users u ON u.user_id = pf.updated_by \
@@ -745,6 +812,7 @@ async fn persist_start_times_and_turn(
             crate::audit::AuditEventType::ProcessClosed,
             None,
             None,
+            None,
         )
         .await?;
     }
@@ -813,6 +881,7 @@ pub async fn attach_signed_replacement(
         template_step_id,
         &[(template_field_id, None, Some(new_document_id))],
         None,
+        None,
     )
     .await
 }
@@ -855,6 +924,7 @@ async fn persist_fields(
     template_step_id: i32,
     fields: &[(i32, Option<String>, Option<Uuid>)], // (template_field_id, text_value, document_id)
     updated_by: Option<i32>,
+    acted_as_designation: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     if fields.is_empty() {
         return Ok(());
@@ -866,8 +936,8 @@ async fn persist_fields(
     let document_ids: Vec<Option<Uuid>> = fields.iter().map(|f| f.2).collect();
 
     sqlx::query(
-        "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_by, updated_at) \
-         SELECT $1, f.template_field_id, f.text_value, f.document_id, $5, NOW() \
+        "INSERT INTO process_fields (step_instance_id, template_field_id, text_value, document_id, updated_by, acted_as_designation, updated_at) \
+         SELECT $1, f.template_field_id, f.text_value, f.document_id, $5, $6, NOW() \
          FROM UNNEST($2::int[], $3::text[], $4::uuid[]) AS f(template_field_id, text_value, document_id)",
     )
     .bind(step_instance_id)
@@ -875,6 +945,7 @@ async fn persist_fields(
     .bind(&text_values)
     .bind(&document_ids)
     .bind(updated_by)
+    .bind(acted_as_designation)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -916,14 +987,15 @@ async fn insert_review(
 
     sqlx::query(
         "INSERT INTO process_step_reviews \
-         (step_instance_id, reviewer_user_id, is_approved, notes, flagged_step_ids, created_at) \
-         VALUES ($1, $2, $3, $4, $5, NOW())",
+         (step_instance_id, reviewer_user_id, is_approved, notes, flagged_step_ids, acted_as_designation, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())",
     )
     .bind(step_instance_id)
     .bind(params.reviewer_user_id)
     .bind(params.is_approved)
     .bind(params.notes)
     .bind(params.flagged_step_ids)
+    .bind(params.acted_as_designation)
     .execute(&mut *conn)
     .await?;
 
@@ -939,6 +1011,7 @@ async fn insert_review(
         event_type,
         params.notes,
         params.reviewer_user_id,
+        params.acted_as_designation,
     )
     .await?;
     for &flagged_id in params.flagged_step_ids {
@@ -949,6 +1022,7 @@ async fn insert_review(
             crate::audit::AuditEventType::StepFlagged,
             None,
             params.reviewer_user_id,
+            params.acted_as_designation,
         )
         .await?;
     }

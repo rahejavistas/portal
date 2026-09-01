@@ -1,7 +1,10 @@
 //! Write-path process transitions: saving a step's fields, admin review/revoke,
 //! and standalone admin notes.
 
-use super::{build_notification_ctx, find_step_name, load_authorized_process, ApiError, ResultExt};
+use super::{
+    build_actor_context, build_notification_ctx, find_step_name, load_authorized_process,
+    notify_newly_opened_designation_steps, ApiError, ResultExt,
+};
 use crate::extractors::SessionUser;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
@@ -91,6 +94,7 @@ pub async fn save_process_step(
     let is_admin = user.has_permission(authentication::Permission::ProcessReviewer);
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
 
     // Validate document ownership and upload confirmation
     for f in &payload.fields {
@@ -154,7 +158,7 @@ pub async fn save_process_step(
         &template,
         payload.template_step_id,
         &fields_submitted,
-        is_admin,
+        &actor,
         user.user_id,
     )
     .await
@@ -185,6 +189,13 @@ pub async fn save_process_step(
             .await;
         }
     }
+    notify_newly_opened_designation_steps(
+        &state.permissions_manager,
+        &template,
+        payload.process_id,
+        &save_outcome.newly_opened_step_ids,
+    )
+    .await;
 
     Ok(Json(SaveStepResponse {
         status: "success".to_string(),
@@ -206,9 +217,10 @@ pub async fn admin_review_step(
 
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
 
     let flagged = payload.flagged_step_ids.as_deref().unwrap_or(&[]);
-    let is_completed = process::db::review_step(
+    let review_outcome = process::db::review_step(
         &mut tx,
         payload.process_id,
         &template,
@@ -218,10 +230,13 @@ pub async fn admin_review_step(
             is_approved: payload.is_approved,
             notes: payload.notes.as_deref(),
             flagged_step_ids: flagged,
+            acted_as_designation: None,
         },
+        &actor,
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
+    let is_completed = review_outcome.is_completed;
 
     let message = if payload.is_approved {
         "Review recorded successfully. Step is marked as completed.".to_string()
@@ -230,6 +245,13 @@ pub async fn admin_review_step(
     };
 
     tx.commit().await.internal_err()?;
+    notify_newly_opened_designation_steps(
+        &state.permissions_manager,
+        &template,
+        payload.process_id,
+        &review_outcome.newly_opened_step_ids,
+    )
+    .await;
 
     let step_name = find_step_name(&template, payload.template_step_id);
     let wants_notification = state
@@ -287,18 +309,27 @@ pub async fn admin_revoke_step(
 
     let (info, template) =
         load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
 
-    process::db::reopen_step(
+    let newly_opened_step_ids = process::db::reopen_step(
         &mut tx,
         payload.process_id,
         &template,
         payload.template_step_id,
         user.user_id,
         payload.notes.as_deref(),
+        &actor,
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
     tx.commit().await.internal_err()?;
+    notify_newly_opened_designation_steps(
+        &state.permissions_manager,
+        &template,
+        payload.process_id,
+        &newly_opened_step_ids,
+    )
+    .await;
 
     let step_name = find_step_name(&template, payload.template_step_id);
     let wants_notification = state

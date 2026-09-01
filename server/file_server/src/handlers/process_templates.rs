@@ -64,10 +64,31 @@ pub async fn save(
     Json(draft): Json<TemplateDraft>,
 ) -> Result<Json<SaveResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
-    let version_id = process::template_store::save_template_version(&mut conn, draft, user.user_id)
+    let outcome = process::template_store::save_template_version(&mut conn, draft, user.user_id)
         .await
         .map_err(map_store_err)?;
-    Ok(Json(SaveResponse { version_id }))
+
+    // Best-effort, grant-only: a designation assigned to fill a stage gets the same
+    // rights as any reviewer. Never revoked if a later edit drops the designation from
+    // every stage, and never fails the save itself if a grant fails.
+    for code in &outcome.designation_codes {
+        for permission in ["process.view", "process.reviewer"] {
+            if let Err(e) = state
+                .permissions_manager
+                .toggle_designation_permission(code, permission, true, Some(user.user_id))
+                .await
+            {
+                eprintln!(
+                    "Failed to auto-grant '{}' to designation '{}': {}",
+                    permission, code, e
+                );
+            }
+        }
+    }
+
+    Ok(Json(SaveResponse {
+        version_id: outcome.version_id,
+    }))
 }
 
 #[derive(Deserialize)]

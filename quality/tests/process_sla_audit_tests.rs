@@ -3,10 +3,17 @@
 //! status change / verification flag / return reason.
 
 use process::{
-    state_machine::SaveFieldInput, FieldType, ProcessFieldTemplate, ProcessStepTemplate,
-    ProcessTemplate,
+    state_machine::{ActorContext, SaveFieldInput},
+    FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate, StepOwner,
 };
 use quality::setup_db_test_env;
+
+fn actor(is_admin: bool) -> ActorContext {
+    ActorContext {
+        is_admin,
+        designation_codes: Default::default(),
+    }
+}
 
 fn sla_template(tat_working_days: Option<i32>) -> ProcessTemplate {
     ProcessTemplate {
@@ -14,22 +21,21 @@ fn sla_template(tat_working_days: Option<i32>) -> ProcessTemplate {
         description: None,
         step_id: 1,
         is_optional: false,
-        is_review_required: false,
         tat_working_days,
         fields: None,
+        filled_by: StepOwner::User,
         substeps: Some(vec![ProcessStepTemplate {
             step_id: 2,
             name: "Only step".to_string(),
             description: None,
             is_optional: false,
-            is_review_required: true,
+            filled_by: StepOwner::User,
             fields: Some(vec![ProcessFieldTemplate {
                 field_id: 201,
                 name: "Note".to_string(),
                 description: None,
                 r#type: FieldType::Text,
                 is_optional: false,
-                filled_by: "user".to_string(),
                 requirements: None,
                 requires_signature: false,
                 required_signs_from_designations: Vec::new(),
@@ -100,7 +106,8 @@ async fn test_sla_clock_stays_off_without_tat_working_days() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     process::db::save_step(
         &mut conn,
@@ -112,7 +119,7 @@ async fn test_sla_clock_stays_off_without_tat_working_days() {
             text_value: Some("done".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -137,7 +144,8 @@ async fn test_sla_clock_starts_on_first_full_submission_not_on_process_start() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     let before = load_sla_row(&mut conn, process_id).await;
     assert!(
@@ -155,7 +163,7 @@ async fn test_sla_clock_starts_on_first_full_submission_not_on_process_start() {
             text_value: Some("done".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -189,7 +197,8 @@ async fn test_sla_clock_pauses_on_return_and_resumes_on_resubmission() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     process::db::save_step(
         &mut conn,
@@ -201,7 +210,7 @@ async fn test_sla_clock_pauses_on_return_and_resumes_on_resubmission() {
             text_value: Some("first submission".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -221,7 +230,9 @@ async fn test_sla_clock_pauses_on_return_and_resumes_on_resubmission() {
             is_approved: false,
             notes: Some("Please fix the note."),
             flagged_step_ids: &[2],
+            acted_as_designation: None,
         },
+        &actor(true),
     )
     .await
     .unwrap();
@@ -257,7 +268,7 @@ async fn test_sla_clock_pauses_on_return_and_resumes_on_resubmission() {
             text_value: Some("fixed submission".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -287,7 +298,8 @@ async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     process::db::save_step(
         &mut conn,
@@ -299,7 +311,7 @@ async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
             text_value: Some("first submission".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -315,7 +327,9 @@ async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
             is_approved: false,
             notes: Some("Please fix the note."),
             flagged_step_ids: &[2],
+            acted_as_designation: None,
         },
+        &actor(true),
     )
     .await
     .unwrap();
@@ -334,7 +348,7 @@ async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
             text_value: Some("fixed submission".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -358,7 +372,9 @@ async fn test_process_closes_unpaused_after_a_return_resubmit_approve_cycle() {
             is_approved: true,
             notes: None,
             flagged_step_ids: &[],
+            acted_as_designation: None,
         },
+        &actor(true),
     )
     .await
     .unwrap();
@@ -381,7 +397,8 @@ async fn test_sla_due_date_honors_configured_public_holidays() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     let holidays_before = process::db::get_holidays(&mut conn).await.unwrap();
     let today = chrono::Utc::now().date_naive();
@@ -401,7 +418,7 @@ async fn test_sla_due_date_honors_configured_public_holidays() {
             text_value: Some("done".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -430,7 +447,8 @@ async fn test_step_approval_is_audited() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     process::db::save_step(
         &mut conn,
@@ -442,7 +460,7 @@ async fn test_step_approval_is_audited() {
             text_value: Some("done".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -458,7 +476,9 @@ async fn test_step_approval_is_audited() {
             is_approved: true,
             notes: None,
             flagged_step_ids: &[],
+            acted_as_designation: None,
         },
+        &actor(true),
     )
     .await
     .unwrap();
@@ -483,7 +503,8 @@ async fn test_process_closing_appends_one_process_closed_event_and_computes_tat_
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     assert_eq!(
         process::db::compute_tat_actual(&mut conn, process_id)
@@ -503,7 +524,7 @@ async fn test_process_closing_appends_one_process_closed_event_and_computes_tat_
             text_value: Some("done".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await
@@ -527,7 +548,9 @@ async fn test_process_closing_appends_one_process_closed_event_and_computes_tat_
             is_approved: true,
             notes: None,
             flagged_step_ids: &[],
+            acted_as_designation: None,
         },
+        &actor(true),
     )
     .await
     .unwrap();
@@ -569,7 +592,8 @@ async fn test_tat_actual_summary_groups_by_template() {
     for i in 0..2 {
         let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
             .await
-            .unwrap();
+            .unwrap()
+            .process_id;
         process::db::save_step(
             &mut conn,
             process_id,
@@ -580,7 +604,7 @@ async fn test_tat_actual_summary_groups_by_template() {
                 text_value: Some(format!("run {i}")),
                 document_id: None,
             }],
-            false,
+            &actor(false),
             user_id,
         )
         .await
@@ -595,7 +619,9 @@ async fn test_tat_actual_summary_groups_by_template() {
                 is_approved: true,
                 notes: None,
                 flagged_step_ids: &[],
+                acted_as_designation: None,
             },
+            &actor(true),
         )
         .await
         .unwrap();
@@ -649,7 +675,8 @@ async fn test_field_history_records_the_actor_who_saved_it() {
     let version_id = seed_template_version(&mut conn, &template).await;
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     process::db::save_step(
         &mut conn,
@@ -661,7 +688,7 @@ async fn test_field_history_records_the_actor_who_saved_it() {
             text_value: Some("first value".to_string()),
             document_id: None,
         }],
-        false,
+        &actor(false),
         user_id,
     )
     .await

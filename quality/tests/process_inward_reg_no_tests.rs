@@ -1,7 +1,7 @@
 //! InwardRegNo: auto-sequenced, human-facing register number assigned at process
 //! creation, and the FIFO ordering it drives on the admin "all processes" list.
 
-use process::{FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate};
+use process::{FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate, StepOwner};
 use quality::setup_db_test_env;
 
 fn inward_reg_no_template() -> ProcessTemplate {
@@ -10,22 +10,21 @@ fn inward_reg_no_template() -> ProcessTemplate {
         description: None,
         step_id: 1,
         is_optional: false,
-        is_review_required: false,
         tat_working_days: None,
         fields: None,
+        filled_by: StepOwner::User,
         substeps: Some(vec![ProcessStepTemplate {
             step_id: 2,
             name: "Only step".to_string(),
             description: None,
             is_optional: false,
-            is_review_required: true,
+            filled_by: StepOwner::User,
             fields: Some(vec![ProcessFieldTemplate {
                 field_id: 201,
                 name: "Note".to_string(),
                 description: None,
                 r#type: FieldType::Text,
                 is_optional: false,
-                filled_by: "user".to_string(),
                 requirements: None,
                 requires_signature: false,
                 required_signs_from_designations: Vec::new(),
@@ -81,7 +80,8 @@ async fn test_new_process_gets_well_formatted_inward_reg_no() {
 
     let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     let info = process::db::get_process_info(&mut conn, process_id)
         .await
@@ -120,13 +120,16 @@ async fn test_sequential_processes_get_increasing_inward_reg_no() {
 
     let first_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
     let second_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
     let third_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     let first = process::db::get_process_info(&mut conn, first_id)
         .await
@@ -159,13 +162,16 @@ async fn test_list_all_processes_is_ordered_by_inward_reg_no_not_created_at() {
 
     let first_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
     let second_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
     let third_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
         .await
-        .unwrap();
+        .unwrap()
+        .process_id;
 
     // Scramble created_at so it disagrees with inward_reg_no order: if list_all_processes
     // were still sorting by created_at, this ordering would come out wrong.

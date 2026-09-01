@@ -541,7 +541,7 @@
             cursor: pointer;
             transition: all 0.2s ease;
         }
-        .doc-mode-btn:first-child {
+        .doc-mode-btn:not(:last-child) {
             border-right: 2px solid var(--border);
         }
         .doc-mode-btn.active {
@@ -3302,13 +3302,13 @@
         }
 
         function emptyField() {
-            return { name: '', type: 'document', is_optional: false, filled_by: 'user', requires_signature: false, required_signs_from_designations: [], options: [], example_document_id: null };
+            return { name: '', type: 'document', is_optional: false, requires_signature: false, required_signs_from_designations: [], options: [], example_document_id: null };
         }
         function emptyStage() {
-            return { name: 'New Stage', description: '', is_optional: false, is_review_required: true, fields: null, substeps: [emptySubstep()] };
+            return { name: 'New Stage', description: '', is_optional: false, filled_by: { kind: 'user' }, fields: null, substeps: [emptySubstep()] };
         }
         function emptySubstep() {
-            return { name: 'New Substep', description: '', is_optional: false, is_review_required: false, fields: [] };
+            return { name: 'New Substep', description: '', is_optional: false, fields: [] };
         }
 
         async function openTemplateBuilder(templateId, versionId) {
@@ -3331,15 +3331,15 @@
                     });
                     const tree = await resp.json();
                     builderState = { template_id: templateId, name: tree.name, description: tree.description,
-                        is_optional: tree.is_optional, is_review_required: tree.is_review_required,
+                        is_optional: tree.is_optional,
                         tat_working_days: tree.tat_working_days || null,
                         fields: null, substeps: (tree.substeps || []).map(stageFromServer) };
                     document.getElementById('builder-version-badge').textContent = `Editing from an existing version - saving creates a new version, which you'll need to activate before residents start using it`;
                 } catch (err) {
-                    builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
+                    builderState = { template_id: null, name: '', description: '', is_optional: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
                 }
             } else {
-                builderState = { template_id: null, name: '', description: '', is_optional: false, is_review_required: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
+                builderState = { template_id: null, name: '', description: '', is_optional: false, tat_working_days: null, fields: null, substeps: [emptyStage()] };
                 document.getElementById('builder-version-badge').textContent = 'New template';
             }
 
@@ -3353,18 +3353,19 @@
         function stageFromServer(s) {
             const substeps = s.substeps
                 ? s.substeps.map(sub => ({
-                    name: sub.name, description: sub.description, is_optional: sub.is_optional, is_review_required: sub.is_review_required,
+                    name: sub.name, description: sub.description, is_optional: sub.is_optional,
                     fields: (sub.fields || []).map(fieldFromServer)
                 }))
-                : [{ name: s.name, description: '', is_optional: false, is_review_required: false, fields: (s.fields || []).map(fieldFromServer) }];
+                : [{ name: s.name, description: '', is_optional: false, fields: (s.fields || []).map(fieldFromServer) }];
             return {
-                name: s.name, description: s.description, is_optional: s.is_optional, is_review_required: s.is_review_required,
+                name: s.name, description: s.description, is_optional: s.is_optional,
+                filled_by: s.filled_by || { kind: 'user' },
                 fields: null,
                 substeps
             };
         }
         function fieldFromServer(f) {
-            return { name: f.name, type: f.type, is_optional: f.is_optional, filled_by: f.filled_by, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [], example_document_id: f.example_document_id || null };
+            return { name: f.name, type: f.type, is_optional: f.is_optional, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [], example_document_id: f.example_document_id || null };
         }
 
         function closeTemplateBuilder() {
@@ -3580,19 +3581,16 @@ function openDesignationPicker(field) {
             `;
         }
 
-        function renderFieldRow(field, onchangePrefix) {
+        function renderFieldRow(field, onchangePrefix, stageOwner) {
             const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
             const optionsCsv = (field.options || []).join(', ');
+            const ownerIsUser = stageOwner.kind === 'user';
             return `
                 <div class="field-row">
                     <div class="field-row-main">
                         <input type="text" class="field-name-input" value="${escapeHtml(field.name)}" placeholder="Field name" oninput="${onchangePrefix}.name=this.value">
                         <select onchange="${onchangePrefix}.type=this.value; renderBuilderStageDetail();">
                             ${FIELD_TYPES.map(t => `<option value="${t.value}" ${field.type === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
-                        </select>
-                        <select onchange="${onchangePrefix}.filled_by=this.value; if (this.value !== 'admin') { ${onchangePrefix}.requires_signature = false; ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();">
-                            <option value="user" ${field.filled_by === 'user' ? 'selected' : ''}>Filled by Resident</option>
-                            <option value="admin" ${field.filled_by === 'admin' ? 'selected' : ''}>Filled by Admin</option>
                         </select>
                     </div>
                     ${field.type === 'enum' ? `
@@ -3601,11 +3599,11 @@ function openDesignationPicker(field) {
                     </div>` : ''}
                     <div class="field-row-meta">
                         <label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>
-                        ${(field.type === 'document' && field.filled_by === 'admin') ? `<label class="field-check-label"><input type="checkbox" ${field.requires_signature ? 'checked' : ''} onchange="${onchangePrefix}.requires_signature=this.checked; if (!this.checked) { ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();"> Requires signature</label>` : ''}
+                        ${(field.type === 'document' && !ownerIsUser) ? `<label class="field-check-label"><input type="checkbox" ${field.requires_signature ? 'checked' : ''} onchange="${onchangePrefix}.requires_signature=this.checked; if (!this.checked) { ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();"> Requires signature</label>` : ''}
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>
-                    ${(field.type === 'document' && field.filled_by === 'admin' && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
-                    ${(field.type === 'document' && field.filled_by === 'user') ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
+                    ${(field.type === 'document' && !ownerIsUser && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
+                    ${(field.type === 'document' && ownerIsUser) ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
                 </div>
             `;
         }
@@ -3656,6 +3654,7 @@ function openDesignationPicker(field) {
             stage.fields = null;
             stage.substeps = stage.substeps && stage.substeps.length > 0 ? stage.substeps : [emptySubstep()];
 
+            const owner = stage.filled_by || { kind: 'user' };
             const substepsHtml = stage.substeps.map((sub, i) => `
                 <div class="step-card">
                     <div class="step-header">
@@ -3664,11 +3663,31 @@ function openDesignationPicker(field) {
                     </div>
                     <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.substeps[${i}].description=this.value">${escapeHtml(sub.description || '')}</textarea>
                     <div class="fields-container">
-                        ${(sub.fields || []).map((f, fi) => renderFieldRow(f, `${pathExpr}.substeps[${i}].fields[${fi}]`)).join('')}
+                        ${(sub.fields || []).map((f, fi) => renderFieldRow(f, `${pathExpr}.substeps[${i}].fields[${fi}]`, owner)).join('')}
                         <button class="action-select" style="cursor:pointer;" onclick="${pathExpr}.substeps[${i}].fields.push(emptyField()); renderBuilderStageDetail();">+ Add Field</button>
                     </div>
                 </div>
             `).join('');
+
+            const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin');
+            const ownerPickerHtml = `
+                <div class="doc-mode-switch" style="margin-bottom:8px;">
+                    <button type="button" class="doc-mode-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident</button>
+                    <button type="button" class="doc-mode-btn ${owner.kind === 'admin' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; renderBuilderStageDetail();">Admin</button>
+                    <select class="doc-mode-btn ${owner.kind === 'designation' ? 'active' : ''}" style="border:none; -webkit-appearance:none; appearance:none; cursor:pointer;" onchange="if (this.value) { ${pathExpr}.filled_by = { kind: 'designation', code: this.value }; renderBuilderStageDetail(); }">
+                        <option value="" ${owner.kind !== 'designation' ? 'selected' : ''}>Designation...</option>
+                        ${nonSystemDesignations.map(d => `<option value="${escapeHtml(d.code)}" ${owner.kind === 'designation' && owner.code === d.code ? 'selected' : ''}>${escapeHtml(d.label)}</option>`).join('')}
+                    </select>
+                </div>
+                <p style="font-size:12px; color:var(--muted-foreground); margin:0 0 20px;">
+                    Who fills this stage.
+                    ${owner.kind === 'user'
+                        ? 'A resident fills it; any reviewer must approve before it counts as done.'
+                        : owner.kind === 'admin'
+                            ? 'Any reviewer can fill it — it completes immediately, no separate approval step.'
+                            : `Only someone holding the "${escapeHtml((nonSystemDesignations.find(d => d.code === owner.code) || {}).label || owner.code || '')}" designation can fill it — completes immediately, and they're emailed when it's their turn.`}
+                </p>
+            `;
 
             container.innerHTML = `
                 <div class="builder-detail-inner">
@@ -3677,7 +3696,7 @@ function openDesignationPicker(field) {
                         <button class="del-action-btn" style="padding:8px 14px;" onclick="removeBuilderStage(${stageIndex})">Remove Stage</button>
                     </div>
                     <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.description=this.value">${escapeHtml(stage.description || '')}</textarea>
-                    <label style="font-size:13px; text-transform:none; font-weight:600; letter-spacing:normal; display:flex; align-items:center; gap:8px; margin-bottom:24px; cursor:pointer;"><input type="checkbox" ${stage.is_review_required ? 'checked' : ''} onchange="${pathExpr}.is_review_required=this.checked"> Requires admin review to complete</label>
+                    ${ownerPickerHtml}
                     <h4 style="margin-bottom:12px;">Substeps</h4>
                     ${substepsHtml}
                     <div class="step-nav-add" onclick="${pathExpr}.substeps.push(emptySubstep()); renderBuilderStageDetail();">+ Add Substep</div>
@@ -3807,6 +3826,9 @@ function openDesignationPicker(field) {
                 return;
             }
             const stage = previewState.substeps[previewSelectedIndex];
+            const owner = stage.filled_by || { kind: 'user' };
+            const ownerLabel = owner.kind === 'user' ? 'Resident' : owner.kind === 'admin' ? 'Admin'
+                : ((allDesignations.find(d => d.code === owner.code) || {}).label || owner.code);
             const substepsHtml = (stage.substeps || []).map(sub => `
                 <div class="step-card">
                     <div class="step-header">
@@ -3819,7 +3841,6 @@ function openDesignationPicker(field) {
                                 <div class="field-row-main">
                                     <span class="field-name-input">${escapeHtml(f.name)}</span>
                                     <span style="font-size:12px; color:var(--muted-foreground);">${escapeHtml(fieldTypeLabel(f.type))}</span>
-                                    <span style="font-size:12px; color:var(--muted-foreground);">Filled by ${f.filled_by === 'admin' ? 'Admin' : 'Resident'}</span>
                                 </div>
                                 ${(f.is_optional || f.requires_signature) ? `<div class="field-row-meta">${f.is_optional ? '<span class="field-check-label" style="cursor:default;">Optional</span>' : ''}${f.requires_signature ? '<span class="field-check-label" style="cursor:default;">Requires signature</span>' : ''}</div>` : ''}
                             </div>
@@ -3834,7 +3855,9 @@ function openDesignationPicker(field) {
                         <h3 style="margin:0;">${escapeHtml(stage.name)}</h3>
                     </div>
                     ${stage.description ? `<p class="step-desc">${escapeHtml(stage.description)}</p>` : ''}
-                    ${stage.is_review_required ? '<p style="font-size:13px; color:var(--muted-foreground); margin-bottom:20px;">Requires admin review to complete.</p>' : ''}
+                    <p style="font-size:13px; color:var(--muted-foreground); margin-bottom:20px;">
+                        Filled by ${escapeHtml(ownerLabel)}${owner.kind === 'user' ? ' - requires admin review to complete' : ''}
+                    </p>
                     ${substepsHtml}
                 </div>
             `;

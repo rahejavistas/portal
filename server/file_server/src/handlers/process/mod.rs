@@ -52,6 +52,54 @@ pub(super) fn can_view_all_processes(user: &authentication::User) -> bool {
         || user.has_permission(authentication::Permission::ProcessView)
 }
 
+/// Resolved fresh on every call — never cached.
+pub(super) async fn build_actor_context(
+    permissions_manager: &authentication::PermissionsManager,
+    user: &authentication::User,
+) -> process::state_machine::ActorContext {
+    let designation_codes = permissions_manager
+        .active_designation_codes(user.user_id)
+        .await
+        .unwrap_or_default();
+    process::state_machine::ActorContext {
+        is_admin: user.has_permission(authentication::Permission::ProcessReviewer),
+        designation_codes,
+    }
+}
+
+/// Emails a designation's holders for each newly-opened step it owns.
+pub(super) async fn notify_newly_opened_designation_steps(
+    permissions_manager: &authentication::PermissionsManager,
+    template: &process::ProcessTemplate,
+    process_id: uuid::Uuid,
+    newly_opened_step_ids: &[i32],
+) {
+    let info_map = process::state_machine::build_step_info_map(template);
+    for &step_id in newly_opened_step_ids {
+        let Some(info) = info_map.get(&step_id) else {
+            continue;
+        };
+        let process::StepOwner::Designation { code } = &info.filled_by else {
+            continue;
+        };
+        let emails = permissions_manager
+            .emails_for_designation(code)
+            .await
+            .unwrap_or_default();
+        if emails.is_empty() {
+            continue;
+        }
+        process::notification::notify_designation_turn(
+            process_id,
+            &template.name,
+            &info.name,
+            code,
+            &emails,
+        )
+        .await;
+    }
+}
+
 pub(super) fn find_step_name(template: &process::ProcessTemplate, step_id: i32) -> String {
     process::state_machine::build_step_info_map(template)
         .get(&step_id)

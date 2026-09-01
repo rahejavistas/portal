@@ -226,10 +226,10 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
     "effective_due_date": "2026-08-28",
     "is_sla_paused": false,
     "tat_actual_working_days": null,
-    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "is_review_required": true, "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "filled_by": "user", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf", "document_content_type": "application/pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
+    "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "filled_by": { "kind": "designation", "code": "secretary" }, "filled_by_designation_label": "Secretary", "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf", "document_content_type": "application/pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
   }
   ```
-  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` and `audit_log` are only populated for callers with `process.reviewer`/`process.view` — `audit_log` is the append-only status/verification/return trail (`event_type` is one of `STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`); a field's own edit history is on each field's `history` array instead, and now carries `actor_email` (who saved that value). `tat_actual_working_days` is `null` until the process has actually closed. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
+  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` and `audit_log` are only populated for callers with `process.reviewer`/`process.view` — `audit_log` is the append-only status/verification/return trail (`event_type` is one of `STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`), and each entry carries `acted_as_designation` (non-null only when a `Designation`-owned stage produced it); a field's own edit history is on each field's `history` array instead, and now carries `actor_email` (who saved that value) and `acted_as_designation` alongside it. Each step's `filled_by` mirrors the template's (`{"kind":"user"|"admin"}` or `{"kind":"designation","code":...}`), with `filled_by_designation_label` resolved server-side for the `designation` case so the frontend never needs its own lookup. `next_actions[].assigned_to` is `"user"`, `"admin"`, or a designation code. `tat_actual_working_days` is `null` until the process has actually closed. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
 * **400** if neither `process_id` nor `template_id` given, the given `template_id` has no active version yet, or the caller owns multiple flats and didn't disambiguate with `flat_id`; **403** if the caller doesn't own the process; **404** if not found.
 
 ### POST `/api/v1/process/save-step`
@@ -462,7 +462,7 @@ Requires `process.templates.manage`.
 ### POST `/api/v1/admin/process-templates/get-version`
 Requires `process.templates.manage`. Loads one version's full tree, for opening it in the builder or previewing it.
 * **Request:** `{ "version_id": 3 }`
-* **Response (200):** the full `ProcessTemplate` tree (same shape as a saved definition — `name`, `description`, `step_id`, `is_optional`, `is_review_required`, `substeps`, `fields`, recursively).
+* **Response (200):** the full `ProcessTemplate` tree (same shape as a saved definition — `name`, `description`, `step_id`, `is_optional`, `filled_by`, `substeps`, `fields`, recursively).
 * **404** if the version doesn't exist.
 
 ### POST `/api/v1/admin/process-templates/save`
@@ -474,18 +474,17 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
     "name": "Tenant Onboarding",
     "description": null,
     "is_optional": false,
-    "is_review_required": false,
     "substeps": [
       {
         "name": "Stage 1",
         "description": "optional",
-        "is_review_required": true,
+        "filled_by": { "kind": "user" },
         "substeps": [
           {
             "name": "Substep 1",
             "fields": [
-              { "name": "ID Proof", "type": "document", "is_optional": false, "filled_by": "user" },
-              { "name": "NOC Document", "type": "document", "is_optional": false, "filled_by": "admin", "requires_signature": true, "required_signs_from_designations": ["staff", "secretary"] }
+              { "name": "ID Proof", "type": "document", "is_optional": false },
+              { "name": "NOC Document", "type": "document", "is_optional": false, "requires_signature": true, "required_signs_from_designations": ["staff", "secretary"] }
             ]
           }
         ]
@@ -493,6 +492,23 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
     ]
   }
   ```
+  `filled_by` is set once per top-level Stage (`{"kind":"user"}`, `{"kind":"admin"}`, or
+  `{"kind":"designation","code":"secretary"}`) and denormalized onto every substep beneath
+  it at save time — a field no longer carries its own `filled_by`; every field in a stage
+  shares that stage's owner. `User` always requires a reviewer's approval to complete;
+  `Admin`/`Designation` never do — filling the stage completes it immediately. Saving a
+  `Designation` reference auto-grants that designation `process.view` + `process.reviewer`
+  (grant-only — removing the designation from every stage in a later edit does not revoke
+  it). A `Designation`-owned stage is then exclusive to that designation's active
+  holders — holding `process.reviewer` globally, even as a super admin, does not grant
+  access to it; the check is re-evaluated live on every request, so assigning or revoking
+  the designation takes effect on the holder's very next call, no caching involved. Every
+  write this scoping governs (`process_fields`, `process_step_reviews`,
+  `process_audit_log`) snapshots which designation authorized it, surfaced back as
+  `acted_as_designation` on the corresponding response entries. When a `Designation`-owned
+  stage transitions to `Open`, every active holder of that designation is emailed;
+  `Admin`-owned stages get no such email since there's no single owner to notify.
+
   A document field's `requires_signature` (default `false`) does not itself declare who
   must sign, or provision anything — signature requirements are still always attached
   ad hoc by a process reviewer via [`/admin/process/documents/add-signers`](#post-apiv1adminprocessdocumentsadd-signers).
