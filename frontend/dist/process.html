@@ -2544,34 +2544,45 @@
             } catch (e) {}
         }
 
-        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null) {
+        function stepOwnerLabel(owner) {
+            if (!owner || owner.kind === 'user') return null;
+            if (owner.kind === 'admin') return 'Admin';
+            return owner.label || owner.code;
+        }
+
+        function stepOwnerFromResponse(step) {
+            const filledBy = step.filled_by || { kind: 'user' };
+            return { kind: filledBy.kind, code: filledBy.code, label: step.filled_by_designation_label };
+        }
+
+        function canActOnStepOwner(owner) {
+            if (!owner || owner.kind === 'user') return !IS_ADMIN_PROCESS_PAGE;
+            if (owner.kind === 'admin') return canReviewProcess(user);
+            return !!(user && user.designations && user.designations.includes(owner.code));
+        }
+
+        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
+            const ownerCanAct = canActOnStepOwner(owner);
             let hasEditableTextField = false;
             let anyRequiredEmpty = false;
 
             const editableFieldIds = fields.filter(f => {
                 if (f.type === 'document') return false;
                 if (!(stepStatus === 'OPEN' || parentStatus === 'OPEN')) return false;
-                if (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) return true;
-                if (f.filled_by === 'admin' && isCurrentAdmin) return true;
-                return false;
+                return ownerCanAct;
             }).map(f => f.template_field_id);
 
             fields.forEach(f => {
                 const fieldId = f.template_field_id;
-                const filledBy = f.filled_by;
                 const type = f.type;
                 const val = f.value || { text_value: null, document_id: null, document_title: null };
 
                 let inputHtml = '';
                 let isReadOnly = true;
-                if (stepStatus === 'OPEN' || parentStatus === 'OPEN') {
-                    if (filledBy === 'user' && !IS_ADMIN_PROCESS_PAGE) {
-                        isReadOnly = false;
-                    } else if (filledBy === 'admin' && isCurrentAdmin) {
-                        isReadOnly = false;
-                    }
+                if ((stepStatus === 'OPEN' || parentStatus === 'OPEN') && ownerCanAct) {
+                    isReadOnly = false;
                 }
 
                 const signatureStatuses = (f.signature_status || []).slice().sort((a, b) => a.sign_order - b.sign_order);
@@ -2678,11 +2689,12 @@
                 let historyHtml = '';
 
                 let filledByHtml = '';
-                if (filledBy === 'admin') {
+                const ownerLabelForField = stepOwnerLabel(owner);
+                if (ownerLabelForField && (stepStatus === 'OPEN' || parentStatus === 'OPEN')) {
                     const visibilityNote = isCurrentAdmin
                         ? ' <span style="text-transform: none; font-weight: 700; color: #b45309;">(Visible to resident)</span>'
                         : '';
-                    filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">To be completed by Admin${visibilityNote}</div>`;
+                    filledByHtml = `<div style="font-size: 0.75rem; color: #b45309; margin-bottom: 10px; text-transform: uppercase; font-weight: 600;">Waiting on ${escapeHtml(ownerLabelForField)}${visibilityNote}</div>`;
                 }
 
                 const stepIsOpen = stepStatus === 'OPEN' || parentStatus === 'OPEN';
@@ -2765,6 +2777,8 @@
 
             const stepStatus = selectedStep.status;
             const stepId = selectedStep.template_step_id;
+            const stepOwner = stepOwnerFromResponse(selectedStep);
+            const stepOwnerName = stepOwnerLabel(stepOwner);
 
             let statusBanner = '';
             if (stepStatus === 'LOCKED') {
@@ -2772,16 +2786,20 @@
                     <div style="background-color: var(--muted); border: 1px solid var(--border); padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
                         <div>
                             <strong style="color: var(--muted-foreground); font-size: 1rem; display: block;">Locked Stage</strong>
-                            <span style="font-size: 0.875rem; color: var(--muted-foreground);">This stage will unlock automatically once the previous stages are completed and approved.</span>
+                            <span style="font-size: 0.875rem; color: var(--muted-foreground);">This stage will unlock automatically once the previous stages are completed and approved.${stepOwnerName ? ` Once open, it is to be completed by ${escapeHtml(stepOwnerName)}.` : ''}</span>
                         </div>
                     </div>
                 `;
             } else if (stepStatus === 'OPEN') {
+                const openHeading = stepOwnerName ? `Waiting on ${escapeHtml(stepOwnerName)}` : 'Active Stage';
+                const openDesc = stepOwnerName
+                    ? `This stage is to be completed by ${escapeHtml(stepOwnerName)}.`
+                    : 'Please upload the required files or fill in the remarks below.';
                 statusBanner = `
                     <div style="background-color: #EFF6FF; border: 1px solid #BFDBFE; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
                         <div>
-                            <strong style="color: #1E40AF; font-size: 1rem; display: block;">Active Stage</strong>
-                            <span style="font-size: 0.875rem; color: #1E40AF;">Please upload the required files or fill in the remarks below.</span>
+                            <strong style="color: #1E40AF; font-size: 1rem; display: block;">${openHeading}</strong>
+                            <span style="font-size: 0.875rem; color: #1E40AF;">${openDesc}</span>
                         </div>
                     </div>
                 `;
@@ -2920,7 +2938,7 @@
 
             if (selectedStep.fields && selectedStep.fields.length > 0 && stepStatus !== 'LOCKED') {
                 html += `<div class="fields-container" style="border-top: none; padding-top: 0; margin-bottom: 24px;">`;
-                html += renderFieldsList(selectedStep.fields, stepStatus, stepId);
+                html += renderFieldsList(selectedStep.fields, stepStatus, stepId, null, stepOwner);
                 html += `</div>`;
             }
 
@@ -2956,6 +2974,12 @@
                     const flagBadge = isFlaggedByAdmin
                         ? `<span style="display:inline-flex;align-items:center;gap:4px;background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">⚑ Admin Focus</span>`
                         : '';
+                    const subOwner = stepOwnerFromResponse(sub);
+                    const subOwnerName = stepOwnerLabel(subOwner);
+                    const subOwnerVerb = subStatus === 'LOCKED' ? 'Locked for' : subStatus === 'OPEN' ? 'Waiting on' : subStatus === 'COMPLETED' ? 'Done by' : 'Assigned to';
+                    const subOwnerBadge = subOwnerName
+                        ? `<span style="display:inline-flex;align-items:center;gap:4px;background:#EDE9FE;color:#5B21B6;border:1px solid #DDD6FE;font-size:0.6875rem;font-weight:700;padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:0.04em;">${subOwnerVerb} ${escapeHtml(subOwnerName)}</span>`
+                        : '';
 
                     html += `
                         <div class="step-card ${subStatus.toLowerCase()}" style="padding: 20px; border-radius: var(--radius-lg); border-color: ${isFlaggedByAdmin ? '#FDE68A' : (subStatus === 'OPEN' ? 'var(--primary)' : 'var(--border)')};${isFlaggedByAdmin ? ' background: #FFFBEB;' : ''}">
@@ -2963,8 +2987,9 @@
                                 <h4 class="step-title" style="font-size: 1.125rem; font-weight: 700;">${escapeHtml(sub.name)}</h4>
                                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                                     <span class="status-pill ${subBadgeClass}">${subStatusLabel}</span>
+                                    ${subOwnerBadge}
                                     ${flagBadge}
-                                    ${isAdminForSubsteps && sub.fields && sub.fields.some(f => f.filled_by === 'user') ? `
+                                    ${isAdminForSubsteps && subOwner.kind === 'user' ? `
                                         <label title="Flag for resident attention" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;padding:3px 8px;border-radius:999px;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border:1px solid ${alreadyFlaggedIds.includes(sub.template_step_id) ? '#FDE68A' : 'var(--border)'};background:${alreadyFlaggedIds.includes(sub.template_step_id) ? '#FEF3C7' : 'var(--muted)'};color:${alreadyFlaggedIds.includes(sub.template_step_id) ? '#92400E' : 'var(--muted-foreground)'}; user-select:none;">
                                             <input type="checkbox" class="substep-flag-cb" data-substep-id="${sub.template_step_id}" ${alreadyFlaggedIds.includes(sub.template_step_id) ? 'checked' : ''} style="width:13px;height:13px;accent-color:#92400E;flex-shrink:0;cursor:pointer;">
                                             ⚑ Flag
@@ -2977,7 +3002,7 @@
 
                     if (sub.fields && sub.fields.length > 0 && subStatus !== 'LOCKED') {
                         html += `<div class="fields-container" style="border-top: 1px solid var(--border); padding-top: 16px;">`;
-                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus);
+                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus, subOwner);
                         html += `</div>`;
                     }
 
@@ -3472,11 +3497,10 @@
             const fieldsPayload = [];
             const editableTextFieldIds = [];
             let hasError = false;
-            const isCurrentAdmin = canReviewProcess(user);
+            const isFieldEditable = canActOnStepOwner(stepOwnerFromResponse(step));
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
-                const isFieldEditable = (f.filled_by === 'user' && !IS_ADMIN_PROCESS_PAGE) || (f.filled_by === 'admin' && isCurrentAdmin);
 
                 if (isFieldEditable) {
                     if (f.type !== 'document') {

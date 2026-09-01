@@ -18,11 +18,9 @@ fn simple_draft(name: &str, template_id: Option<i32>) -> serde_json::Value {
         "name": name,
         "description": null,
         "is_optional": false,
-        "is_review_required": false,
         "substeps": [
             {
                 "name": "Stage 1",
-                "is_review_required": true,
                 "substeps": [
                     {
                         "name": "Substep 1",

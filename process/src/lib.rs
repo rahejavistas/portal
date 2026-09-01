@@ -23,6 +23,17 @@ pub enum FieldType {
     File,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum StepOwner {
+    #[default]
+    User,
+    Admin,
+    Designation {
+        code: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessFieldTemplate {
     pub field_id: i32,
@@ -31,7 +42,6 @@ pub struct ProcessFieldTemplate {
     pub description: Option<String>,
     pub r#type: FieldType,
     pub is_optional: bool,
-    pub filled_by: String, // "user", "admin"
     pub requirements: Option<serde_json::Value>,
     /// Document fields only. Blocks step completion until the field's document has a
     /// signature requirement attached and signed.
@@ -56,7 +66,8 @@ pub struct ProcessStepTemplate {
     pub name: String,
     pub description: Option<String>,
     pub is_optional: bool,
-    pub is_review_required: bool,
+    #[serde(default)]
+    pub filled_by: StepOwner,
     pub fields: Option<Vec<ProcessFieldTemplate>>,
     pub substeps: Option<Vec<ProcessStepTemplate>>,
 }
@@ -68,27 +79,22 @@ pub struct ProcessTemplate {
     pub description: Option<String>,
     pub step_id: i32,
     pub is_optional: bool,
-    pub is_review_required: bool,
     pub substeps: Option<Vec<ProcessStepTemplate>>,
     pub fields: Option<Vec<ProcessFieldTemplate>>,
     /// Working days allowed for this process, once the checklist is fully submitted.
     /// `None` means SLA tracking is off for this template.
     #[serde(default)]
     pub tat_working_days: Option<i32>,
+    #[serde(default)]
+    pub filled_by: StepOwner,
 }
 
 /// Test fixture for this crate's own unit tests (can't depend on `quality`'s JSON fixture — cyclic dep).
 #[cfg(test)]
 pub(crate) mod test_fixtures {
-    use super::{FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate};
+    use super::{FieldType, ProcessFieldTemplate, ProcessStepTemplate, ProcessTemplate, StepOwner};
 
-    fn field(
-        field_id: i32,
-        name: &str,
-        r#type: &str,
-        is_optional: bool,
-        filled_by: &str,
-    ) -> ProcessFieldTemplate {
+    fn field(field_id: i32, name: &str, r#type: &str, is_optional: bool) -> ProcessFieldTemplate {
         let r#type = match r#type {
             "document" => FieldType::File,
             "text" => FieldType::Text,
@@ -100,7 +106,6 @@ pub(crate) mod test_fixtures {
             description: None,
             r#type,
             is_optional,
-            filled_by: filled_by.to_string(),
             requirements: None,
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
@@ -118,9 +123,9 @@ pub(crate) mod test_fixtures {
             ),
             step_id: 1,
             is_optional: false,
-            is_review_required: false,
             fields: None,
             tat_working_days: None,
+            filled_by: StepOwner::User,
             substeps: Some(vec![
                 ProcessStepTemplate {
                     step_id: 2,
@@ -130,7 +135,7 @@ pub(crate) mod test_fixtures {
                             .to_string(),
                     ),
                     is_optional: false,
-                    is_review_required: true,
+                    filled_by: StepOwner::User,
                     fields: None,
                     substeps: Some(vec![
                         ProcessStepTemplate {
@@ -141,15 +146,15 @@ pub(crate) mod test_fixtures {
                                     .to_string(),
                             ),
                             is_optional: false,
-                            is_review_required: false,
+                            filled_by: StepOwner::User,
                             substeps: None,
                             fields: Some(vec![
-                                field(101, "Sale Agreement / Chain Agreement", "document", false, "user"),
-                                field(102, "Possession Letter", "document", false, "user"),
-                                field(103, "Parking Allotment Letter", "document", false, "user"),
-                                field(104, "Loan Sanction Letter (If Loan Availed)", "document", true, "user"),
-                                field(105, "Owner KYC Documents", "document", false, "user"),
-                                field(106, "ADDA Enrollment Form", "document", false, "user"),
+                                field(101, "Sale Agreement / Chain Agreement", "document", false),
+                                field(102, "Possession Letter", "document", false),
+                                field(103, "Parking Allotment Letter", "document", false),
+                                field(104, "Loan Sanction Letter (If Loan Availed)", "document", true),
+                                field(105, "Owner KYC Documents", "document", false),
+                                field(106, "ADDA Enrollment Form", "document", false),
                             ]),
                         },
                         ProcessStepTemplate {
@@ -157,9 +162,9 @@ pub(crate) mod test_fixtures {
                             name: "Tenant KYC".to_string(),
                             description: Some("Submit KYC documents for the tenant".to_string()),
                             is_optional: false,
-                            is_review_required: false,
+                            filled_by: StepOwner::User,
                             substeps: None,
-                            fields: Some(vec![field(107, "Tenant KYC Documents", "document", false, "user")]),
+                            fields: Some(vec![field(107, "Tenant KYC Documents", "document", false)]),
                         },
                         ProcessStepTemplate {
                             step_id: 5,
@@ -169,9 +174,9 @@ pub(crate) mod test_fixtures {
                                     .to_string(),
                             ),
                             is_optional: false,
-                            is_review_required: false,
+                            filled_by: StepOwner::User,
                             substeps: None,
-                            fields: Some(vec![field(108, "Undertaking (Stamp Paper)", "document", false, "user")]),
+                            fields: Some(vec![field(108, "Undertaking (Stamp Paper)", "document", false)]),
                         },
                         ProcessStepTemplate {
                             step_id: 6,
@@ -180,12 +185,12 @@ pub(crate) mod test_fixtures {
                                 "Pay shifting charges and one-year NOC charges".to_string(),
                             ),
                             is_optional: false,
-                            is_review_required: false,
+                            filled_by: StepOwner::User,
                             substeps: None,
                             fields: Some(vec![
-                                field(109, "One Year NOC Charges (11,800/-)", "document", false, "user"),
-                                field(110, "Shifting Charges (8,614/-)", "document", false, "user"),
-                                field(116, "Additional Notes (e.g. file passwords)", "text", true, "user"),
+                                field(109, "One Year NOC Charges (11,800/-)", "document", false),
+                                field(110, "Shifting Charges (8,614/-)", "document", false),
+                                field(116, "Additional Notes (e.g. file passwords)", "text", true),
                             ]),
                         },
                     ]),
@@ -198,18 +203,18 @@ pub(crate) mod test_fixtures {
                             .to_string(),
                     ),
                     is_optional: false,
-                    is_review_required: true,
+                    filled_by: StepOwner::Admin,
                     substeps: None,
-                    fields: Some(vec![field(111, "Meeting Remarks & Status", "text", false, "admin")]),
+                    fields: Some(vec![field(111, "Meeting Remarks & Status", "text", false)]),
                 },
                 ProcessStepTemplate {
                     step_id: 8,
                     name: "Step 3: NOC Issuance".to_string(),
                     description: Some("NOC will be issued by the society administration".to_string()),
                     is_optional: false,
-                    is_review_required: true,
+                    filled_by: StepOwner::Admin,
                     substeps: None,
-                    fields: Some(vec![field(112, "Issued NOC Document", "document", false, "admin")]),
+                    fields: Some(vec![field(112, "Issued NOC Document", "document", false)]),
                 },
                 ProcessStepTemplate {
                     step_id: 9,
@@ -218,11 +223,11 @@ pub(crate) mod test_fixtures {
                         "Submit registered agreement and police verification details".to_string(),
                     ),
                     is_optional: false,
-                    is_review_required: true,
+                    filled_by: StepOwner::User,
                     substeps: None,
                     fields: Some(vec![
-                        field(113, "Registered Agreement", "document", false, "user"),
-                        field(114, "Police Verification Form / Receipt", "document", false, "user"),
+                        field(113, "Registered Agreement", "document", false),
+                        field(114, "Police Verification Form / Receipt", "document", false),
                     ]),
                 },
                 ProcessStepTemplate {
@@ -232,9 +237,9 @@ pub(crate) mod test_fixtures {
                         "Receive final shifting permission from the society office".to_string(),
                     ),
                     is_optional: false,
-                    is_review_required: true,
+                    filled_by: StepOwner::Admin,
                     substeps: None,
-                    fields: Some(vec![field(115, "Shifting Permission Letter", "document", false, "admin")]),
+                    fields: Some(vec![field(115, "Shifting Permission Letter", "document", false)]),
                 },
             ]),
         }

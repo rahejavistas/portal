@@ -34,6 +34,24 @@ impl ProcessTurn {
     }
 }
 
+/// Who's calling, resolved fresh per request — never cached.
+#[derive(Debug, Clone, Default)]
+pub struct ActorContext {
+    pub is_admin: bool,
+    pub designation_codes: HashSet<String>,
+}
+
+impl ActorContext {
+    /// `Designation`-owned steps are exclusive to that designation, even over `is_admin`.
+    pub fn may_act_on(&self, owner: &crate::StepOwner) -> bool {
+        match owner {
+            crate::StepOwner::User => true,
+            crate::StepOwner::Admin => self.is_admin,
+            crate::StepOwner::Designation { code } => self.designation_codes.contains(code),
+        }
+    }
+}
+
 // ==========================================
 // DB state (loaded from database, fed into pure functions)
 // ==========================================
@@ -84,6 +102,8 @@ pub struct SaveResult {
     /// (template_field_id, text_value, document_id)
     pub fields_to_save: Vec<(i32, Option<String>, Option<Uuid>)>,
     pub new_status: StepStatus,
+    /// The designation code, snapshotted at write time, if this step is `Designation`-owned.
+    pub acted_as_designation: Option<String>,
 }
 
 // ==========================================
@@ -95,10 +115,17 @@ pub struct StepInfo {
     pub step_id: i32,
     pub name: String,
     pub parent_id: Option<i32>,
-    pub is_review_required: bool,
     pub is_optional: bool,
+    pub filled_by: crate::StepOwner,
     pub fields: Vec<crate::ProcessFieldTemplate>,
     pub substep_ids: Vec<i32>,
+}
+
+impl StepInfo {
+    /// Every `User`-owned step needs review; `Admin`/`Designation` never do.
+    pub fn requires_review(&self) -> bool {
+        matches!(self.filled_by, crate::StepOwner::User)
+    }
 }
 
 // ==========================================
@@ -121,8 +148,8 @@ pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, St
             step_id: template.step_id,
             name: template.name.clone(),
             parent_id: None,
-            is_review_required: template.is_review_required,
             is_optional: template.is_optional,
+            filled_by: template.filled_by.clone(),
             fields: template.fields.clone().unwrap_or_default(),
             substep_ids: root_substep_ids,
         },
@@ -154,8 +181,8 @@ fn insert_step_info_recursive(
             step_id: step.step_id,
             name: step.name.clone(),
             parent_id,
-            is_review_required: step.is_review_required,
             is_optional: step.is_optional,
+            filled_by: step.filled_by.clone(),
             fields: step.fields.clone().unwrap_or_default(),
             substep_ids,
         },
@@ -234,7 +261,7 @@ pub fn compute_statuses(
             Some(i) => i,
             None => return false,
         };
-        if info.is_review_required {
+        if info.requires_review() {
             state_input
                 .reviews
                 .get(&step_id)
@@ -265,7 +292,7 @@ pub fn compute_statuses(
                 .map(|s| s.is_completed)
                 .unwrap_or(false);
             if completed {
-                if info.is_review_required {
+                if info.requires_review() {
                     if is_approved(step_id) {
                         StepStatus::Completed
                     } else {
@@ -319,6 +346,21 @@ pub fn compute_statuses(
     statuses
 }
 
+/// Step IDs that are `Open` in `after` but weren't in `before` — used to fire a
+/// "your turn" notification only on a genuine transition, not on every read.
+pub fn newly_opened_steps(
+    before: &HashMap<i32, StepStatus>,
+    after: &HashMap<i32, StepStatus>,
+) -> Vec<i32> {
+    after
+        .iter()
+        .filter(|&(step_id, &status)| {
+            status == StepStatus::Open && before.get(step_id) != Some(&StepStatus::Open)
+        })
+        .map(|(&step_id, _)| step_id)
+        .collect()
+}
+
 /// None if root is Completed; Admin if any step is PendingReview or an Open step has
 /// admin fields; else User.
 pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInput) -> ProcessTurn {
@@ -338,7 +380,10 @@ pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInp
     for (&step_id, &status) in &statuses {
         if status == StepStatus::Open {
             if let Some(info) = info_map.get(&step_id) {
-                if info.fields.iter().any(|f| f.filled_by == "admin") {
+                if matches!(
+                    info.filled_by,
+                    crate::StepOwner::Admin | crate::StepOwner::Designation { .. }
+                ) {
                     return ProcessTurn::Admin;
                 }
             }
@@ -354,7 +399,7 @@ pub fn validate_save(
     state: &ProcessStateInput,
     step_id: i32,
     fields_submitted: &[SaveFieldInput],
-    is_admin: bool,
+    actor: &ActorContext,
 ) -> Result<SaveResult, String> {
     let info_map = build_step_info_map(template);
     let statuses = compute_statuses(template, state);
@@ -367,6 +412,8 @@ pub fn validate_save(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not in template", step_id))?;
 
+    let may_act = actor.may_act_on(&info.filled_by);
+
     // Check step is editable
     let is_parent_open = info
         .parent_id
@@ -374,12 +421,31 @@ pub fn validate_save(
         .map(|s| *s == StepStatus::Open)
         .unwrap_or(false);
 
+    // Editing an already-Completed/PendingReview step is an admin override, distinct from
+    // `may_act` (ownership of the step) — a resident must never re-edit their own
+    // already-approved User-owned step just because they "own" it.
     match status {
         StepStatus::Open => {}
-        StepStatus::Completed if is_admin || is_parent_open => {}
-        StepStatus::PendingReview if is_admin => {}
+        StepStatus::Completed if actor.is_admin || is_parent_open => {}
+        StepStatus::PendingReview if actor.is_admin => {}
         _ => return Err("Step is not open for editing".to_string()),
     }
+
+    if !may_act {
+        return Err(match &info.filled_by {
+            crate::StepOwner::User => unreachable!("User-owned steps always pass may_act_on"),
+            crate::StepOwner::Admin => "This stage can only be filled by an admin".to_string(),
+            crate::StepOwner::Designation { code } => format!(
+                "This stage can only be filled by someone holding the '{}' designation",
+                code
+            ),
+        });
+    }
+
+    let acted_as_designation = match &info.filled_by {
+        crate::StepOwner::Designation { code } => Some(code.clone()),
+        _ => None,
+    };
 
     // Validate each field and build the save list
     let mut fields_to_save = Vec::new();
@@ -396,13 +462,6 @@ pub fn validate_save(
                     submitted.template_field_id, step_id
                 )
             })?;
-
-        if field_meta.filled_by == "admin" && !is_admin {
-            return Err(format!(
-                "Field '{}' can only be filled by an admin",
-                field_meta.name
-            ));
-        }
 
         crate::fields::validate_field(
             field_meta.r#type,
@@ -439,7 +498,7 @@ pub fn validate_save(
         .unwrap_or(false);
 
     let new_status = if target_completed {
-        if info.is_review_required {
+        if info.requires_review() {
             StepStatus::PendingReview
         } else {
             StepStatus::Completed
@@ -452,6 +511,7 @@ pub fn validate_save(
         steps_to_update,
         fields_to_save,
         new_status,
+        acted_as_designation,
     })
 }
 
@@ -532,19 +592,48 @@ pub fn compute_completion_updates(
     cascade_completion_one_level(template, state, &info_map, step_id, target_completed)
 }
 
-/// Step updates for an admin review. Returns (steps_to_update, is_step_completed).
+/// Outcome of `compute_review_updates`.
+#[derive(Debug)]
+pub struct ReviewUpdateResult {
+    pub steps_to_update: Vec<(i32, bool)>,
+    pub is_completed: bool,
+    pub acted_as_designation: Option<String>,
+}
+
+/// Step updates for an admin review.
 pub fn compute_review_updates(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
     step_id: i32,
     is_approved: bool,
-) -> Result<(Vec<(i32, bool)>, bool), String> {
+    actor: &ActorContext,
+) -> Result<ReviewUpdateResult, String> {
     let statuses = compute_statuses(template, state);
     let info_map = build_step_info_map(template);
 
     let status = statuses
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not found", step_id))?;
+
+    let info = info_map
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not in template", step_id))?;
+
+    if !actor.may_act_on(&info.filled_by) {
+        return Err(match &info.filled_by {
+            crate::StepOwner::User | crate::StepOwner::Admin => {
+                "This stage can only be reviewed by an admin".to_string()
+            }
+            crate::StepOwner::Designation { code } => format!(
+                "This stage can only be reviewed by someone holding the '{}' designation",
+                code
+            ),
+        });
+    }
+    let acted_as_designation = match &info.filled_by {
+        crate::StepOwner::Designation { code } => Some(code.clone()),
+        _ => None,
+    };
 
     // Admin can approve an OPEN step directly, without a user re-submission.
     match status {
@@ -560,14 +649,29 @@ pub fn compute_review_updates(
         } else {
             vec![(step_id, true)]
         };
-        Ok((steps_to_update, true))
+        Ok(ReviewUpdateResult {
+            steps_to_update,
+            is_completed: true,
+            acted_as_designation,
+        })
     } else {
         let steps_to_update = cascade_incomplete_to_root(template, &info_map, step_id)
             .into_iter()
             .map(|id| (id, false))
             .collect();
-        Ok((steps_to_update, false))
+        Ok(ReviewUpdateResult {
+            steps_to_update,
+            is_completed: false,
+            acted_as_designation,
+        })
     }
+}
+
+/// Outcome of `compute_reopen_updates`.
+#[derive(Debug)]
+pub struct ReopenUpdateResult {
+    pub steps_to_reset: Vec<i32>,
+    pub acted_as_designation: Option<String>,
 }
 
 /// Step IDs to reset to is_completed = false when reopening a completed/pending step.
@@ -575,13 +679,34 @@ pub fn compute_reopen_updates(
     template: &crate::ProcessTemplate,
     state: &ProcessStateInput,
     step_id: i32,
-) -> Result<Vec<i32>, String> {
+    actor: &ActorContext,
+) -> Result<ReopenUpdateResult, String> {
     let statuses = compute_statuses(template, state);
     let info_map = build_step_info_map(template);
 
     let status = statuses
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not found", step_id))?;
+
+    let info = info_map
+        .get(&step_id)
+        .ok_or_else(|| format!("Step {} not in template", step_id))?;
+
+    if !actor.may_act_on(&info.filled_by) {
+        return Err(match &info.filled_by {
+            crate::StepOwner::User | crate::StepOwner::Admin => {
+                "This stage can only be reopened by an admin".to_string()
+            }
+            crate::StepOwner::Designation { code } => format!(
+                "This stage can only be reopened by someone holding the '{}' designation",
+                code
+            ),
+        });
+    }
+    let acted_as_designation = match &info.filled_by {
+        crate::StepOwner::Designation { code } => Some(code.clone()),
+        _ => None,
+    };
 
     match status {
         StepStatus::Completed | StepStatus::PendingReview => {}
@@ -593,7 +718,10 @@ pub fn compute_reopen_updates(
         }
     }
 
-    Ok(cascade_incomplete_to_root(template, &info_map, step_id))
+    Ok(ReopenUpdateResult {
+        steps_to_reset: cascade_incomplete_to_root(template, &info_map, step_id),
+        acted_as_designation,
+    })
 }
 
 // ==========================================
@@ -603,6 +731,13 @@ pub fn compute_reopen_updates(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn actor(is_admin: bool) -> ActorContext {
+        ActorContext {
+            is_admin,
+            designation_codes: HashSet::new(),
+        }
+    }
 
     #[test]
     fn test_compute_statuses_initial() {
@@ -624,7 +759,7 @@ mod tests {
 
         // Step 2 has no fields of its own — only substeps 3,4,5,6 — so an empty save
         // must not mark it completed while those substeps are still open.
-        let result = validate_save(&template, &state, 2, &[], false).unwrap();
+        let result = validate_save(&template, &state, 2, &[], &actor(false)).unwrap();
 
         assert_eq!(result.new_status, StepStatus::Open);
         assert!(result.steps_to_update.contains(&(2, false)));
@@ -638,7 +773,6 @@ mod tests {
             description: None,
             r#type: crate::FieldType::Text,
             is_optional: false,
-            filled_by: "user".to_string(),
             requirements: None,
             requires_signature: false,
             required_signs_from_designations: Vec::new(),
@@ -650,22 +784,22 @@ mod tests {
             description: None,
             step_id: 1,
             is_optional: false,
-            is_review_required: false,
             fields: None,
             tat_working_days: None,
+            filled_by: crate::StepOwner::User,
             substeps: Some(vec![crate::ProcessStepTemplate {
                 step_id: 2,
                 name: "Parent with its own field and a substep".to_string(),
                 description: None,
                 is_optional: false,
-                is_review_required: false,
+                filled_by: crate::StepOwner::User,
                 fields: Some(vec![field(201)]),
                 substeps: Some(vec![crate::ProcessStepTemplate {
                     step_id: 3,
                     name: "Substep".to_string(),
                     description: None,
                     is_optional: false,
-                    is_review_required: false,
+                    filled_by: crate::StepOwner::User,
                     fields: Some(vec![field(301)]),
                     substeps: None,
                 }]),
@@ -691,7 +825,7 @@ mod tests {
                 text_value: Some("done".to_string()),
                 document_id: None,
             }],
-            false,
+            &actor(false),
         )
         .unwrap();
 
@@ -737,7 +871,7 @@ mod tests {
             },
         ];
 
-        let result = validate_save(&template, &state, 3, &fields, false).unwrap();
+        let result = validate_save(&template, &state, 3, &fields, &actor(false)).unwrap();
 
         assert_eq!(result.new_status, StepStatus::Completed);
         assert!(result.steps_to_update.contains(&(3, true)));
@@ -887,18 +1021,18 @@ mod tests {
         }
 
         // 1. Classic path: approve PENDING_REVIEW step succeeds
-        let result = compute_review_updates(&template, &state, 2, true);
+        let result = compute_review_updates(&template, &state, 2, true, &actor(true));
         assert!(result.is_ok());
-        let (updates, completed) = result.unwrap();
-        assert!(completed);
-        assert!(updates.contains(&(2, true)));
+        let result = result.unwrap();
+        assert!(result.is_completed);
+        assert!(result.steps_to_update.contains(&(2, true)));
 
         // 2. Reject PENDING_REVIEW → step reopened
-        let result = compute_review_updates(&template, &state, 2, false);
+        let result = compute_review_updates(&template, &state, 2, false, &actor(true));
         assert!(result.is_ok());
-        let (updates, completed) = result.unwrap();
-        assert!(!completed);
-        assert!(updates.contains(&(2, false)));
+        let result = result.unwrap();
+        assert!(!result.is_completed);
+        assert!(result.steps_to_update.contains(&(2, false)));
 
         // 3. After rejection, step 2 is now OPEN (simulate by clearing completion)
         state.steps.insert(
@@ -913,31 +1047,105 @@ mod tests {
         assert_eq!(statuses.get(&2), Some(&StepStatus::Open));
 
         // 4. Admin can approve an OPEN step directly (no user re-submission needed)
-        let result = compute_review_updates(&template, &state, 2, true);
+        let result = compute_review_updates(&template, &state, 2, true, &actor(true));
         assert!(
             result.is_ok(),
             "Admin should be able to approve an OPEN step"
         );
-        let (updates, completed) = result.unwrap();
-        assert!(completed);
-        assert!(updates.contains(&(2, true)));
+        let result = result.unwrap();
+        assert!(result.is_completed);
+        assert!(result.steps_to_update.contains(&(2, true)));
 
         // 5. Admin can also reject an OPEN step
-        let result = compute_review_updates(&template, &state, 2, false);
+        let result = compute_review_updates(&template, &state, 2, false, &actor(true));
         assert!(
             result.is_ok(),
             "Admin should be able to reject an OPEN step"
         );
-        let (_updates, completed) = result.unwrap();
-        assert!(!completed);
+        assert!(!result.unwrap().is_completed);
 
         // 6. LOCKED steps are still blocked
-        let result = compute_review_updates(&template, &state, 7, true);
+        let result = compute_review_updates(&template, &state, 7, true, &actor(true));
         assert!(result.is_err(), "LOCKED steps should not be reviewable");
         assert!(result.unwrap_err().contains("open or pending review"));
 
         // 7. COMPLETED steps are still blocked
-        let result = compute_review_updates(&template, &state, 3, true);
+        let result = compute_review_updates(&template, &state, 3, true, &actor(true));
         assert!(result.is_err(), "COMPLETED steps should not be reviewable");
+    }
+
+    #[test]
+    fn designation_owned_stage_rejects_non_holder_even_if_global_admin() {
+        let mut template = crate::test_fixtures::tenant_onboarding_fixture();
+        // Step 7 ("Step 2: Meeting with Committee") is Admin-owned in the fixture;
+        // repoint it to a specific designation for this test.
+        template.substeps.as_mut().unwrap()[1].filled_by = crate::StepOwner::Designation {
+            code: "secretary".to_string(),
+        };
+
+        let mut state = ProcessStateInput::default();
+        for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(Uuid::new_v4()),
+                },
+            );
+        }
+        for sid in [3, 4, 5, 6, 2] {
+            state.steps.insert(
+                sid,
+                StepStateDb {
+                    is_completed: true,
+                    started_at: None,
+                },
+            );
+        }
+        state.reviews.insert(
+            2,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+
+        // A global admin (process.reviewer) with no matching designation is rejected.
+        let global_admin = actor(true);
+        let result = validate_save(
+            &template,
+            &state,
+            7,
+            &[SaveFieldInput {
+                template_field_id: 111,
+                text_value: Some("Discussed".to_string()),
+                document_id: None,
+            }],
+            &global_admin,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("secretary"));
+
+        // The designation's own holder succeeds.
+        let mut designation_codes = HashSet::new();
+        designation_codes.insert("secretary".to_string());
+        let secretary = ActorContext {
+            is_admin: true,
+            designation_codes,
+        };
+        let result = validate_save(
+            &template,
+            &state,
+            7,
+            &[SaveFieldInput {
+                template_field_id: 111,
+                text_value: Some("Discussed".to_string()),
+                document_id: None,
+            }],
+            &secretary,
+        )
+        .unwrap();
+        assert_eq!(result.new_status, StepStatus::Completed);
+        assert_eq!(result.acted_as_designation, Some("secretary".to_string()));
     }
 }

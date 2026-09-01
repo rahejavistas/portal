@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS process_fields (
     text_value TEXT,
     document_id UUID REFERENCES documents(document_id) ON DELETE SET NULL,
     updated_by INT REFERENCES users(user_id) ON DELETE SET NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    -- Designation that authorized this write, if any.
+    acted_as_designation VARCHAR(64)
 );
 
 -- Reviewer history for a step. is_approved=FALSE resets is_completed up the chain.
@@ -65,7 +67,9 @@ CREATE TABLE IF NOT EXISTS process_step_reviews (
     notes TEXT,
     -- Display hint only — flagged steps for resident attention, no state-machine effect.
     flagged_step_ids INT[] NOT NULL DEFAULT '{}',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    -- Designation that authorized this review, if any.
+    acted_as_designation VARCHAR(64)
 );
 
 -- Reviewer-only notes, never shown to residents.
@@ -97,6 +101,8 @@ CREATE TABLE IF NOT EXISTS process_audit_log (
     event_type VARCHAR(32) NOT NULL,
     detail TEXT,
     actor_id INT REFERENCES users(user_id) ON DELETE SET NULL,
+    -- Designation that authorized this event, if any.
+    acted_as_designation VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

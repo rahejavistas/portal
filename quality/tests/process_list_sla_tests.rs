@@ -19,12 +19,10 @@ async fn test_process_list_exposes_sla_fields_once_tat_template_is_submitted() {
         "name": "SLA List Test Template",
         "description": null,
         "is_optional": false,
-        "is_review_required": false,
         "tat_working_days": 5,
         "substeps": [
             {
                 "name": "Only Stage",
-                "is_review_required": false,
                 "fields": [
                     { "name": "Note", "type": "text", "filled_by": "user" }
                 ]

@@ -24,7 +24,6 @@ fn simple_template_draft() -> serde_json::Value {
         "substeps": [
             {
                 "name": "Doc Stage",
-                "is_review_required": false,
                 "fields": [
                     { "name": "NOC Document", "type": "document", "filled_by": "admin", "requires_signature": true }
                 ]
@@ -42,7 +41,6 @@ fn template_draft_with_required_designations(codes: &[&str]) -> serde_json::Valu
         "substeps": [
             {
                 "name": "Doc Stage",
-                "is_review_required": false,
                 "fields": [
                     { "name": "NOC Document", "type": "document", "filled_by": "admin", "requires_signature": true, "required_signs_from_designations": codes }
                 ]
@@ -63,7 +61,6 @@ fn template_draft_requires_signature(designations: &[&str]) -> serde_json::Value
         "substeps": [
             {
                 "name": "Doc Stage",
-                "is_review_required": false,
                 "fields": [
                     {
                         "name": "NOC Document", "type": "document", "filled_by": "admin",
@@ -1323,7 +1320,6 @@ async fn test_field_without_requires_signature_completes_without_any_signer() {
         "substeps": [
             {
                 "name": "Doc Stage",
-                "is_review_required": false,
                 "fields": [
                     { "name": "NOC Document", "type": "document", "filled_by": "admin" }
                 ]
@@ -1765,14 +1761,12 @@ async fn test_add_signers_rejects_field_not_belonging_to_step() {
         "substeps": [
             {
                 "name": "Stage One",
-                "is_review_required": false,
                 "fields": [
                     { "name": "Doc One", "type": "document", "filled_by": "admin", "requires_signature": true }
                 ]
             },
             {
                 "name": "Stage Two",
-                "is_review_required": false,
                 "fields": [
                     { "name": "Doc Two", "type": "document", "filled_by": "admin", "requires_signature": true }
                 ]

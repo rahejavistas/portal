@@ -116,6 +116,11 @@ Three things are **not** permissions but still gate UI:
   resident's behalf, submit admin/reviewer notes, edit admin-only fields.
 - This is the only permission gating any *write* action on someone else's process —
   `personal_only`/write-path handlers on the backend never widen for `process.view` alone.
+- One exception: a process stage assigned to a *specific designation* (set per-stage in the
+  template builder) is exclusive to that designation's active holders — holding
+  `process.reviewer` globally, even as a super admin, does not grant access to that one
+  stage. Saving a template with such a stage auto-grants the designation this permission
+  (plus `process.view`), so its holders can act without any separate manual grant.
 
 ## `process.templates.manage`
 *Create/edit process templates (the versioned builder) and activate versions.*

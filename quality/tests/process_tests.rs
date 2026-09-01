@@ -1,10 +1,17 @@
 use process::{
-    state_machine::{SaveFieldInput, StepStatus},
+    state_machine::{ActorContext, SaveFieldInput, StepStatus},
     ProcessTemplate,
 };
 use quality::setup_db_test_env;
 use std::collections::HashMap;
 use uuid::Uuid;
+
+fn actor(is_admin: bool) -> ActorContext {
+    ActorContext {
+        is_admin,
+        designation_codes: Default::default(),
+    }
+}
 
 /// Tests build a `ProcessTemplate` in-memory from the static fixture rather than
 /// going through the admin builder API, so there's no real `process_template_versions`
@@ -51,7 +58,8 @@ impl<'a> TestProcess<'a> {
         let process_id =
             process::db::init_process(&mut *conn, user_id, version_id, template, ownership_id)
                 .await
-                .unwrap();
+                .unwrap()
+                .process_id;
         let statuses = process::db::get_statuses(&mut *conn, process_id, template)
             .await
             .unwrap();
@@ -104,7 +112,7 @@ impl<'a> TestProcess<'a> {
             self.template,
             step_id,
             fields,
-            is_admin,
+            &actor(is_admin),
             self.user_id,
         )
         .await?;
@@ -130,7 +138,9 @@ impl<'a> TestProcess<'a> {
                 is_approved,
                 notes,
                 flagged_step_ids,
+                acted_as_designation: None,
             },
+            &actor(true),
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -146,6 +156,7 @@ impl<'a> TestProcess<'a> {
             step_id,
             self.user_id,
             notes,
+            &actor(true),
         )
         .await?;
         self.refresh().await;
@@ -1280,7 +1291,8 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T3: Admin fills Step 2 (field 111 is admin-only) → PendingReview → Admin turn
+    // T3: Admin fills Step 2 (field 111, Admin-owned) → completes immediately, no separate
+    // review step — Step 3 (also Admin-owned) opens right away → still Admin turn
     exec.save_step_fields(
         7,
         &[SaveFieldInput {
@@ -1292,17 +1304,6 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
-    assert_eq!(exec.status(7), StepStatus::PendingReview);
-
-    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
-        .await
-        .unwrap();
-    assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
-
-    // T4: Admin approves Step 2 → Step 3 opens (admin field 112) → Admin turn
-    exec.review_step(7, Some(user_id), true, Some("Approved"), &[])
-        .await
-        .unwrap();
     assert_eq!(exec.status(7), StepStatus::Completed);
     assert_eq!(exec.status(8), StepStatus::Open);
 
@@ -1311,7 +1312,8 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T5: Admin fills Step 3 + approves → Step 4 opens (user fields) → User turn
+    // T5: Admin fills Step 3 (Admin-owned) → completes immediately → Step 4 opens (user
+    // fields) → User turn
     exec.save_step_fields(
         8,
         &[SaveFieldInput {
@@ -1323,9 +1325,7 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
-    exec.review_step(8, Some(user_id), true, Some("NOC issued"), &[])
-        .await
-        .unwrap();
+    assert_eq!(exec.status(8), StepStatus::Completed);
     assert_eq!(exec.status(9), StepStatus::Open);
 
     let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
@@ -1369,7 +1369,7 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T8: Admin fills Step 5 + approves → all done → None
+    // T8: Admin fills Step 5 (Admin-owned) → completes immediately → all done → None
     exec.save_step_fields(
         10,
         &[SaveFieldInput {
@@ -1381,9 +1381,6 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
-    exec.review_step(10, Some(user_id), true, Some("Shifting approved"), &[])
-        .await
-        .unwrap();
     assert_eq!(exec.status(10), StepStatus::Completed);
 
     let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
@@ -1750,7 +1747,8 @@ async fn test_comprehensive_failure_cases() {
         .await;
     assert!(result.is_err(), "Field 101 does not belong to step 7");
 
-    // 6. Admin CAN fill admin field → becomes PendingReview → Admin turn
+    // 6. Admin CAN fill admin field → completes immediately (Admin-owned skips review) →
+    // Step 8 (also Admin-owned) opens → still Admin turn
     exec.save_step_fields(
         7,
         &[SaveFieldInput {
@@ -1763,15 +1761,16 @@ async fn test_comprehensive_failure_cases() {
     .await
     .unwrap();
 
-    assert_eq!(exec.status(7), StepStatus::PendingReview);
+    assert_eq!(exec.status(7), StepStatus::Completed);
+    assert_eq!(exec.status(8), StepStatus::Open);
     let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // 7. Cannot reopen a Locked step
+    // 7. Cannot reopen a step that's already Open
     let result = exec.reopen_step(8, Some("Bad reopen")).await;
-    assert!(result.is_err(), "Cannot reopen a Locked step");
+    assert!(result.is_err(), "Cannot reopen a step that is Open, not closed");
 }
 
 /// Test that revoke without a note stores NULL (not a generic message).

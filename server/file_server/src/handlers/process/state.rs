@@ -46,6 +46,7 @@ pub struct FieldHistoryEntry {
     pub document_title: Option<String>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub actor_email: Option<String>,
+    pub acted_as_designation: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -71,7 +72,6 @@ pub struct FieldResponse {
     pub name: String,
     pub description: Option<String>,
     pub r#type: process::FieldType,
-    pub filled_by: String,
     pub is_optional: bool,
     /// Blocks completion until a reviewer attaches and every signer signs.
     pub requires_signature: bool,
@@ -93,7 +93,9 @@ pub struct StepResponse {
     pub name: String,
     pub description: Option<String>,
     pub status: process::state_machine::StepStatus,
-    pub is_review_required: bool,
+    pub filled_by: process::StepOwner,
+    /// `Designation`-owned steps only — the human label for `filled_by`'s code.
+    pub filled_by_designation_label: Option<String>,
     pub fields: Vec<FieldResponse>,
     pub substeps: Vec<StepResponse>,
 }
@@ -194,7 +196,7 @@ async fn resolve_or_init_process(
     user: &authentication::User,
     template_id: i32,
     flat_id: Option<i32>,
-) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate), ApiError> {
+) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate, Vec<i32>), ApiError> {
     let active_ownerships = get_active_ownerships_for_user(conn, user.user_id)
         .await
         .internal_err()?;
@@ -246,7 +248,7 @@ async fn resolve_or_init_process(
             )
         })?;
 
-    let process_id = process::db::init_process(
+    let init_outcome = process::db::init_process(
         conn,
         user.user_id,
         version_id,
@@ -260,7 +262,13 @@ async fn resolve_or_init_process(
             Json(format!("Failed to initialize process: {}", e)),
         )
     })?;
-    Ok((process_id, version_id, selected_ownership, template))
+    Ok((
+        init_outcome.process_id,
+        version_id,
+        selected_ownership,
+        template,
+        init_outcome.newly_opened_step_ids,
+    ))
 }
 
 fn collect_example_document_ids(
@@ -278,18 +286,38 @@ fn collect_example_document_ids(
     }
 }
 
+fn collect_designation_codes(
+    substeps: &Option<Vec<process::ProcessStepTemplate>>,
+    out: &mut Vec<String>,
+) {
+    let Some(subs) = substeps else { return };
+    for s in subs {
+        if let process::StepOwner::Designation { code } = &s.filled_by {
+            out.push(code.clone());
+        }
+        collect_designation_codes(&s.substeps, out);
+    }
+}
+
+/// Read-only lookup maps threaded through `map_step_template`'s recursion.
+struct StepMapContext<'a> {
+    statuses: &'a HashMap<i32, process::state_machine::StepStatus>,
+    field_history_map: &'a HashMap<i32, Vec<FieldHistoryEntry>>,
+    latest_field_states: &'a HashMap<i32, process::state_machine::FieldState>,
+    doc_title_map: &'a HashMap<Uuid, (String, Option<String>)>,
+    example_doc_title_map: &'a HashMap<Uuid, String>,
+    signature_map: &'a HashMap<Uuid, Vec<FieldSignatureStatus>>,
+    designation_label_map: &'a HashMap<String, String>,
+}
+
 /// Recursively map step templates to the response structure.
 fn map_step_template(
     step_tpl: &process::ProcessStepTemplate,
-    statuses: &HashMap<i32, process::state_machine::StepStatus>,
-    field_history_map: &HashMap<i32, Vec<FieldHistoryEntry>>,
-    latest_field_states: &HashMap<i32, process::state_machine::FieldState>,
-    doc_title_map: &HashMap<Uuid, (String, Option<String>)>,
-    example_doc_title_map: &HashMap<Uuid, String>,
-    signature_map: &HashMap<Uuid, Vec<FieldSignatureStatus>>,
+    ctx: &StepMapContext,
 ) -> StepResponse {
     let step_id = step_tpl.step_id;
-    let status = statuses
+    let status = ctx
+        .statuses
         .get(&step_id)
         .copied()
         .unwrap_or(process::state_machine::StepStatus::Locked);
@@ -298,8 +326,9 @@ fn map_step_template(
     if let Some(ref field_tpls) = step_tpl.fields {
         for f in field_tpls {
             let field_id = f.field_id;
-            let latest = latest_field_states.get(&field_id);
-            let history = field_history_map
+            let latest = ctx.latest_field_states.get(&field_id);
+            let history = ctx
+                .field_history_map
                 .get(&field_id)
                 .cloned()
                 .unwrap_or_default();
@@ -307,7 +336,7 @@ fn map_step_template(
             let value = latest.map(|l| {
                 let (title, content_type) = l
                     .document_id
-                    .and_then(|id| doc_title_map.get(&id))
+                    .and_then(|id| ctx.doc_title_map.get(&id))
                     .cloned()
                     .map(|(t, c)| (Some(t), c))
                     .unwrap_or((None, None));
@@ -321,7 +350,7 @@ fn map_step_template(
 
             let signature_status = latest
                 .and_then(|l| l.document_id)
-                .and_then(|id| signature_map.get(&id))
+                .and_then(|id| ctx.signature_map.get(&id))
                 .cloned()
                 .unwrap_or_default();
 
@@ -330,7 +359,6 @@ fn map_step_template(
                 name: f.name.clone(),
                 description: f.description.clone(),
                 r#type: f.r#type,
-                filled_by: f.filled_by.clone(),
                 is_optional: f.is_optional,
                 requires_signature: f.requires_signature,
                 required_signs_from_designations: f.required_signs_from_designations.clone(),
@@ -338,7 +366,7 @@ fn map_step_template(
                 example_document_id: f.example_document_id,
                 example_document_title: f
                     .example_document_id
-                    .and_then(|id| example_doc_title_map.get(&id))
+                    .and_then(|id| ctx.example_doc_title_map.get(&id))
                     .cloned(),
                 value,
                 history,
@@ -350,24 +378,22 @@ fn map_step_template(
     let mut substeps = Vec::new();
     if let Some(ref sub_tpls) = step_tpl.substeps {
         for sub in sub_tpls {
-            substeps.push(map_step_template(
-                sub,
-                statuses,
-                field_history_map,
-                latest_field_states,
-                doc_title_map,
-                example_doc_title_map,
-                signature_map,
-            ));
+            substeps.push(map_step_template(sub, ctx));
         }
     }
+
+    let filled_by_designation_label = match &step_tpl.filled_by {
+        process::StepOwner::Designation { code } => ctx.designation_label_map.get(code).cloned(),
+        _ => None,
+    };
 
     StepResponse {
         template_step_id: step_id,
         name: step_tpl.name.clone(),
         description: step_tpl.description.clone(),
         status,
-        is_review_required: step_tpl.is_review_required,
+        filled_by: step_tpl.filled_by.clone(),
+        filled_by_designation_label,
         fields,
         substeps,
     }
@@ -426,7 +452,7 @@ async fn resolve_process_target(
     user: &authentication::User,
     payload: &ProcessStateRequest,
     can_view_all: bool,
-) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate), ApiError> {
+) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate, Vec<i32>), ApiError> {
     match payload.process_id {
         Some(pid) => {
             // A signer on this process gets read-only access to it even without
@@ -438,7 +464,14 @@ async fn resolve_process_target(
                     .await
                     .internal_err()?;
             let (info, template) = load_authorized_process(tx, user, pid, is_authorized).await?;
-            Ok((pid, info.template_version_id, info.ownership_id, template))
+            // An already-existing process has no "newly opened" steps from this call.
+            Ok((
+                pid,
+                info.template_version_id,
+                info.ownership_id,
+                template,
+                vec![],
+            ))
         }
         None => {
             let target_template_id = payload.template_id.ok_or_else(|| {
@@ -573,22 +606,16 @@ fn compute_next_actions(
                     });
                 }
                 process::state_machine::StepStatus::Open => {
-                    let has_admin = info.fields.iter().any(|f| f.filled_by == "admin");
-                    let has_user = info.fields.iter().any(|f| f.filled_by == "user");
-                    if has_user {
-                        next_actions.push(NextActionInfo {
-                            template_step_id: step_id,
-                            name: info.name.clone(),
-                            assigned_to: "user".to_string(),
-                        });
-                    }
-                    if has_admin {
-                        next_actions.push(NextActionInfo {
-                            template_step_id: step_id,
-                            name: info.name.clone(),
-                            assigned_to: "admin".to_string(),
-                        });
-                    }
+                    let assigned_to = match &info.filled_by {
+                        process::StepOwner::User => "user".to_string(),
+                        process::StepOwner::Admin => "admin".to_string(),
+                        process::StepOwner::Designation { code } => code.clone(),
+                    };
+                    next_actions.push(NextActionInfo {
+                        template_step_id: step_id,
+                        name: info.name.clone(),
+                        assigned_to,
+                    });
                 }
                 _ => {}
             }
@@ -610,7 +637,7 @@ pub async fn get_process_state(
     // personal_only (set by the plain /process page) always forces the caller's own view.
     let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
 
-    let (process_id, template_version_id, ownership_id, template) =
+    let (process_id, template_version_id, ownership_id, template, newly_opened_step_ids) =
         resolve_process_target(&mut tx, &state, &user, &payload, can_view_all).await?;
 
     let steps = process::db::load_steps(&mut tx, process_id)
@@ -642,6 +669,22 @@ pub async fn get_process_state(
         .collect()
     };
 
+    let mut designation_codes = Vec::new();
+    collect_designation_codes(&template.substeps, &mut designation_codes);
+    let designation_label_map: HashMap<String, String> = if designation_codes.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT code, label FROM designations WHERE code = ANY($1)",
+        )
+        .bind(&designation_codes)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    };
+
     let reviews = get_process_reviews(&mut tx, process_id)
         .await
         .unwrap_or_default();
@@ -666,6 +709,7 @@ pub async fn get_process_state(
                 document_title: title,
                 updated_at: row.updated_at,
                 actor_email: row.actor_email,
+                acted_as_designation: row.acted_as_designation,
             });
     }
 
@@ -711,18 +755,19 @@ pub async fn get_process_state(
     let step_info_map = process::state_machine::build_step_info_map(&template);
     let next_actions = compute_next_actions(&statuses, &step_info_map);
 
+    let step_map_ctx = StepMapContext {
+        statuses: &statuses,
+        field_history_map: &field_history_map,
+        latest_field_states: &proc_state.fields,
+        doc_title_map: &doc_title_map,
+        example_doc_title_map: &example_doc_title_map,
+        signature_map: &signature_map,
+        designation_label_map: &designation_label_map,
+    };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {
         for top_step in top_steps {
-            steps_res.push(map_step_template(
-                top_step,
-                &statuses,
-                &field_history_map,
-                &proc_state.fields,
-                &doc_title_map,
-                &example_doc_title_map,
-                &signature_map,
-            ));
+            steps_res.push(map_step_template(top_step, &step_map_ctx));
         }
     }
 
@@ -773,6 +818,13 @@ pub async fn get_process_state(
         .internal_err()?;
 
     tx.commit().await.internal_err()?;
+    super::notify_newly_opened_designation_steps(
+        &state.permissions_manager,
+        &template,
+        process_id,
+        &newly_opened_step_ids,
+    )
+    .await;
 
     Ok(Json(ProcessStateResponse {
         process_id,

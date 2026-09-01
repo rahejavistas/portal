@@ -203,6 +203,30 @@ pub async fn notify_user_review(ctx: &NotificationContext, params: ReviewNotific
     .await;
 }
 
+/// Notify every active holder of a designation that a stage assigned to it just opened —
+/// only for `Designation`-owned stages, not the generic "any admin" case.
+pub async fn notify_designation_turn(
+    process_id: Uuid,
+    process_name: &str,
+    step_name: &str,
+    designation_label: &str,
+    recipient_emails: &[String],
+) {
+    for recipient in recipient_emails {
+        dispatch(
+            recipient,
+            "Your Turn on a Process",
+            vec![format!(
+                "Stage \"{}\" in process \"{}\" is now waiting on {}.",
+                step_name, process_name, designation_label
+            )],
+            portal_admin_process_url(process_id),
+            process_id,
+        )
+        .await;
+    }
+}
+
 /// Notify the user that an admin has reopened a step.
 pub async fn notify_user_revoke(
     ctx: &NotificationContext,

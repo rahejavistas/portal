@@ -47,7 +47,6 @@ pub struct FieldDraft {
     pub r#type: crate::FieldType,
     #[serde(default)]
     pub is_optional: bool,
-    pub filled_by: String,
     #[serde(default)]
     pub requirements: Option<serde_json::Value>,
     #[serde(default)]
@@ -68,8 +67,11 @@ pub struct StepDraft {
     pub description: Option<String>,
     #[serde(default)]
     pub is_optional: bool,
+    /// Who fills this stage. Only meaningful on a top-level Stage draft — the builder
+    /// doesn't expose the picker on a Substep, so this is `None` there and inherited from
+    /// the enclosing Stage when the tree is assembled.
     #[serde(default)]
-    pub is_review_required: bool,
+    pub filled_by: Option<crate::StepOwner>,
     #[serde(default)]
     pub fields: Option<Vec<FieldDraft>>,
     #[serde(default)]
@@ -89,8 +91,6 @@ pub struct TemplateDraft {
     pub description: Option<String>,
     #[serde(default)]
     pub is_optional: bool,
-    #[serde(default)]
-    pub is_review_required: bool,
     #[serde(default)]
     pub fields: Option<Vec<FieldDraft>>,
     #[serde(default)]
@@ -133,7 +133,6 @@ fn assign_field_ids(
                     description: f.description,
                     r#type: f.r#type,
                     is_optional: f.is_optional,
-                    filled_by: f.filled_by,
                     requirements: f.requirements,
                     requires_signature: f.requires_signature,
                     required_signs_from_designations: f.required_signs_from_designations,
@@ -160,13 +159,32 @@ fn collect_example_document_ids(
     }
 }
 
-fn assign_step_ids(draft: StepDraft, next_id: &mut i32) -> crate::ProcessStepTemplate {
+fn collect_designation_codes(
+    substeps: &Option<Vec<crate::ProcessStepTemplate>>,
+    out: &mut Vec<String>,
+) {
+    let Some(subs) = substeps else { return };
+    for s in subs {
+        if let crate::StepOwner::Designation { code } = &s.filled_by {
+            out.push(code.clone());
+        }
+        collect_designation_codes(&s.substeps, out);
+    }
+}
+
+/// Denormalizes owner onto every substep so downstream code never walks back up a parent.
+fn assign_step_ids(
+    draft: StepDraft,
+    next_id: &mut i32,
+    inherited_owner: crate::StepOwner,
+) -> crate::ProcessStepTemplate {
     let step_id = *next_id;
     *next_id += 1;
+    let owner = draft.filled_by.unwrap_or(inherited_owner);
     let fields = assign_field_ids(draft.fields, next_id);
     let substeps = draft.substeps.map(|subs| {
         subs.into_iter()
-            .map(|s| assign_step_ids(s, next_id))
+            .map(|s| assign_step_ids(s, next_id, owner.clone()))
             .collect()
     });
     crate::ProcessStepTemplate {
@@ -174,7 +192,7 @@ fn assign_step_ids(draft: StepDraft, next_id: &mut i32) -> crate::ProcessStepTem
         name: draft.name,
         description: draft.description,
         is_optional: draft.is_optional,
-        is_review_required: draft.is_review_required,
+        filled_by: owner,
         fields,
         substeps,
     }
@@ -266,13 +284,21 @@ pub async fn list_templates(conn: &mut sqlx::PgConnection) -> Result<Vec<Templat
     Ok(out)
 }
 
-/// Upsert: creates a new template, or appends a new draft version (never
-/// auto-activates). Returns the new version_id.
+/// Outcome of a successful `save_template_version` call.
+pub struct SaveTemplateOutcome {
+    pub version_id: i32,
+    /// Distinct designation codes referenced anywhere in the saved tree — the caller
+    /// grants these `process.view`/`process.reviewer` (this crate has no dependency on
+    /// `authentication`, so it can't do that itself).
+    pub designation_codes: Vec<String>,
+}
+
+/// Upsert: creates a new template, or appends a new draft version (never auto-activates).
 pub async fn save_template_version(
     conn: &mut sqlx::PgConnection,
     draft: TemplateDraft,
     created_by: i32,
-) -> Result<i32, TemplateStoreError> {
+) -> Result<SaveTemplateOutcome, TemplateStoreError> {
     let mut tx = conn.begin().await?;
 
     let (template_id, new_version): (i32, i32) = match draft.template_id {
@@ -307,7 +333,6 @@ pub async fn save_template_version(
     let name = draft.name.clone();
     let description = draft.description.clone();
     let is_optional = draft.is_optional;
-    let is_review_required = draft.is_review_required;
     let tat_working_days = draft.tat_working_days;
     let fields_draft = draft.fields;
     let substeps_draft = draft.substeps;
@@ -318,7 +343,7 @@ pub async fn save_template_version(
     let fields = assign_field_ids(fields_draft, &mut next_id);
     let substeps = substeps_draft.map(|subs| {
         subs.into_iter()
-            .map(|s| assign_step_ids(s, &mut next_id))
+            .map(|s| assign_step_ids(s, &mut next_id, crate::StepOwner::User))
             .collect()
     });
 
@@ -327,10 +352,10 @@ pub async fn save_template_version(
         description,
         step_id: root_step_id,
         is_optional,
-        is_review_required,
         substeps,
         fields,
         tat_working_days,
+        filled_by: crate::StepOwner::User,
     };
 
     let mut example_doc_ids = Vec::new();
@@ -375,7 +400,15 @@ pub async fn save_template_version(
 
     tx.commit().await?;
 
-    Ok(version_id)
+    let mut designation_codes = Vec::new();
+    collect_designation_codes(&template.substeps, &mut designation_codes);
+    designation_codes.sort();
+    designation_codes.dedup();
+
+    Ok(SaveTemplateOutcome {
+        version_id,
+        designation_codes,
+    })
 }
 
 pub async fn activate_template_version(

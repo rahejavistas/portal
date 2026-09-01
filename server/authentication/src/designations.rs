@@ -262,6 +262,38 @@ impl PermissionsManager {
         .await
     }
 
+    /// Codes of every designation this user actively holds. Always queried live.
+    pub async fn active_designation_codes(
+        &self,
+        user_id: i32,
+    ) -> Result<std::collections::HashSet<String>, sqlx::Error> {
+        let codes: Vec<String> = sqlx::query_scalar(
+            "SELECT d.code FROM designations d \
+             JOIN user_designations ud ON ud.designation_id = d.designation_id \
+             WHERE ud.user_id = $1 AND ud.is_active = TRUE",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(codes.into_iter().collect())
+    }
+
+    /// Emails of every active holder of the given designation.
+    pub async fn emails_for_designation(
+        &self,
+        designation_code: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT u.email FROM users u \
+             JOIN user_designations ud ON ud.user_id = u.user_id AND ud.is_active = TRUE \
+             JOIN designations d ON d.designation_id = ud.designation_id \
+             WHERE d.code = $1 AND u.is_active = TRUE",
+        )
+        .bind(designation_code)
+        .fetch_all(&self.pool)
+        .await
+    }
+
     pub async fn assign_designation(
         &self,
         user_id: i32,
