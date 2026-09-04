@@ -50,6 +50,18 @@ impl ActorContext {
             crate::StepOwner::Designation { code } => self.designation_codes.contains(code),
         }
     }
+
+    /// For reviewer-only actions (review, reopen, admin notes) — unlike `may_act_on`,
+    /// a `User`-owned step is never self-actionable; only an admin or the owning
+    /// designation may act.
+    pub fn may_review(&self, owner: &crate::StepOwner) -> bool {
+        match owner {
+            crate::StepOwner::User | crate::StepOwner::Admin => self.is_admin,
+            crate::StepOwner::Designation { code } => {
+                self.is_admin || self.designation_codes.contains(code)
+            }
+        }
+    }
 }
 
 // ==========================================
@@ -122,9 +134,9 @@ pub struct StepInfo {
 }
 
 impl StepInfo {
-    /// Every `User`-owned step needs review; `Admin`/`Designation` never do.
-    pub fn requires_review(&self) -> bool {
-        matches!(self.filled_by, crate::StepOwner::User)
+    /// Only a top-level, `User`-owned Stage ever reaches `PendingReview`.
+    pub fn requires_review(&self, root_step_id: i32) -> bool {
+        matches!(self.filled_by, crate::StepOwner::User) && self.parent_id == Some(root_step_id)
     }
 }
 
@@ -261,7 +273,7 @@ pub fn compute_statuses(
             Some(i) => i,
             None => return false,
         };
-        if info.requires_review() {
+        if info.requires_review(template.step_id) {
             state_input
                 .reviews
                 .get(&step_id)
@@ -292,7 +304,7 @@ pub fn compute_statuses(
                 .map(|s| s.is_completed)
                 .unwrap_or(false);
             if completed {
-                if info.requires_review() {
+                if info.requires_review(template.step_id) {
                     if is_approved(step_id) {
                         StepStatus::Completed
                     } else {
@@ -498,7 +510,7 @@ pub fn validate_save(
         .unwrap_or(false);
 
     let new_status = if target_completed {
-        if info.requires_review() {
+        if info.requires_review(template.step_id) {
             StepStatus::PendingReview
         } else {
             StepStatus::Completed
@@ -619,7 +631,7 @@ pub fn compute_review_updates(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not in template", step_id))?;
 
-    if !actor.may_act_on(&info.filled_by) {
+    if !actor.may_review(&info.filled_by) {
         return Err(match &info.filled_by {
             crate::StepOwner::User | crate::StepOwner::Admin => {
                 "This stage can only be reviewed by an admin".to_string()
@@ -692,7 +704,7 @@ pub fn compute_reopen_updates(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not in template", step_id))?;
 
-    if !actor.may_act_on(&info.filled_by) {
+    if !actor.may_review(&info.filled_by) {
         return Err(match &info.filled_by {
             crate::StepOwner::User | crate::StepOwner::Admin => {
                 "This stage can only be reopened by an admin".to_string()

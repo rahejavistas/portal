@@ -549,6 +549,87 @@ pub(crate) const ADMIN_HTML: &str = r#"
             background-color: var(--primary);
             color: var(--background);
         }
+        .reviewer-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 2px;
+            background: var(--muted);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 3px;
+        }
+        .reviewer-switch-btn {
+            background: transparent;
+            border: none;
+            color: var(--muted-foreground);
+            padding: 8px 16px;
+            font-weight: 600;
+            font-size: 0.8125rem;
+            border-radius: 9px;
+            cursor: pointer;
+            transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+            white-space: nowrap;
+        }
+        .reviewer-switch-btn:hover:not(.active) {
+            color: var(--foreground);
+        }
+        .reviewer-switch-btn.active {
+            background-color: var(--background);
+            color: var(--primary);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.13), 0 1px 2px rgba(0, 0, 0, 0.08);
+        }
+        .reviewer-switch-caret {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding-right: 12px;
+        }
+        .reviewer-switch-caret::after {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-right: 1.6px solid currentColor;
+            border-bottom: 1.6px solid currentColor;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            opacity: 0.6;
+        }
+        .reviewer-dropdown-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            z-index: 20;
+            min-width: 200px;
+            max-height: 260px;
+            overflow-y: auto;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.08);
+            padding: 6px;
+        }
+        .reviewer-dropdown-item {
+            padding: 9px 12px;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--foreground);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.12s ease;
+            white-space: nowrap;
+        }
+        .reviewer-dropdown-item:hover {
+            background-color: var(--muted);
+        }
+        .reviewer-dropdown-item.selected {
+            background-color: var(--primary);
+            color: var(--background);
+        }
+        .reviewer-dropdown-empty {
+            padding: 9px 12px;
+            font-size: 0.8125rem;
+            color: var(--muted-foreground);
+        }
         .sub-filter-chip {
             flex-shrink: 0;
             background-color: var(--background);
@@ -1316,8 +1397,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <div class="form-group" id="doc-folder-group" style="display: none;">
                                 <label for="doc-folder">Folder</label>
                                 <input type="file" id="doc-folder" webkitdirectory directory multiple style="padding: 8px; width: 100%; background-color: var(--muted);">
-                                <div id="doc-folder-hint" style="font-size:12.5px; color:var(--muted-foreground); margin-top:6px;">Every file inside the selected folder will be added as its own document.</div>
                             </div>
+                            <div id="doc-folder-hint" style="font-size:12.5px; color:var(--muted-foreground); min-height:1.2em; margin-bottom:24px; visibility:hidden;">Every file inside the selected folder will be added as its own document.</div>
                             <div class="form-group">
                                 <label for="doc-category">Document Category</label>
                                 <select id="doc-category" required onchange="handleCategoryChange()">
@@ -2555,6 +2636,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             document.getElementById('doc-file-group').style.display = folderMode ? 'none' : '';
             document.getElementById('doc-file').required = !folderMode;
             document.getElementById('doc-folder-group').style.display = folderMode ? '' : 'none';
+            document.getElementById('doc-folder-hint').style.visibility = folderMode ? 'visible' : 'hidden';
             document.getElementById('doc-title-group').style.display = folderMode ? 'none' : '';
             document.getElementById('doc-title').required = !folderMode;
         }
@@ -3382,6 +3464,21 @@ pub(crate) const ADMIN_HTML: &str = r#"
             renderBuilderStages();
         }
 
+        let reviewerDropdownOpen = false;
+
+        function toggleReviewerDropdown(event) {
+            event.stopPropagation();
+            reviewerDropdownOpen = !reviewerDropdownOpen;
+            renderBuilderStageDetail();
+        }
+
+        document.addEventListener('click', () => {
+            if (reviewerDropdownOpen) {
+                reviewerDropdownOpen = false;
+                renderBuilderStageDetail();
+            }
+        });
+
         function renderBuilderStages() {
             const container = document.getElementById('builder-stage-list');
             const stages = builderState.substeps || [];
@@ -3671,23 +3768,27 @@ function openDesignationPicker(field) {
             `).join('');
 
             const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin');
-            const ownerPickerHtml = `
-                <div class="doc-mode-switch" style="margin-bottom:8px;">
-                    <button type="button" class="doc-mode-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident</button>
-                    <button type="button" class="doc-mode-btn ${owner.kind === 'admin' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; renderBuilderStageDetail();">Admin</button>
-                    <select class="doc-mode-btn ${owner.kind === 'designation' ? 'active' : ''}" style="border:none; -webkit-appearance:none; appearance:none; cursor:pointer;" onchange="if (this.value) { ${pathExpr}.filled_by = { kind: 'designation', code: this.value }; renderBuilderStageDetail(); }">
-                        <option value="" ${owner.kind !== 'designation' ? 'selected' : ''}>Designation...</option>
-                        ${nonSystemDesignations.map(d => `<option value="${escapeHtml(d.code)}" ${owner.kind === 'designation' && owner.code === d.code ? 'selected' : ''}>${escapeHtml(d.label)}</option>`).join('')}
-                    </select>
+            const specificReviewerLabel = owner.kind === 'designation'
+                ? ((nonSystemDesignations.find(d => d.code === owner.code) || {}).label || owner.code)
+                : 'Specific Reviewer';
+            const reviewerDropdownHtml = reviewerDropdownOpen ? `
+                <div class="reviewer-dropdown-menu" onclick="event.stopPropagation();">
+                    ${nonSystemDesignations.length === 0
+                        ? `<div class="reviewer-dropdown-empty">No designations yet</div>`
+                        : nonSystemDesignations.map(d => `<div class="reviewer-dropdown-item ${owner.kind === 'designation' && owner.code === d.code ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'designation', code: '${jsAttrEscape(d.code)}' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">${escapeHtml(d.label)}</div>`).join('')}
                 </div>
-                <p style="font-size:12px; color:var(--muted-foreground); margin:0 0 20px;">
-                    Who fills this stage.
-                    ${owner.kind === 'user'
-                        ? 'A resident fills it; any reviewer must approve before it counts as done.'
-                        : owner.kind === 'admin'
-                            ? 'Any reviewer can fill it — it completes immediately, no separate approval step.'
-                            : `Only someone holding the "${escapeHtml((nonSystemDesignations.find(d => d.code === owner.code) || {}).label || owner.code || '')}" designation can fill it — completes immediately, and they're emailed when it's their turn.`}
-                </p>
+            ` : '';
+            const ownerPickerHtml = `
+                <div style="font-size:12px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Who fills this stage</div>
+                <div class="reviewer-switch" style="margin-bottom:8px;">
+                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident</button>
+                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'admin' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; renderBuilderStageDetail();">Any Reviewer</button>
+                    <div style="position:relative;">
+                        <button type="button" class="reviewer-switch-btn reviewer-switch-caret ${owner.kind === 'designation' ? 'active' : ''}" onclick="toggleReviewerDropdown(event)">${escapeHtml(specificReviewerLabel)}</button>
+                        ${reviewerDropdownHtml}
+                    </div>
+                </div>
+                <p style="font-size:12px; color:var(--muted-foreground); margin:0 0 20px; visibility:${owner.kind === 'user' ? 'visible' : 'hidden'};">It will be reviewed by a reviewer.</p>
             `;
 
             container.innerHTML = `
@@ -3828,7 +3929,7 @@ function openDesignationPicker(field) {
             }
             const stage = previewState.substeps[previewSelectedIndex];
             const owner = stage.filled_by || { kind: 'user' };
-            const ownerLabel = owner.kind === 'user' ? 'Resident' : owner.kind === 'admin' ? 'Admin'
+            const ownerLabel = owner.kind === 'user' ? 'Resident' : owner.kind === 'admin' ? 'Any Reviewer'
                 : ((allDesignations.find(d => d.code === owner.code) || {}).label || owner.code);
             const substepsHtml = (stage.substeps || []).map(sub => `
                 <div class="step-card">

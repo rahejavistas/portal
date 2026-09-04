@@ -68,24 +68,6 @@ pub async fn save(
         .await
         .map_err(map_store_err)?;
 
-    // Best-effort, grant-only: a designation assigned to fill a stage gets the same
-    // rights as any reviewer. Never revoked if a later edit drops the designation from
-    // every stage, and never fails the save itself if a grant fails.
-    for code in &outcome.designation_codes {
-        for permission in ["process.view", "process.reviewer"] {
-            if let Err(e) = state
-                .permissions_manager
-                .toggle_designation_permission(code, permission, true, Some(user.user_id))
-                .await
-            {
-                eprintln!(
-                    "Failed to auto-grant '{}' to designation '{}': {}",
-                    permission, code, e
-                );
-            }
-        }
-    }
-
     Ok(Json(SaveResponse {
         version_id: outcome.version_id,
     }))

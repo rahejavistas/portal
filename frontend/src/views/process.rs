@@ -2547,7 +2547,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
         function stepOwnerLabel(owner) {
             if (!owner || owner.kind === 'user') return null;
-            if (owner.kind === 'admin') return 'Admin';
+            if (owner.kind === 'admin') return 'Any Reviewer';
             return owner.label || owner.code;
         }
 

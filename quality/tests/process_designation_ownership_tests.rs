@@ -1,8 +1,9 @@
 //! End-to-end coverage for `StepOwner::Designation`-owned steps, through the real HTTP
 //! API and a real database — not just the pure state-machine unit test. Covers the
 //! rejection/acceptance rule itself, that it survives even for a global admin, that
-//! `acted_as_designation` actually round-trips through the database, and that the
-//! template-save auto-grant lets the designation's holder act on someone else's process.
+//! `acted_as_designation` actually round-trips through the database, and that a
+//! designation holder gets a scoped access path onto someone else's process without
+//! ever needing global `process.reviewer`/`process.view`.
 
 use quality::{
     quick_assign_designation, quick_create_designation, quick_create_user, quick_onboard_user,
@@ -208,9 +209,8 @@ async fn test_designation_holder_completes_step_and_acted_as_designation_persist
 
 /// The whole point of `StepOwner::Designation`: the designation's holder can act on a
 /// stage in *someone else's* process — e.g. the Secretary reviewing a resident's
-/// application — purely because the template save auto-granted `secretary` the same
-/// `process.view`/`process.reviewer` rights as any reviewer. No manual permission grant,
-/// no shared ownership.
+/// application — purely by holding the designation itself, with no `process.view`/
+/// `process.reviewer` permission grant of any kind and no shared ownership.
 #[tokio::test]
 async fn test_non_owner_designation_holder_can_act_on_someone_elses_process() {
     let env = setup_api_test_env().await;

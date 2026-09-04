@@ -1770,7 +1770,10 @@ async fn test_comprehensive_failure_cases() {
 
     // 7. Cannot reopen a step that's already Open
     let result = exec.reopen_step(8, Some("Bad reopen")).await;
-    assert!(result.is_err(), "Cannot reopen a step that is Open, not closed");
+    assert!(
+        result.is_err(),
+        "Cannot reopen a step that is Open, not closed"
+    );
 }
 
 /// Test that revoke without a note stores NULL (not a generic message).
