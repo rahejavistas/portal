@@ -13,25 +13,35 @@ use axum::{http::StatusCode, Json};
 
 pub(super) use crate::handlers::error::{ApiError, ResultExt};
 
+/// Whether any step in `template` is owned by one of `designation_codes` — the scoped
+/// access path a designation holder gets without needing global `process.reviewer`.
+pub(super) fn designation_owns_a_step(
+    template: &process::ProcessTemplate,
+    designation_codes: &std::collections::HashSet<String>,
+) -> bool {
+    process::state_machine::build_step_info_map(template)
+        .values()
+        .any(|info| {
+            matches!(&info.filled_by, process::StepOwner::Designation { code } if designation_codes.contains(code))
+        })
+}
+
 /// Load a process by ID, verify user authorization, and load its pinned template
-/// version.
+/// version. `precomputed_authorized` covers whatever the caller already established
+/// (global reviewer, view-only oversight, a signer's own requirement, ...); this also
+/// independently allows a caller holding a designation that owns one of this specific
+/// process's steps, regardless of `precomputed_authorized`.
 pub(super) async fn load_authorized_process(
     conn: &mut sqlx::PgConnection,
     user: &authentication::User,
     process_id: uuid::Uuid,
-    is_admin: bool,
+    precomputed_authorized: bool,
+    designation_codes: &std::collections::HashSet<String>,
 ) -> Result<(process::db::ProcessInfo, process::ProcessTemplate), ApiError> {
     let info = process::db::get_process_info(conn, process_id)
         .await
         .internal_err()?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json("Process not found".to_string())))?;
-
-    if !is_admin && info.user_id != user.user_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json("Access Denied: You do not own this process".to_string()),
-        ));
-    }
 
     let template = process::template_store::load_template_version(conn, info.template_version_id)
         .await
@@ -41,6 +51,15 @@ pub(super) async fn load_authorized_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
+
+    let owns_process = info.user_id == user.user_id;
+    let scoped_access = designation_owns_a_step(&template, designation_codes);
+    if !precomputed_authorized && !owns_process && !scoped_access {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Access Denied: You do not own this process".to_string()),
+        ));
+    }
 
     Ok((info, template))
 }
@@ -67,7 +86,8 @@ pub(super) async fn build_actor_context(
     }
 }
 
-/// Emails a designation's holders for each newly-opened step it owns.
+/// Emails a designation's holders once per batch, even if a Stage and its own inherited
+/// Substep both newly opened together — that's one turn, not two.
 pub(super) async fn notify_newly_opened_designation_steps(
     permissions_manager: &authentication::PermissionsManager,
     template: &process::ProcessTemplate,
@@ -75,6 +95,9 @@ pub(super) async fn notify_newly_opened_designation_steps(
     newly_opened_step_ids: &[i32],
 ) {
     let info_map = process::state_machine::build_step_info_map(template);
+
+    let mut by_designation: std::collections::HashMap<&str, &process::state_machine::StepInfo> =
+        std::collections::HashMap::new();
     for &step_id in newly_opened_step_ids {
         let Some(info) = info_map.get(&step_id) else {
             continue;
@@ -82,6 +105,17 @@ pub(super) async fn notify_newly_opened_designation_steps(
         let process::StepOwner::Designation { code } = &info.filled_by else {
             continue;
         };
+        let is_top_level = info.parent_id == Some(template.step_id);
+        let should_replace = match by_designation.get(code.as_str()) {
+            None => true,
+            Some(_) => is_top_level,
+        };
+        if should_replace {
+            by_designation.insert(code, info);
+        }
+    }
+
+    for (code, info) in by_designation {
         let emails = permissions_manager
             .emails_for_designation(code)
             .await

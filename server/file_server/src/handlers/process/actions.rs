@@ -90,11 +90,16 @@ pub async fn save_process_step(
 ) -> Result<Json<SaveStepResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    // process.view is read-only oversight; never grants write access here.
-    let is_admin = user.has_permission(authentication::Permission::ProcessReviewer);
-    let (info, template) =
-        load_authorized_process(&mut tx, &user, payload.process_id, is_admin).await?;
     let actor = build_actor_context(&state.permissions_manager, &user).await;
+    // process.view is read-only oversight; never grants write access here.
+    let (info, template) = load_authorized_process(
+        &mut tx,
+        &user,
+        payload.process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
 
     // Validate document ownership and upload confirmation
     for f in &payload.fields {
@@ -215,9 +220,15 @@ pub async fn admin_review_step(
 ) -> Result<Json<AdminReviewResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    let (info, template) =
-        load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
     let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let (info, template) = load_authorized_process(
+        &mut tx,
+        &user,
+        payload.process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
 
     let flagged = payload.flagged_step_ids.as_deref().unwrap_or(&[]);
     let review_outcome = process::db::review_step(
@@ -307,9 +318,15 @@ pub async fn admin_revoke_step(
 ) -> Result<Json<AdminRevokeResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    let (info, template) =
-        load_authorized_process(&mut tx, &user, payload.process_id, true).await?;
     let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let (info, template) = load_authorized_process(
+        &mut tx,
+        &user,
+        payload.process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
 
     let newly_opened_step_ids = process::db::reopen_step(
         &mut tx,
@@ -379,8 +396,27 @@ pub async fn admin_add_note(
 
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
-    // Verify the process exists and admin has access
-    load_authorized_process(&mut conn, &user.0, payload.process_id, true).await?;
+    // Verify the process exists and the caller has access to it
+    let actor = build_actor_context(&state.permissions_manager, &user.0).await;
+    let (_info, template) = load_authorized_process(
+        &mut conn,
+        &user.0,
+        payload.process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
+
+    let step_owner = process::state_machine::build_step_info_map(&template)
+        .get(&payload.template_step_id)
+        .map(|info| info.filled_by.clone())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json("Step not found".to_string())))?;
+    if !actor.may_review(&step_owner) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Access Denied: you do not act on this step".to_string()),
+        ));
+    }
 
     process::db::insert_admin_comment(
         &mut conn,
@@ -429,8 +465,15 @@ pub async fn admin_add_document_signers(
     Json(payload): Json<AddDocumentSignersRequest>,
 ) -> Result<Json<AddDocumentSignersResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    let (_info, template) =
-        load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let (_info, template) = load_authorized_process(
+        &mut conn,
+        &user,
+        payload.process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
 
     let statuses = process::db::get_statuses(&mut conn, payload.process_id, &template)
         .await
@@ -439,6 +482,17 @@ pub async fn admin_add_document_signers(
         return Err((
             StatusCode::BAD_REQUEST,
             Json("Signers can only be attached while the step is still open".to_string()),
+        ));
+    }
+
+    let step_owner = process::state_machine::build_step_info_map(&template)
+        .get(&payload.template_step_id)
+        .map(|info| info.filled_by.clone())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json("Step not found".to_string())))?;
+    if !actor.may_review(&step_owner) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json("Access Denied: you do not act on this step".to_string()),
         ));
     }
 

@@ -151,7 +151,7 @@ pub async fn save_step(
             if *completed {
                 if state_machine::build_step_info_map(template)
                     .get(&step_id)
-                    .map(|i| i.requires_review())
+                    .map(|i| i.requires_review(template.step_id))
                     .unwrap_or(false)
                 {
                     StepStatus::PendingReview

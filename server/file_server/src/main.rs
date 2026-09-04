@@ -171,6 +171,20 @@ async fn main() {
 
             let process_reviewer_routes = Router::new()
                 .route(
+                    "/documents/signatures/provider-status",
+                    post(handlers::signatures::provider_status),
+                )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[Permission::ProcessReviewer]),
+                ));
+
+            // Not permission-gated at the router level: a caller here either holds
+            // `process.reviewer` globally, or a designation that owns the specific
+            // step being acted on — both checked inside each handler, since only the
+            // handler (after loading the process's template) knows which applies.
+            let process_self_service_admin_routes = Router::new()
+                .route(
                     "/process/review",
                     post(handlers::process::admin_review_step),
                 )
@@ -190,15 +204,7 @@ async fn main() {
                 .route(
                     "/process/documents/add-signers",
                     post(handlers::process::admin_add_document_signers),
-                )
-                .route(
-                    "/documents/signatures/provider-status",
-                    post(handlers::signatures::provider_status),
-                )
-                .layer(axum_middleware::from_fn_with_state(
-                    $state.clone(),
-                    middleware::require_any_of(&[Permission::ProcessReviewer]),
-                ));
+                );
 
             // Assigning/revoking an existing designation to/from a user.
             let roles_user_designation_routes = Router::new()
@@ -685,6 +691,7 @@ async fn main() {
                 .merge(users_manage_routes)
                 .merge(documents_manage_routes)
                 .merge(process_reviewer_routes)
+                .merge(process_self_service_admin_routes)
                 .merge(roles_user_designation_routes)
                 .merge(roles_designation_definition_routes)
                 .merge(document_categories_manage_routes)

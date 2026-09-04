@@ -1,6 +1,6 @@
 //! Read-only process views: the process list and the full state tree for one process.
 
-use super::{load_authorized_process, ApiError, ResultExt};
+use super::{build_actor_context, load_authorized_process, ApiError, ResultExt};
 use crate::extractors::SessionUser;
 use crate::handlers::accounting::pdf_response;
 use crate::state::AppState;
@@ -452,6 +452,7 @@ async fn resolve_process_target(
     user: &authentication::User,
     payload: &ProcessStateRequest,
     can_view_all: bool,
+    designation_codes: &std::collections::HashSet<String>,
 ) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate, Vec<i32>), ApiError> {
     match payload.process_id {
         Some(pid) => {
@@ -463,7 +464,8 @@ async fn resolve_process_target(
                     .signer_has_requirement_for_process(user.user_id, pid)
                     .await
                     .internal_err()?;
-            let (info, template) = load_authorized_process(tx, user, pid, is_authorized).await?;
+            let (info, template) =
+                load_authorized_process(tx, user, pid, is_authorized, designation_codes).await?;
             // An already-existing process has no "newly opened" steps from this call.
             Ok((
                 pid,
@@ -636,9 +638,18 @@ pub async fn get_process_state(
     // reviewer — this handler never writes to another user's process, only the caller's own.
     // personal_only (set by the plain /process page) always forces the caller's own view.
     let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
 
     let (process_id, template_version_id, ownership_id, template, newly_opened_step_ids) =
-        resolve_process_target(&mut tx, &state, &user, &payload, can_view_all).await?;
+        resolve_process_target(
+            &mut tx,
+            &state,
+            &user,
+            &payload,
+            can_view_all,
+            &actor.designation_codes,
+        )
+        .await?;
 
     let steps = process::db::load_steps(&mut tx, process_id)
         .await
@@ -872,8 +883,14 @@ pub async fn audit_log_pdf(
     }
 
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    let (info, template) =
-        load_authorized_process(&mut conn, &user, payload.process_id, true).await?;
+    let (info, template) = load_authorized_process(
+        &mut conn,
+        &user,
+        payload.process_id,
+        true,
+        &std::collections::HashSet::new(),
+    )
+    .await?;
 
     let flat_label = if let Some(oid) = info.ownership_id {
         get_flat_info_for_ownership(&mut conn, oid)

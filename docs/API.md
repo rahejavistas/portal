@@ -208,7 +208,7 @@ Verifies the file exists on S3 (HEAD check, ≤10MB) and marks the document conf
 ### POST `/api/v1/process/state`
 Retrieves or auto-initializes a process. Pass `process_id` to fetch an existing one, or `template_id` (the `process_templates.template_id` of the process *type* to start — always resolves to whichever version is currently active — plus optional `flat_id` if the caller owns multiple flats) to fetch-or-create.
 
-Fetching by `process_id` is allowed if the caller: owns the process; holds `process.reviewer`/`process.view` (unless `personal_only` is set); OR currently/previously has a signature requirement (any status) attached to some document within that exact process — this is the narrow read-only grant that lets a signer view the one process their signature concerns without giving them `process.reviewer`'s blanket visibility into every resident's processes (it does not affect `admin_comments` visibility, which still requires `process.reviewer`/`process.view`). Otherwise **403**.
+Fetching by `process_id` is allowed if the caller: owns the process; holds `process.reviewer`/`process.view` (unless `personal_only` is set); holds a designation that owns at least one step in that process's template; OR currently/previously has a signature requirement (any status) attached to some document within that exact process — this is the narrow read-only grant that lets a signer view the one process their signature concerns without giving them `process.reviewer`'s blanket visibility into every resident's processes (it does not affect `admin_comments` visibility, which still requires `process.reviewer`/`process.view` — a designation holder never sees these, even for a process they can otherwise act on). Otherwise **403**.
 * **Request:** `{ "process_id": "uuid" }` or `{ "template_id": 1, "flat_id": 5, "personal_only": false }`
 * **Response (200):**
   ```json
@@ -245,12 +245,12 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
   }
   ```
 * **Response (200):** `{ "status": "success", "message": "Step saved successfully", "step": { "template_step_id": 3, "is_completed": true } }`
-* Attached documents must already be confirmed and be `RESIDENT_SPECIFIC`. **403** if the caller doesn't own the process — note `process.view` does **not** grant write access here, only `process.reviewer` does. **400** on validation/state-machine errors.
+* Attached documents must already be confirmed and be `RESIDENT_SPECIFIC`. **403** unless the caller owns the process, holds `process.reviewer`, or holds a designation that owns `template_step_id` — note `process.view` does **not** grant write access here. Loading the process this way only gets the caller in the door; the targeted step's own `filled_by` is still separately checked (a resident can only save their own `User`-owned steps, a designation holder only their own `Designation`-owned steps). **400** on validation/state-machine errors.
 
 ### POST `/api/v1/process/download-url`
 * **Request:** `{ "process_id": "uuid", "document_id": "uuid" }`
 * **Response (200):** `{ "download_url": "https://..." }`
-* Holders of `process.reviewer`/`process.view` can download a process's attached documents — but only documents actually attached to *that* process, verified via its field history, not a blanket category grant. No document-category permission is required for this. **403/404** otherwise.
+* Holders of `process.reviewer`/`process.view`, and a designation holder for a process their designation owns a step in, can download a process's attached documents — but only documents actually attached to *that* process, verified via its field history, not a blanket category grant. No document-category permission is required for this. **403/404** otherwise.
 
 ### POST `/api/v1/process/audit-log-pdf`
 Requires `process.reviewer` or `process.view`.
@@ -407,7 +407,12 @@ Moves every requested document the caller can manage into `category`, clearing i
 
 ## Admin Process Review APIs
 
-Requires `process.reviewer` for all routes in this group.
+Not gated by a blanket permission at the router level. Each route requires either
+`process.reviewer` globally, or — for `/review`, `/revoke`, `/add-note`, `/upload-url`,
+`/confirm-upload` — holding the designation that owns the specific step being acted on
+(checked against that process's own template on every request; see the `filled_by`
+scoping rules under [`/admin/process-templates/save`](#post-apiv1adminprocess-templatessave)).
+A caller with neither gets **403**.
 
 ### POST `/api/v1/admin/process/review`
 * **Request:** `{ "process_id": "uuid", "template_step_id": 2, "is_approved": true, "notes": "Looks good", "flagged_step_ids": [4, 5] }`
@@ -496,13 +501,14 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   `{"kind":"designation","code":"secretary"}`) and denormalized onto every substep beneath
   it at save time — a field no longer carries its own `filled_by`; every field in a stage
   shares that stage's owner. `User` always requires a reviewer's approval to complete;
-  `Admin`/`Designation` never do — filling the stage completes it immediately. Saving a
-  `Designation` reference auto-grants that designation `process.view` + `process.reviewer`
-  (grant-only — removing the designation from every stage in a later edit does not revoke
-  it). A `Designation`-owned stage is then exclusive to that designation's active
-  holders — holding `process.reviewer` globally, even as a super admin, does not grant
-  access to it; the check is re-evaluated live on every request, so assigning or revoking
-  the designation takes effect on the holder's very next call, no caching involved. Every
+  `Admin`/`Designation` never do — filling the stage completes it immediately. A
+  `Designation`-owned stage is exclusive to that designation's active holders and requires
+  no permission grant at all: holding the designation is itself enough to load, fill,
+  review, and reopen that stage on any resident's process, scoped to only the step(s) that
+  designation owns — nothing broader. Holding `process.reviewer` globally, even as a
+  super admin, does not grant access to a `Designation`-owned stage the caller doesn't
+  hold. The check is re-evaluated live on every request, so assigning or revoking the
+  designation takes effect on the holder's very next call, no caching involved. Every
   write this scoping governs (`process_fields`, `process_step_reviews`,
   `process_audit_log`) snapshots which designation authorized it, surfaced back as
   `acted_as_designation` on the corresponding response entries. When a `Designation`-owned
@@ -633,7 +639,7 @@ A `SignatureRequirement` row tracks ONE (document, signer) pair: `requirement_id
 **No cancellation**: once a signer is attached, that requirement exists until it's signed — there is no endpoint to cancel or remove it. A required signature is required, full stop. This means a reviewer must get `required_signs_from_designations` and the signer selection right at attach time; there's no undo for a mis-attached signer short of the signer actually signing it.
 
 ### POST `/api/v1/admin/process/documents/add-signers`
-Requires `process.reviewer`. Attaches one or more signers (by `signer_id`, from the active signer directory) to a document already submitted into a process field, **in the given array order**. Idempotent per (document, signer).
+Requires `process.reviewer` globally, or the designation that owns `template_step_id`. Attaches one or more signers (by `signer_id`, from the active signer directory) to a document already submitted into a process field, **in the given array order**. Idempotent per (document, signer).
 * **Request:**
   ```json
   {

@@ -67,9 +67,7 @@ pub struct StepDraft {
     pub description: Option<String>,
     #[serde(default)]
     pub is_optional: bool,
-    /// Who fills this stage. Only meaningful on a top-level Stage draft — the builder
-    /// doesn't expose the picker on a Substep, so this is `None` there and inherited from
-    /// the enclosing Stage when the tree is assembled.
+    /// Only meaningful on a top-level Stage draft; `None` on a Substep inherits it.
     #[serde(default)]
     pub filled_by: Option<crate::StepOwner>,
     #[serde(default)]
@@ -156,19 +154,6 @@ fn collect_example_document_ids(
         for s in subs {
             collect_example_document_ids(&s.fields, &s.substeps, out);
         }
-    }
-}
-
-fn collect_designation_codes(
-    substeps: &Option<Vec<crate::ProcessStepTemplate>>,
-    out: &mut Vec<String>,
-) {
-    let Some(subs) = substeps else { return };
-    for s in subs {
-        if let crate::StepOwner::Designation { code } = &s.filled_by {
-            out.push(code.clone());
-        }
-        collect_designation_codes(&s.substeps, out);
     }
 }
 
@@ -287,10 +272,6 @@ pub async fn list_templates(conn: &mut sqlx::PgConnection) -> Result<Vec<Templat
 /// Outcome of a successful `save_template_version` call.
 pub struct SaveTemplateOutcome {
     pub version_id: i32,
-    /// Distinct designation codes referenced anywhere in the saved tree — the caller
-    /// grants these `process.view`/`process.reviewer` (this crate has no dependency on
-    /// `authentication`, so it can't do that itself).
-    pub designation_codes: Vec<String>,
 }
 
 /// Upsert: creates a new template, or appends a new draft version (never auto-activates).
@@ -400,15 +381,7 @@ pub async fn save_template_version(
 
     tx.commit().await?;
 
-    let mut designation_codes = Vec::new();
-    collect_designation_codes(&template.substeps, &mut designation_codes);
-    designation_codes.sort();
-    designation_codes.dedup();
-
-    Ok(SaveTemplateOutcome {
-        version_id,
-        designation_codes,
-    })
+    Ok(SaveTemplateOutcome { version_id })
 }
 
 pub async fn activate_template_version(
