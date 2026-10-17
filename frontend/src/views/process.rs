@@ -1246,6 +1246,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     <button class="subtab-btn" id="tab-btn-completed" onclick="switchProcessTab('COMPLETED')">Completed</button>
                 </div>
 
+                <div class="subtab-bar" id="pending-on-me-bar" style="display: none;">
+                    <button class="subtab-btn active" id="tab-btn-scope-all" onclick="setPendingOnMeScope('all')">All</button>
+                    <button class="subtab-btn" id="tab-btn-scope-mine" onclick="setPendingOnMeScope('mine')">Pending on me</button>
+                </div>
+
                 <div id="filters-container" style="display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
                     <div class="form-group" style="margin-bottom: 0; flex-grow: 1; min-width: 200px;">
                         <label for="filter-search">Search Process / ID</label>
@@ -1465,6 +1470,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         let user = JSON.parse(localStorage.getItem('vfs_user') || 'null');
         let allProcesses = [];
         let currentTab = 'ADMIN_REVIEW_REQUIRED';
+        let pendingOnMeScope = 'all';
         let userFlats = [];
         let currentProcessDetails = null;
         let currentSelectedStepId = null;
@@ -1938,6 +1944,13 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             renderProcessList();
         }
 
+        function setPendingOnMeScope(scope) {
+            pendingOnMeScope = scope;
+            document.getElementById('tab-btn-scope-all').className = 'subtab-btn' + (scope === 'all' ? ' active' : '');
+            document.getElementById('tab-btn-scope-mine').className = 'subtab-btn' + (scope === 'mine' ? ' active' : '');
+            renderProcessList();
+        }
+
         async function loadProcesses() {
             if (IS_ADMIN_PROCESS_PAGE) {
                 const adminEmailGroup = document.getElementById('admin-email-filter-group');
@@ -1950,6 +1963,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const processSubtabBar = document.getElementById('process-subtab-bar');
                 if (processSubtabBar) processSubtabBar.style.display = 'flex';
                 currentTab = 'ADMIN_REVIEW_REQUIRED';
+                const isSuperAdmin = !!(user && user.designations && user.designations.includes('super_admin'));
+                const pendingOnMeBar = document.getElementById('pending-on-me-bar');
+                if (pendingOnMeBar) pendingOnMeBar.style.display = isSuperAdmin ? 'none' : 'flex';
             } else {
                 currentTab = 'ALL';
             }
@@ -2062,6 +2078,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     if (currentTab === 'USER_INPUT_REQUIRED' && !isUserAction) return false;
                     if (currentTab === 'ADMIN_REVIEW_REQUIRED' && p.status !== 'ADMIN_REVIEW_REQUIRED') return false;
                     if (currentTab === 'COMPLETED' && !isCompleted) return false;
+                    if (pendingOnMeScope === 'mine' && !p.pending_on_caller) return false;
                 } else {
                 }
 

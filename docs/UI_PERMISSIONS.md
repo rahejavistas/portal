@@ -121,10 +121,11 @@ Three things are **not** permissions but still gate UI:
   active holders. Holding that designation is, by itself, enough to load, fill, review,
   and reopen that one stage on any resident's process — no `process.reviewer`/`process.view`
   grant needed at all, and none is auto-granted on template save. Conversely, holding
-  `process.reviewer` globally, even as a super admin, does **not** grant access to a
-  designation-owned stage the caller doesn't personally hold — this is a hard exclusivity,
-  checked live on every request against the caller's currently-active designations, never
-  cached.
+  `process.reviewer` globally, even as a super admin, does **not** grant access to
+  *fill* a designation-owned stage the caller doesn't personally hold — this is a hard
+  exclusivity, checked live on every request against the caller's currently-active
+  designations, never cached. Reviewing or reopening is the one exception: a global
+  `process.reviewer` can still do that on a designation-owned stage, same as any other.
 - A stage can also be assigned to "Wing Representative" instead of one fixed designation
   — same exclusivity rule, but which designation it resolves to depends on which wing the
   process-owning resident lives in. Every wing automatically gets its own representative

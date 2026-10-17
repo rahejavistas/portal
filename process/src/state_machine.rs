@@ -685,9 +685,21 @@ pub fn compute_review_updates(
         _ => None,
     };
 
-    // Admin can approve an OPEN step directly, without a user re-submission.
+    // Open Designation step: block approval unless its holder actually filled it first.
     match status {
-        StepStatus::PendingReview | StepStatus::Open => {}
+        StepStatus::PendingReview => {}
+        StepStatus::Open => {
+            if is_approved
+                && matches!(info.filled_by, crate::StepOwner::Designation { .. })
+                && !(actor.may_act_on(&info.filled_by)
+                    && check_step_completed(step_id, &info_map, state))
+            {
+                return Err(
+                    "A designation-owned stage must be filled by its designation before approval"
+                        .to_string(),
+                );
+            }
+        }
         _ => return Err("Step must be open or pending review for admin action".to_string()),
     }
 
@@ -1202,6 +1214,60 @@ mod tests {
         .unwrap();
         assert_eq!(result.new_status, StepStatus::Completed);
         assert_eq!(result.acted_as_designation, Some("secretary".to_string()));
+    }
+
+    #[test]
+    fn open_designation_step_cannot_be_approved_before_its_holder_fills_it() {
+        let mut template = crate::test_fixtures::tenant_onboarding_fixture();
+        template.substeps.as_mut().unwrap()[1].filled_by = crate::StepOwner::Designation {
+            code: "secretary".to_string(),
+        };
+
+        let mut state = ProcessStateInput::default();
+        for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(Uuid::new_v4()),
+                },
+            );
+        }
+        for sid in [3, 4, 5, 6, 2] {
+            state.steps.insert(
+                sid,
+                StepStateDb {
+                    is_completed: true,
+                    started_at: None,
+                },
+            );
+        }
+        state.reviews.insert(
+            2,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+
+        let mut designation_codes = HashSet::new();
+        designation_codes.insert("secretary".to_string());
+        let secretary = ActorContext {
+            is_admin: true,
+            designation_codes,
+        };
+
+        let result = compute_review_updates(&template, &state, 7, true, &secretary);
+        assert!(
+            result.is_err(),
+            "step 7's field 111 was never filled, so it must not be approvable yet"
+        );
+
+        let result = compute_review_updates(&template, &state, 7, true, &actor(true));
+        assert!(
+            result.is_err(),
+            "a global admin without the designation must not be able to approve it either"
+        );
     }
 
     #[test]

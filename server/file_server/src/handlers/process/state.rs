@@ -190,6 +190,61 @@ pub struct ProcessListResponse {
     pub flats: Vec<UserFlatResponse>,
 }
 
+/// Whether `actor` can personally act on `item` right now. `template_cache` avoids
+/// reloading the same version for every row sharing it.
+async fn compute_pending_on_caller(
+    conn: &mut sqlx::PgConnection,
+    item: &process::db::ProcessListItem,
+    actor: &process::state_machine::ActorContext,
+    template_cache: &mut HashMap<i32, process::ProcessTemplate>,
+) -> Option<bool> {
+    let template = match template_cache.get(&item.template_version_id) {
+        Some(t) => t.clone(),
+        None => {
+            let t = process::template_store::load_template_version(conn, item.template_version_id)
+                .await
+                .ok()?;
+            template_cache.insert(item.template_version_id, t.clone());
+            t
+        }
+    };
+    let wing_rep_code = match item.ownership_id {
+        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let template =
+        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
+            .ok()?;
+
+    let steps = process::db::load_steps(conn, item.process_id).await.ok()?;
+    let reviews = get_process_reviews(conn, item.process_id)
+        .await
+        .unwrap_or_default();
+    let mut reviews_by_step: HashMap<i32, Vec<process::state_machine::ReviewState>> =
+        HashMap::new();
+    for r in &reviews {
+        reviews_by_step.entry(r.template_step_id).or_default().push(
+            process::state_machine::ReviewState {
+                is_approved: r.is_approved,
+                created_at: r.created_at,
+            },
+        );
+    }
+    let state_input = process::state_machine::ProcessStateInput {
+        steps,
+        reviews: reviews_by_step,
+        ..Default::default()
+    };
+    Some(process::state_machine::is_pending_on_actor(
+        &template,
+        &state_input,
+        actor,
+    ))
+}
+
 /// Resolves ownership and find-or-creates a process against template_id's active version.
 async fn resolve_or_init_process(
     conn: &mut sqlx::PgConnection,
@@ -419,8 +474,14 @@ pub async fn list_user_processes(
 ) -> Result<Json<ProcessListResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
+    let actor = build_actor_context(&state.permissions_manager, &user).await;
     // process.view sees every resident's list too, but never gains write access.
-    let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
+    let is_global_reviewer = super::can_view_all_processes(&user);
+    // A plain designation holder (no global permission) gets the reviewer-style list
+    // too, but it's filtered below to only what's actually pending on their own
+    // designation — never the full, unscoped resident list.
+    let is_scoped_reviewer = !is_global_reviewer && !actor.designation_codes.is_empty();
+    let can_view_all = !payload.personal_only && (is_global_reviewer || is_scoped_reviewer);
     let mut items = if can_view_all {
         process::db::list_all_processes(&mut conn).await
     } else {
@@ -438,6 +499,21 @@ pub async fn list_user_processes(
             }
             _ => "USER_INPUT_REQUIRED".to_string(),
         });
+    }
+
+    if can_view_all {
+        let mut template_cache: HashMap<i32, process::ProcessTemplate> = HashMap::new();
+        for item in items.iter_mut() {
+            if item.status.as_deref() == Some("COMPLETED") {
+                item.pending_on_caller = Some(false);
+                continue;
+            }
+            item.pending_on_caller =
+                compute_pending_on_caller(&mut conn, item, &actor, &mut template_cache).await;
+        }
+        if is_scoped_reviewer {
+            items.retain(|item| item.pending_on_caller == Some(true));
+        }
     }
 
     // Load active flats for the user (empty for Admin if they don't have flats, but normal for user)
