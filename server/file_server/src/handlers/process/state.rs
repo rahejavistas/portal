@@ -192,36 +192,32 @@ pub struct ProcessListResponse {
 
 /// Whether `actor` can personally act on `item` right now. `template_cache` avoids
 /// reloading the same version for every row sharing it.
-async fn compute_pending_on_caller(
-    conn: &mut sqlx::PgConnection,
+/// Pure once `template_cache`/`wing_rep_codes`/`steps_by_process`/`reviews_by_process`
+/// are pre-loaded in batch — a per-row DB round trip here would cost 3xN queries on a
+/// `/process/list` call for a scoped reviewer, who always gets the full unfiltered list.
+fn compute_pending_on_caller(
     item: &process::db::ProcessListItem,
     actor: &process::state_machine::ActorContext,
-    template_cache: &mut HashMap<i32, process::ProcessTemplate>,
+    template_cache: &HashMap<i32, process::ProcessTemplate>,
+    wing_rep_codes: &HashMap<i32, String>,
+    steps_by_process: &HashMap<Uuid, HashMap<i32, process::state_machine::StepStateDb>>,
+    reviews_by_process: &HashMap<Uuid, Vec<process::db::ProcessReviewHistory>>,
 ) -> Option<bool> {
-    let template = match template_cache.get(&item.template_version_id) {
-        Some(t) => t.clone(),
-        None => {
-            let t = process::template_store::load_template_version(conn, item.template_version_id)
-                .await
-                .ok()?;
-            template_cache.insert(item.template_version_id, t.clone());
-            t
-        }
-    };
-    let wing_rep_code = match item.ownership_id {
-        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
-            .await
-            .ok()
-            .flatten(),
-        None => None,
-    };
+    let template = template_cache.get(&item.template_version_id)?.clone();
+    let wing_rep_code = item
+        .ownership_id
+        .and_then(|oid| wing_rep_codes.get(&oid).cloned());
     let template =
         process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
             .ok()?;
 
-    let steps = process::db::load_steps(conn, item.process_id).await.ok()?;
-    let reviews = get_process_reviews(conn, item.process_id)
-        .await
+    let steps = steps_by_process
+        .get(&item.process_id)
+        .cloned()
+        .unwrap_or_default();
+    let reviews = reviews_by_process
+        .get(&item.process_id)
+        .cloned()
         .unwrap_or_default();
     let mut reviews_by_step: HashMap<i32, Vec<process::state_machine::ReviewState>> =
         HashMap::new();
@@ -500,14 +496,55 @@ pub async fn list_user_processes(
     }
 
     if can_view_all {
+        let pending_ids: Vec<Uuid> = items
+            .iter()
+            .filter(|item| item.status.as_deref() != Some("COMPLETED"))
+            .map(|item| item.process_id)
+            .collect();
+        let ownership_ids: Vec<i32> = items
+            .iter()
+            .filter(|item| item.status.as_deref() != Some("COMPLETED"))
+            .filter_map(|item| item.ownership_id)
+            .collect();
+
+        let wing_rep_codes =
+            process::db::get_wing_representative_codes_for_ownerships(&mut conn, &ownership_ids)
+                .await
+                .unwrap_or_default();
+        let steps_by_process = process::db::load_steps_for_processes(&mut conn, &pending_ids)
+            .await
+            .unwrap_or_default();
+        let reviews_by_process =
+            process::db::get_process_reviews_for_processes(&mut conn, &pending_ids)
+                .await
+                .unwrap_or_default();
+
         let mut template_cache: HashMap<i32, process::ProcessTemplate> = HashMap::new();
         for item in items.iter_mut() {
             if item.status.as_deref() == Some("COMPLETED") {
                 item.pending_on_caller = Some(false);
                 continue;
             }
-            item.pending_on_caller =
-                compute_pending_on_caller(&mut conn, item, &actor, &mut template_cache).await;
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                template_cache.entry(item.template_version_id)
+            {
+                if let Ok(t) = process::template_store::load_template_version(
+                    &mut conn,
+                    item.template_version_id,
+                )
+                .await
+                {
+                    e.insert(t);
+                }
+            }
+            item.pending_on_caller = compute_pending_on_caller(
+                item,
+                &actor,
+                &template_cache,
+                &wing_rep_codes,
+                &steps_by_process,
+                &reviews_by_process,
+            );
         }
         if is_scoped_reviewer {
             items.retain(|item| item.pending_on_caller == Some(true));

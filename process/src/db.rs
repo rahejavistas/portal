@@ -440,7 +440,7 @@ pub async fn get_user_email(
         .await
 }
 
-#[derive(serde::Serialize, sqlx::FromRow)]
+#[derive(Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ProcessReviewHistory {
     pub review_id: Uuid,
     pub template_step_id: i32,
@@ -624,6 +624,110 @@ pub async fn get_wing_representative_code_for_ownership(
     .bind(ownership_id)
     .fetch_optional(conn)
     .await
+}
+
+/// Batched form of `get_wing_representative_code_for_ownership`, for listing many
+/// processes without one query per row. Ownerships with no wing-rep resolve to nothing.
+pub async fn get_wing_representative_codes_for_ownerships(
+    conn: &mut sqlx::PgConnection,
+    ownership_ids: &[i32],
+) -> Result<HashMap<i32, String>, sqlx::Error> {
+    let rows: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT fo.ownership_id, d.code FROM flat_ownerships fo \
+         JOIN flats f ON fo.flat_id = f.flat_id \
+         JOIN wings w ON w.name = f.wing \
+         JOIN designations d ON d.designation_id = w.representative_designation_id \
+         WHERE fo.ownership_id = ANY($1)",
+    )
+    .bind(ownership_ids)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Batched form of `load_steps`, keyed by `process_id`.
+pub async fn load_steps_for_processes(
+    conn: &mut sqlx::PgConnection,
+    process_ids: &[Uuid],
+) -> Result<HashMap<Uuid, HashMap<i32, StepStateDb>>, sqlx::Error> {
+    let rows: Vec<(Uuid, i32, bool, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT process_id, template_step_id, is_completed, started_at \
+         FROM process_steps WHERE process_id = ANY($1)",
+    )
+    .bind(process_ids)
+    .fetch_all(conn)
+    .await?;
+
+    let mut by_process: HashMap<Uuid, HashMap<i32, StepStateDb>> = HashMap::new();
+    for (pid, tid, completed, started) in rows {
+        by_process.entry(pid).or_default().insert(
+            tid,
+            StepStateDb {
+                is_completed: completed,
+                started_at: started,
+            },
+        );
+    }
+    Ok(by_process)
+}
+
+/// Batched form of `get_process_reviews`, keyed by `process_id`.
+pub async fn get_process_reviews_for_processes(
+    conn: &mut sqlx::PgConnection,
+    process_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<ProcessReviewHistory>>, sqlx::Error> {
+    #[allow(clippy::type_complexity)]
+    let rows: Vec<(
+        Uuid,
+        Uuid,
+        i32,
+        Option<String>,
+        bool,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+        Vec<i32>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT ps.process_id, pr.review_id, ps.template_step_id, u.email as admin_email, \
+                pr.is_approved, pr.notes, pr.created_at, pr.flagged_step_ids, pr.acted_as_designation \
+         FROM process_step_reviews pr \
+         JOIN process_steps ps ON pr.step_instance_id = ps.step_instance_id \
+         LEFT JOIN users u ON pr.reviewer_user_id = u.user_id \
+         WHERE ps.process_id = ANY($1) \
+         ORDER BY pr.created_at ASC",
+    )
+    .bind(process_ids)
+    .fetch_all(conn)
+    .await?;
+
+    let mut by_process: HashMap<Uuid, Vec<ProcessReviewHistory>> = HashMap::new();
+    for (
+        process_id,
+        review_id,
+        template_step_id,
+        admin_email,
+        is_approved,
+        notes,
+        created_at,
+        flagged_step_ids,
+        acted_as_designation,
+    ) in rows
+    {
+        by_process
+            .entry(process_id)
+            .or_default()
+            .push(ProcessReviewHistory {
+                review_id,
+                template_step_id,
+                admin_email,
+                is_approved,
+                notes,
+                created_at,
+                flagged_step_ids,
+                acted_as_designation,
+            });
+    }
+    Ok(by_process)
 }
 
 pub async fn get_active_ownerships_for_user(
