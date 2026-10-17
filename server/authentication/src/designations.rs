@@ -77,6 +77,19 @@ impl PermissionsManager {
             );
         }
 
+        let is_wing_representative: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM wings w \
+             JOIN designations d ON d.designation_id = w.representative_designation_id \
+             WHERE d.code = $1)",
+        )
+        .bind(code)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        if is_wing_representative {
+            return Err("Cannot delete: this designation is a wing's representative.".to_string());
+        }
+
         sqlx::query("UPDATE designations SET is_active = FALSE WHERE code = $1")
             .bind(code)
             .execute(&self.pool)
@@ -128,6 +141,10 @@ impl PermissionsManager {
         label: &str,
         created_by: Option<i32>,
     ) -> Result<Designation, String> {
+        if code.starts_with("wing_rep_") {
+            return Err("Designation codes starting with 'wing_rep_' are reserved.".to_string());
+        }
+
         let designation = sqlx::query_as(
             "INSERT INTO designations (code, label, is_system, created_by) VALUES ($1, $2, FALSE, $3) \
              RETURNING designation_id, code, label, is_system, ARRAY[]::TEXT[] AS permission_codes",

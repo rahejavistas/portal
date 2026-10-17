@@ -750,12 +750,16 @@ pub struct FieldChangePdfEntry {
     pub acted_as_designation: Option<String>,
 }
 
+/// Fits within `AUDIT_COL_ACTOR`'s remaining page width at the table's font size.
+const AUDIT_COL_ACTOR_MAX_CHARS: usize = 40;
+
 fn actor_display(actor_email: Option<&str>, acted_as_designation: Option<&str>) -> String {
     let actor = actor_email.unwrap_or("System");
-    match acted_as_designation {
+    let display = match acted_as_designation {
         Some(d) => format!("{} (as {})", actor, d),
         None => actor.to_string(),
-    }
+    };
+    truncate(&display, AUDIT_COL_ACTOR_MAX_CHARS)
 }
 
 const AUDIT_COL_EVENT: f32 = 68.0;
@@ -1293,5 +1297,21 @@ mod tests {
             text.contains("27ABCDE1234F1Z5"),
             "missing real GSTIN: {text}"
         );
+    }
+
+    #[test]
+    fn actor_display_truncates_to_fit_the_actor_column() {
+        let long = actor_display(
+            Some("a.very.long.resident.email.address@society-management.test"),
+            Some("Wing Representative A"),
+        );
+        assert!(
+            long.chars().count() <= AUDIT_COL_ACTOR_MAX_CHARS,
+            "actor text must never overflow its column: {long}"
+        );
+        assert!(long.ends_with('…'));
+
+        let short = actor_display(Some("a@b.com"), None);
+        assert_eq!(short, "a@b.com");
     }
 }

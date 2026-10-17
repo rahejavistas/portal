@@ -244,7 +244,7 @@ pub async fn review_step(
     mut params: ReviewStepParams<'_>,
     actor: &state_machine::ActorContext,
 ) -> Result<ReviewStepOutcome, String> {
-    let mut state = load_state(conn, process_id, template)
+    let state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
     let before_statuses = state_machine::compute_statuses(template, &state);
@@ -277,11 +277,10 @@ pub async fn review_step(
         .await
         .map_err(|e| e.to_string())?;
 
-    for &(sid, completed) in &steps_to_update {
-        if let Some(s) = state.steps.get_mut(&sid) {
-            s.is_completed = completed;
-        }
-    }
+    // Fresh load: insert_review above just added a row compute_statuses depends on.
+    let state = load_state(&mut *conn, process_id, template)
+        .await
+        .map_err(|e| e.to_string())?;
     let after_statuses = state_machine::compute_statuses(template, &state);
     let newly_opened_step_ids =
         state_machine::newly_opened_steps(&before_statuses, &after_statuses);
@@ -522,6 +521,10 @@ pub struct ProcessListItem {
     pub current_turn: Option<String>,
     #[sqlx(default)]
     pub status: Option<String>,
+    /// Set only for the reviewer-facing list (`can_view_all`) — whether the caller
+    /// personally can act on this process right now, not just "is it admin's turn".
+    #[sqlx(default)]
+    pub pending_on_caller: Option<bool>,
     pub tat_working_days: Option<i32>,
     pub sla_started_at: Option<chrono::DateTime<chrono::Utc>>,
     pub sla_due_date: Option<chrono::NaiveDate>,

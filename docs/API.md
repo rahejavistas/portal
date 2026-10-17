@@ -507,7 +507,8 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   holding the designation is itself enough to load, fill, review, and reopen that stage
   on any resident's process, scoped to only the step(s) that designation owns — nothing
   broader. Holding `process.reviewer` globally, even as a super admin, does not grant
-  access to a `Designation`-owned stage the caller doesn't hold. The check is
+  access to *fill* a `Designation`-owned stage the caller doesn't hold — but a global
+  `process.reviewer` can still review or reopen it, same as any other stage. The check is
   re-evaluated live on every request, so assigning or revoking the designation takes
   effect on the holder's very next call, no caching involved. Every write this scoping
   governs (`process_fields`, `process_step_reviews`, `process_audit_log`) snapshots which

@@ -427,3 +427,290 @@ async fn test_assigning_wing_representative_designation_after_step_already_open(
         .expect("the late-assigned holder must still be able to act on the already-open stage");
     assert_eq!(result["status"], "success");
 }
+
+fn list_processes(url: &str, jwt: &str) -> serde_json::Value {
+    ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({ "personal_only": false }))
+        .expect("list processes")
+        .into_json()
+        .unwrap()
+}
+
+/// A plain designation holder's list is scoped to only what's pending on them.
+#[tokio::test]
+async fn test_process_list_scopes_plain_designation_holder_to_their_own_pending_work() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let wing_template_id =
+        create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+    let secretary_template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+
+    let _wing_owner_id =
+        quick_create_user(&env, &admin_jwt, "list_wing_owner@dtest.test", "A", "209");
+    let wing_owner_jwt = quick_onboard_user(&env, "list_wing_owner@dtest.test", "password123");
+    let wing_state = start_process(&url, &wing_owner_jwt, wing_template_id);
+    let wing_process_id = wing_state["process_id"].as_str().unwrap().to_string();
+
+    let _secretary_owner_id = quick_create_user(
+        &env,
+        &admin_jwt,
+        "list_secretary_owner@dtest.test",
+        "D",
+        "210",
+    );
+    let secretary_owner_jwt =
+        quick_onboard_user(&env, "list_secretary_owner@dtest.test", "password123");
+    let secretary_state = start_process(&url, &secretary_owner_jwt, secretary_template_id);
+    let secretary_process_id = secretary_state["process_id"].as_str().unwrap().to_string();
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "list_wing_a_rep@dtest.test", "A", "211");
+    let a_rep_jwt = quick_onboard_user(&env, "list_wing_a_rep@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let listed = list_processes(&url, &a_rep_jwt);
+    let processes = listed["processes"].as_array().unwrap();
+    let process_ids: Vec<&str> = processes
+        .iter()
+        .map(|p| p["process_id"].as_str().unwrap())
+        .collect();
+
+    assert!(
+        process_ids.contains(&wing_process_id.as_str()),
+        "wing A's rep must see the process pending on their own designation"
+    );
+    assert!(
+        !process_ids.contains(&secretary_process_id.as_str()),
+        "wing A's rep must NOT see an unrelated resident's process owned by a different designation"
+    );
+    assert_eq!(
+        processes.len(),
+        1,
+        "a plain designation holder's list must contain only what's pending on them, nothing else"
+    );
+    assert_eq!(processes[0]["pending_on_caller"], true);
+}
+
+/// A real global reviewer still sees everyone's processes (unchanged), with
+/// `pending_on_caller` correctly set per item instead of being filtered away.
+#[tokio::test]
+async fn test_process_list_shows_full_list_with_pending_flag_for_global_reviewer() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+    let _owner_id = quick_create_user(&env, &admin_jwt, "list_owner2@dtest.test", "A", "212");
+    let owner_jwt = quick_onboard_user(&env, "list_owner2@dtest.test", "password123");
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+
+    let listed = list_processes(&url, &admin_jwt);
+    let processes = listed["processes"].as_array().unwrap();
+    let entry = processes
+        .iter()
+        .find(|p| p["process_id"].as_str() == Some(process_id.as_str()))
+        .expect("super_admin must see every process, including this one");
+
+    // super_admin holds process.reviewer globally but not the "wing_rep_a" designation —
+    // exclusivity means it's still not pending on them specifically.
+    assert_eq!(entry["pending_on_caller"], false);
+}
+
+fn review_cascade_template() -> process::ProcessTemplate {
+    let note_field = |field_id: i32| process::ProcessFieldTemplate {
+        field_id,
+        name: "Note".to_string(),
+        description: None,
+        r#type: process::FieldType::Text,
+        is_optional: false,
+        requirements: None,
+        requires_signature: false,
+        required_signs_from_designations: vec![],
+        options: None,
+        example_document_id: None,
+    };
+    process::ProcessTemplate {
+        name: "Review Cascade Test".to_string(),
+        description: None,
+        step_id: 1,
+        is_optional: false,
+        fields: None,
+        tat_working_days: None,
+        filled_by: process::StepOwner::User,
+        substeps: Some(vec![
+            process::ProcessStepTemplate {
+                step_id: 2,
+                name: "Resident Stage".to_string(),
+                description: None,
+                is_optional: false,
+                filled_by: process::StepOwner::User,
+                fields: Some(vec![note_field(201)]),
+                substeps: None,
+            },
+            process::ProcessStepTemplate {
+                step_id: 3,
+                name: "Designation Stage".to_string(),
+                description: None,
+                is_optional: false,
+                filled_by: process::StepOwner::Designation {
+                    code: "secretary".to_string(),
+                },
+                fields: Some(vec![note_field(202)]),
+                substeps: None,
+            },
+        ]),
+    }
+}
+
+async fn seed_template_version(
+    conn: &mut sqlx::PgConnection,
+    template: &process::ProcessTemplate,
+) -> i32 {
+    let template_id: i32 = sqlx::query_scalar(
+        "INSERT INTO process_templates (name) VALUES ($1) RETURNING template_id",
+    )
+    .bind(&template.name)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+
+    let definition = serde_json::to_value(template).unwrap();
+    sqlx::query_scalar(
+        "INSERT INTO process_template_versions (template_id, version_number, definition) \
+         VALUES ($1, 1, $2) RETURNING version_id",
+    )
+    .bind(template_id)
+    .bind(&definition)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
+/// First-time approval must report the cascaded Designation stage as newly-opened.
+#[tokio::test]
+async fn test_review_step_reports_cascaded_designation_stage_as_newly_opened() {
+    let env = quality::setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    let user_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) VALUES ('review_cascade_user@vistas.com', TRUE) \
+         RETURNING user_id",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+
+    let template = review_cascade_template();
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(&mut conn, user_id, version_id, &template, None)
+        .await
+        .unwrap()
+        .process_id;
+
+    let actor = process::state_machine::ActorContext {
+        is_admin: false,
+        designation_codes: Default::default(),
+    };
+    process::db::save_step(
+        &mut conn,
+        process_id,
+        &template,
+        2,
+        &[process::state_machine::SaveFieldInput {
+            template_field_id: 201,
+            text_value: Some("done".to_string()),
+            document_id: None,
+        }],
+        &actor,
+        user_id,
+    )
+    .await
+    .expect("resident fills their stage");
+
+    let statuses = process::db::get_statuses(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(
+        statuses.get(&2),
+        Some(&process::state_machine::StepStatus::PendingReview),
+        "a top-level User-owned stage needs admin review before completing"
+    );
+    assert_eq!(
+        statuses.get(&3),
+        Some(&process::state_machine::StepStatus::Locked),
+        "the designation stage must still be locked before stage 2 is approved"
+    );
+
+    let admin_actor = process::state_machine::ActorContext {
+        is_admin: true,
+        designation_codes: Default::default(),
+    };
+    let outcome = process::db::review_step(
+        &mut conn,
+        process_id,
+        &template,
+        process::db::ReviewStepParams {
+            step_id: 2,
+            reviewer_user_id: Some(user_id),
+            is_approved: true,
+            notes: None,
+            flagged_step_ids: &[],
+            acted_as_designation: None,
+        },
+        &admin_actor,
+    )
+    .await
+    .expect("admin approves the resident's stage");
+
+    assert!(
+        outcome.newly_opened_step_ids.contains(&3),
+        "approving stage 2 for the first time must report stage 3 (designation-owned) as \
+         newly opened, or its 'your turn' notification silently never fires: got {:?}",
+        outcome.newly_opened_step_ids
+    );
+}
+
+/// An admin-chosen designation code can't collide with the auto-provisioned wing-rep
+/// slug and silently inherit standing on that wing's stages.
+#[tokio::test]
+async fn test_create_designation_rejects_reserved_wing_rep_prefix() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/create", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({ "code": "wing_rep_x", "label": "Totally Unrelated" }));
+    match resp {
+        Ok(_) => panic!("a 'wing_rep_' prefixed code must be rejected, not accepted"),
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 400),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+/// A wing can never be left without a possible representative: its auto-provisioned
+/// designation must not be deletable even while nobody currently holds it.
+#[tokio::test]
+async fn test_cannot_delete_a_wings_representative_designation() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    // Provisions wing "Z" and its "wing_rep_z" designation; nobody holds it yet.
+    quick_create_user(&env, &admin_jwt, "wing_z_owner@dtest.test", "Z", "901");
+
+    let resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/delete", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({ "code": "wing_rep_z" }));
+    match resp {
+        Ok(_) => panic!("a wing's representative designation must not be deletable"),
+        Err(ureq::Error::Status(code, _)) => assert_eq!(code, 400),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}

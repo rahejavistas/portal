@@ -12,7 +12,7 @@ pub struct NotificationContext {
 
 const PROCESS_UPDATE_SUBJECT: &str = "Update to a process";
 
-// Every public function below delegates here. Sends off-task; failures are just logged.
+// Must stay awaited, never spawned off-task — this also runs as a Lambda, which can freeze right after responding.
 async fn dispatch(
     to: &str,
     heading: &str,
@@ -33,14 +33,12 @@ async fn dispatch(
         attachment: None,
     };
 
-    tokio::spawn(async move {
-        if let Err(e) = email::send_email(&payload).await {
-            eprintln!(
-                "[NOTIFICATION] Email failed for process {}: {}",
-                process_id, e
-            );
-        }
-    });
+    if let Err(e) = email::send_email(&payload).await {
+        eprintln!(
+            "[NOTIFICATION] Email failed for process {}: {}",
+            process_id, e
+        );
+    }
 }
 
 /// Deep-links into the resident's own process detail.

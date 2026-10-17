@@ -175,19 +175,13 @@ pub async fn assign_designation(
                 .await
             {
                 notify_designation_change(&user.email, &payload.designation_code, true).await;
-                let pool = state.pg_pool.clone();
-                let permissions_manager = state.permissions_manager.clone();
-                let designation_code = payload.designation_code.clone();
-                let holder_email = user.email.clone();
-                tokio::spawn(async move {
-                    crate::handlers::process::notify_designation_of_currently_open_steps(
-                        &pool,
-                        &permissions_manager,
-                        &designation_code,
-                        &holder_email,
-                    )
-                    .await;
-                });
+                crate::handlers::process::notify_designation_of_currently_open_steps(
+                    &state.pg_pool,
+                    &state.permissions_manager,
+                    &payload.designation_code,
+                    &user.email,
+                )
+                .await;
             }
             (
                 StatusCode::OK,
@@ -285,6 +279,7 @@ pub async fn create_designation(
         .await
     {
         Ok(designation) => (StatusCode::CREATED, Json(designation)).into_response(),
+        Err(e) if e.contains("reserved") => error_response(StatusCode::BAD_REQUEST, e),
         Err(e) if e.contains("designations_code_key") => error_response(
             StatusCode::CONFLICT,
             format!("Designation code '{}' is already in use.", code),
