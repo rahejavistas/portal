@@ -9,7 +9,8 @@ pub const TEST_MINIO_PORT: u16 = 9009;
 pub const TEST_MINIO_CONSOLE_PORT: u16 = 9010;
 
 const POSTGRES_CONTAINER: &str = "vistas-test-postgres";
-const MINIO_CONTAINER: &str = "vistas-test-minio";
+// adobe/s3mock, not minio/minio — MinIO's image is no longer pullable anonymously.
+const MINIO_CONTAINER: &str = "vistas-test-s3mock";
 
 static GLOBAL_INIT: Once = Once::new();
 
@@ -110,19 +111,16 @@ pub fn ensure_global_containers_running() {
                 .args([
                     "run",
                     "--name", MINIO_CONTAINER,
-                    "-p", &format!("{}:9000", TEST_MINIO_PORT),
-                    "-p", &format!("{}:9001", TEST_MINIO_CONSOLE_PORT),
-                    "-e", "MINIO_ROOT_USER=admin",
-                    "-e", "MINIO_ROOT_PASSWORD=password",
+                    "-p", &format!("{}:9090", TEST_MINIO_PORT),
+                    "-p", &format!("{}:9191", TEST_MINIO_CONSOLE_PORT),
                     "-d",
-                    "minio/minio",
-                    "server", "/data", "--console-address", ":9001"
+                    "adobe/s3mock"
                 ])
                 .status()
-                .expect("Failed to start Minio container");
+                .expect("Failed to start S3 mock container");
 
             if !minio_status.success() {
-                panic!("Failed to launch Minio container.");
+                panic!("Failed to launch S3 mock container.");
             }
         }
 
@@ -148,24 +146,24 @@ pub fn ensure_global_containers_running() {
             panic!("Timeout waiting for Postgres container.");
         }
 
-        // Configure bucket using mc (it's idempotent, so safe to run even if already running)
-        let mc_status = Command::new("docker")
+        // s3mock takes a few seconds to boot (it's a JVM app) and needs no auth/ACL setup.
+        let bucket_status = Command::new("docker")
             .args([
                 "run",
                 "--rm",
-                "--link", &format!("{}:minio", MINIO_CONTAINER),
+                "--link", &format!("{}:s3mock", MINIO_CONTAINER),
                 "--entrypoint", "sh",
-                "minio/mc",
+                "curlimages/curl",
                 "-c",
-                "until mc alias set myminio http://minio:9000 admin password; do sleep 0.5; done; mc mb myminio/vistas-files || true; mc anonymous set public myminio/vistas-files || true"
+                "until curl -sf http://s3mock:9090 >/dev/null; do sleep 0.5; done; curl -sf -X PUT http://s3mock:9090/vistas-files >/dev/null || true"
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .expect("Failed to configure bucket using mc");
+            .expect("Failed to create the S3 mock bucket");
 
-        if !mc_status.success() {
-            panic!("Failed to configure Minio S3 bucket.");
+        if !bucket_status.success() {
+            panic!("Failed to create the S3 mock bucket.");
         }
     });
 }
