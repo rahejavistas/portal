@@ -48,6 +48,9 @@ impl ActorContext {
             crate::StepOwner::User => true,
             crate::StepOwner::Admin => self.is_admin,
             crate::StepOwner::Designation { code } => self.designation_codes.contains(code),
+            crate::StepOwner::WingRepresentative => unreachable!(
+                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
+            ),
         }
     }
 
@@ -60,6 +63,9 @@ impl ActorContext {
             crate::StepOwner::Designation { code } => {
                 self.is_admin || self.designation_codes.contains(code)
             }
+            crate::StepOwner::WingRepresentative => unreachable!(
+                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
+            ),
         }
     }
 }
@@ -405,6 +411,30 @@ pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInp
     ProcessTurn::User
 }
 
+/// Whether `actor` can personally act on some step in this process right now.
+pub fn is_pending_on_actor(
+    template: &crate::ProcessTemplate,
+    state: &ProcessStateInput,
+    actor: &ActorContext,
+) -> bool {
+    let statuses = compute_statuses(template, state);
+    let info_map = build_step_info_map(template);
+
+    statuses.iter().any(|(step_id, status)| {
+        let Some(info) = info_map.get(step_id) else {
+            return false;
+        };
+        match status {
+            StepStatus::Open => {
+                !matches!(info.filled_by, crate::StepOwner::User)
+                    && actor.may_act_on(&info.filled_by)
+            }
+            StepStatus::PendingReview => actor.may_review(&info.filled_by),
+            StepStatus::Locked | StepStatus::Completed => false,
+        }
+    })
+}
+
 /// Validates fields and computes DB updates for a step save. Does not touch the DB.
 pub fn validate_save(
     template: &crate::ProcessTemplate,
@@ -450,6 +480,9 @@ pub fn validate_save(
             crate::StepOwner::Designation { code } => format!(
                 "This stage can only be filled by someone holding the '{}' designation",
                 code
+            ),
+            crate::StepOwner::WingRepresentative => unreachable!(
+                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
             ),
         });
     }
@@ -640,10 +673,15 @@ pub fn compute_review_updates(
                 "This stage can only be reviewed by someone holding the '{}' designation",
                 code
             ),
+            crate::StepOwner::WingRepresentative => unreachable!(
+                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
+            ),
         });
     }
     let acted_as_designation = match &info.filled_by {
-        crate::StepOwner::Designation { code } => Some(code.clone()),
+        crate::StepOwner::Designation { code } if actor.designation_codes.contains(code) => {
+            Some(code.clone())
+        }
         _ => None,
     };
 
@@ -713,10 +751,15 @@ pub fn compute_reopen_updates(
                 "This stage can only be reopened by someone holding the '{}' designation",
                 code
             ),
+            crate::StepOwner::WingRepresentative => unreachable!(
+                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
+            ),
         });
     }
     let acted_as_designation = match &info.filled_by {
-        crate::StepOwner::Designation { code } => Some(code.clone()),
+        crate::StepOwner::Designation { code } if actor.designation_codes.contains(code) => {
+            Some(code.clone())
+        }
         _ => None,
     };
 
@@ -1159,5 +1202,63 @@ mod tests {
         .unwrap();
         assert_eq!(result.new_status, StepStatus::Completed);
         assert_eq!(result.acted_as_designation, Some("secretary".to_string()));
+    }
+
+    #[test]
+    fn is_pending_on_actor_respects_designation_exclusivity() {
+        let mut template = crate::test_fixtures::tenant_onboarding_fixture();
+        template.substeps.as_mut().unwrap()[1].filled_by = crate::StepOwner::Designation {
+            code: "secretary".to_string(),
+        };
+
+        let mut state = ProcessStateInput::default();
+        for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
+            state.fields.insert(
+                fid,
+                FieldState {
+                    text_value: None,
+                    document_id: Some(Uuid::new_v4()),
+                },
+            );
+        }
+        for sid in [3, 4, 5, 6, 2] {
+            state.steps.insert(
+                sid,
+                StepStateDb {
+                    is_completed: true,
+                    started_at: None,
+                },
+            );
+        }
+        state.reviews.insert(
+            2,
+            vec![ReviewState {
+                is_approved: true,
+                created_at: chrono::Utc::now(),
+            }],
+        );
+
+        let global_admin = actor(true);
+        assert!(
+            !is_pending_on_actor(&template, &state, &global_admin),
+            "a global admin without the designation must not see this as pending on them"
+        );
+
+        let mut designation_codes = HashSet::new();
+        designation_codes.insert("secretary".to_string());
+        let secretary = ActorContext {
+            is_admin: false,
+            designation_codes,
+        };
+        assert!(
+            is_pending_on_actor(&template, &state, &secretary),
+            "the designation's own holder must see this as pending on them"
+        );
+
+        let resident = ActorContext::default();
+        assert!(
+            !is_pending_on_actor(&template, &state, &resident),
+            "an Open Designation-owned step is never pending on a plain resident"
+        );
     }
 }

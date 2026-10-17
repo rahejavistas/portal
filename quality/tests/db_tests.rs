@@ -1,6 +1,6 @@
 use authentication::PermissionsManager;
 use base::flat::FlatIdentifier;
-use quality::setup_db_test_env;
+use quality::{ensure_wing_exists_for_test, setup_db_test_env};
 use std::sync::Arc;
 
 /// Tests programmatic user creation, credentials seeding, and matching database entries.
@@ -204,6 +204,7 @@ async fn test_document_manager_visibility_resolution() {
     assert!(allowed_ids.contains(&doc2.document.document_id));
 
     let flat_b_id = FlatIdentifier::new("B", "0202").unwrap();
+    ensure_wing_exists_for_test(&pool, "B").await;
     sqlx::query(
         "INSERT INTO flats (wing, flat_number) VALUES ('B', '0202') ON CONFLICT DO NOTHING",
     )

@@ -2,7 +2,7 @@ use process::{
     state_machine::{ActorContext, SaveFieldInput, StepStatus},
     ProcessTemplate,
 };
-use quality::setup_db_test_env;
+use quality::{ensure_wing_exists_for_test, setup_db_test_env};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -1074,6 +1074,7 @@ async fn test_process_cascade_deletion_on_user_revoke() {
     .await
     .unwrap();
 
+    ensure_wing_exists_for_test(&pool, "R").await;
     let flat_id: i32 = sqlx::query_scalar(
         "INSERT INTO flats (wing, flat_number) VALUES ('R', '101') RETURNING flat_id",
     )

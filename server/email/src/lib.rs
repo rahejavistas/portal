@@ -102,7 +102,7 @@ fn render_html(msg: &EmailMessage) -> String {
          <h1 style=\"margin:0 0 16px; font-size:20px; font-weight:800; color:#111827;\">{}</h1>\
          <div style=\"font-size:15px; line-height:1.5; color:#374151;\">{}{}{}</div>\
          </div>\
-         <p style=\"margin:20px 8px 0; font-size:12px; color:#9CA3AF; text-align:center;\">Raheja Vistas Documents Portal</p>\
+         <p style=\"margin:20px 8px 0; font-size:12px; color:#9CA3AF; text-align:center;\">Raheja Vistas</p>\
          </td></tr></table></body></html>",
         html_escape(&msg.heading),
         paragraphs_html,

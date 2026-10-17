@@ -739,6 +739,7 @@ pub struct AuditPdfEntry {
     pub event_label: String,
     pub actor_email: Option<String>,
     pub detail: Option<String>,
+    pub acted_as_designation: Option<String>,
 }
 
 pub struct FieldChangePdfEntry {
@@ -746,6 +747,15 @@ pub struct FieldChangePdfEntry {
     pub field_name: String,
     pub value: String,
     pub actor_email: Option<String>,
+    pub acted_as_designation: Option<String>,
+}
+
+fn actor_display(actor_email: Option<&str>, acted_as_designation: Option<&str>) -> String {
+    let actor = actor_email.unwrap_or("System");
+    match acted_as_designation {
+        Some(d) => format!("{} (as {})", actor, d),
+        None => actor.to_string(),
+    }
 }
 
 const AUDIT_COL_EVENT: f32 = 68.0;
@@ -799,7 +809,7 @@ pub fn render_process_audit_pdf(
         doc.text_at(AUDIT_COL_EVENT, &e.event_label, 8.5, false);
         doc.text_at(
             AUDIT_COL_ACTOR,
-            e.actor_email.as_deref().unwrap_or("System"),
+            &actor_display(e.actor_email.as_deref(), e.acted_as_designation.as_deref()),
             8.5,
             false,
         );
@@ -849,7 +859,7 @@ pub fn render_process_audit_pdf(
         doc.text_at(AUDIT_COL_EVENT, &f.field_name, 8.5, false);
         doc.text_at(
             AUDIT_COL_ACTOR,
-            f.actor_email.as_deref().unwrap_or("System"),
+            &actor_display(f.actor_email.as_deref(), f.acted_as_designation.as_deref()),
             8.5,
             false,
         );

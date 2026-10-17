@@ -415,6 +415,20 @@ pub async fn get_process_info(
     .await
 }
 
+/// `(process_id, template_version_id, ownership_id)` for every process currently
+/// waiting on a non-resident action — the only ones that could have a designation-owned
+/// step open right now.
+pub async fn processes_with_admin_turn(
+    conn: &mut sqlx::PgConnection,
+) -> Result<Vec<(Uuid, i32, Option<i32>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT process_id, template_version_id, ownership_id FROM processes \
+         WHERE current_turn = 'admin'",
+    )
+    .fetch_all(conn)
+    .await
+}
+
 /// Look up a user's email address by their user_id.
 /// Used by notification helpers to build email payloads.
 pub async fn get_user_email(
@@ -588,6 +602,25 @@ pub async fn get_flat_info_for_ownership(
     .fetch_optional(conn)
     .await?;
     Ok(row.map(|(flat_id, label)| OwnershipFlatInfo { flat_id, label }))
+}
+
+/// The designation code of a flat ownership's own wing's representative, via
+/// `wings.representative_designation_id` — used to resolve a `WingRepresentative`-owned
+/// step.
+pub async fn get_wing_representative_code_for_ownership(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: i32,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT d.code FROM flat_ownerships fo \
+         JOIN flats f ON fo.flat_id = f.flat_id \
+         JOIN wings w ON w.name = f.wing \
+         JOIN designations d ON d.designation_id = w.representative_designation_id \
+         WHERE fo.ownership_id = $1",
+    )
+    .bind(ownership_id)
+    .fetch_optional(conn)
+    .await
 }
 
 pub async fn get_active_ownerships_for_user(

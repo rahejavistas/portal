@@ -125,6 +125,10 @@ Three things are **not** permissions but still gate UI:
   designation-owned stage the caller doesn't personally hold — this is a hard exclusivity,
   checked live on every request against the caller's currently-active designations, never
   cached.
+- A stage can also be assigned to "Wing Representative" instead of one fixed designation
+  — same exclusivity rule, but which designation it resolves to depends on which wing the
+  process-owning resident lives in. Every wing automatically gets its own representative
+  designation the moment its first flat is created, so this needs no manual setup.
 
 ## `process.templates.manage`
 *Create/edit process templates (the versioned builder) and activate versions.*

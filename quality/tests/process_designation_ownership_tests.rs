@@ -243,3 +243,187 @@ async fn test_non_owner_designation_holder_can_act_on_someone_elses_process() {
     assert_eq!(result["status"], "success");
     assert_eq!(result["step"]["is_completed"], true);
 }
+
+fn wing_representative_draft() -> serde_json::Value {
+    serde_json::json!({
+        "template_id": null,
+        "name": "Wing Representative Test Process",
+        "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Wing Sign-off",
+                "filled_by": { "kind": "wing_representative" },
+                "fields": [
+                    { "name": "Note", "type": "text", "filled_by": "user" }
+                ]
+            }
+        ]
+    })
+}
+
+/// `WingRepresentative` resolves to the resident-owner's OWN wing's designation —
+/// never a fixed, template-authored code. A different wing's own representative must
+/// have zero standing on it.
+#[tokio::test]
+async fn test_wing_representative_resolves_to_owners_own_wing_and_excludes_other_wings() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(&env, &admin_jwt, "wing_a_owner@dtest.test", "A", "201");
+    let owner_jwt = quick_onboard_user(&env, "wing_a_owner@dtest.test", "password123");
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "wing_a_rep@dtest.test", "A", "202");
+    let a_rep_jwt = quick_onboard_user(&env, "wing_a_rep@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let b_rep_id = quick_create_user(&env, &admin_jwt, "wing_b_rep@dtest.test", "B", "301");
+    let b_rep_jwt = quick_onboard_user(&env, "wing_b_rep@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, b_rep_id, "wing_rep_b");
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let err = save_step(&url, &b_rep_jwt, process_id, step_id, field_id).unwrap_err();
+    assert_eq!(
+        err, 403,
+        "wing B's own representative has no standing on wing A's resident's process"
+    );
+
+    let result = save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
+        .expect("wing A's own representative must be able to act");
+    assert_eq!(result["status"], "success");
+    assert_eq!(result["step"]["is_completed"], true);
+}
+
+fn revoke_step(
+    url: &str,
+    jwt: &str,
+    process_id: &str,
+    template_step_id: i64,
+) -> Result<serde_json::Value, u16> {
+    let resp = ureq::post(&format!("{}/api/v1/admin/process/revoke", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": template_step_id,
+            "notes": null
+        }));
+    match resp {
+        Ok(r) => Ok(r.into_json().unwrap()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+/// A holder of a completely unrelated designation (not a wing rep at all) has zero
+/// standing on a `WingRepresentative`-owned stage — not just "the wrong wing".
+#[tokio::test]
+async fn test_wing_representative_excludes_unrelated_designation() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(&env, &admin_jwt, "wing_a_owner2@dtest.test", "A", "203");
+    let owner_jwt = quick_onboard_user(&env, "wing_a_owner2@dtest.test", "password123");
+
+    let secretary_id = quick_create_user(&env, &admin_jwt, "secretary_x@dtest.test", "C", "401");
+    let secretary_jwt = quick_onboard_user(&env, "secretary_x@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, secretary_id, "secretary");
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "wing_a_rep2@dtest.test", "A", "204");
+    let a_rep_jwt = quick_onboard_user(&env, "wing_a_rep2@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let err = save_step(&url, &secretary_jwt, process_id, step_id, field_id).unwrap_err();
+    assert_eq!(
+        err, 403,
+        "an unrelated designation (secretary) has no standing on a wing-rep stage"
+    );
+
+    let result = save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
+        .expect("wing A's own representative must still be able to act");
+    assert_eq!(result["status"], "success");
+}
+
+/// A global admin CAN reopen a completed `WingRepresentative` stage (the review/reopen
+/// path deliberately allows an admin override, per `ActorContext::may_review`), but a
+/// holder of an unrelated designation cannot.
+#[tokio::test]
+async fn test_wing_representative_completed_step_reopen_exclusivity() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(&env, &admin_jwt, "wing_a_owner3@dtest.test", "A", "205");
+    let owner_jwt = quick_onboard_user(&env, "wing_a_owner3@dtest.test", "password123");
+
+    let secretary_id = quick_create_user(&env, &admin_jwt, "secretary_y@dtest.test", "C", "402");
+    let secretary_jwt = quick_onboard_user(&env, "secretary_y@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, secretary_id, "secretary");
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "wing_a_rep3@dtest.test", "A", "206");
+    let a_rep_jwt = quick_onboard_user(&env, "wing_a_rep3@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
+        .expect("wing A's rep completes the step");
+
+    let err = revoke_step(&url, &secretary_jwt, process_id, step_id).unwrap_err();
+    assert_eq!(
+        err, 403,
+        "an unrelated designation cannot reopen a wing-rep-owned step"
+    );
+
+    let result = revoke_step(&url, &admin_jwt, process_id, step_id)
+        .expect("a global admin can reopen any step, including a wing-rep-owned one");
+    assert_eq!(result["status"], "success");
+}
+
+/// Reproduces the exact race this feature hit in production: the stage opens BEFORE
+/// anyone holds the wing's designation. Assigning it afterward must not error, and the
+/// newly-assigned holder must immediately be able to act — proving
+/// `notify_designation_of_currently_open_steps` (the catch-up notification) never
+/// breaks the assignment flow even though no email can be asserted without an SMTP mock.
+#[tokio::test]
+async fn test_assigning_wing_representative_designation_after_step_already_open() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(&env, &admin_jwt, "wing_a_owner4@dtest.test", "A", "207");
+    let owner_jwt = quick_onboard_user(&env, "wing_a_owner4@dtest.test", "password123");
+
+    // The stage opens here — nobody holds "wing_rep_a" yet.
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let late_rep_id = quick_create_user(&env, &admin_jwt, "late_wing_a_rep@dtest.test", "A", "208");
+    let late_rep_jwt = quick_onboard_user(&env, "late_wing_a_rep@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, late_rep_id, "wing_rep_a");
+
+    let result = save_step(&url, &late_rep_jwt, process_id, step_id, field_id)
+        .expect("the late-assigned holder must still be able to act on the already-open stage");
+    assert_eq!(result["status"], "success");
+}

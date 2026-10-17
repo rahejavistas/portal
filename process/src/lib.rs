@@ -32,6 +32,9 @@ pub enum StepOwner {
     Designation {
         code: String,
     },
+    /// Resolved per-process to the owning resident's own wing's designation.
+    #[serde(rename = "wing_representative")]
+    WingRepresentative,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

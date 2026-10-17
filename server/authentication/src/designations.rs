@@ -148,6 +148,49 @@ impl PermissionsManager {
         Ok(designation)
     }
 
+    /// Idempotent: a flat's wing must have a row here (and a representative designation)
+    /// before the flat itself can be inserted, since `flats.wing` references `wings(name)`.
+    pub async fn ensure_wing_exists(
+        &self,
+        wing: &str,
+        created_by: Option<i32>,
+    ) -> Result<(), String> {
+        let exists: Option<(String,)> = sqlx::query_as("SELECT name FROM wings WHERE name = $1")
+            .bind(wing)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        if exists.is_some() {
+            return Ok(());
+        }
+
+        let code = wing_representative_designation_code(wing);
+        let label = format!("Wing Representative {}", wing);
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let designation_id: i32 = sqlx::query_scalar(
+            "INSERT INTO designations (code, label, is_system, created_by) VALUES ($1, $2, FALSE, $3) \
+             ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code \
+             RETURNING designation_id",
+        )
+        .bind(&code)
+        .bind(&label)
+        .bind(created_by)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT INTO wings (name, representative_designation_id) VALUES ($1, $2) \
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(wing)
+        .bind(designation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Grants or revokes a single permission for a designation.
     pub async fn toggle_designation_permission(
         &self,
@@ -294,6 +337,13 @@ impl PermissionsManager {
         .await
     }
 
+    pub async fn get_designation_label(&self, code: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT label FROM designations WHERE code = $1")
+            .bind(code)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
     pub async fn assign_designation(
         &self,
         user_id: i32,
@@ -368,4 +418,21 @@ impl PermissionsManager {
         }
         Ok(changed)
     }
+}
+
+/// Cosmetic only: naming for a newly auto-created designation. Resolution elsewhere
+/// always goes through `wings.representative_designation_id`, never recomputes this.
+fn wing_representative_designation_code(wing: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_sep = false;
+    for c in wing.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_was_sep = false;
+        } else if !last_was_sep {
+            slug.push('_');
+            last_was_sep = true;
+        }
+    }
+    format!("wing_rep_{}", slug)
 }

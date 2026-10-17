@@ -513,7 +513,7 @@ pub async fn forgot_password(
 
     let email_payload = email::EmailMessage {
         to: email.clone(),
-        subject: "Raheja Vistas Documents Portal: Password Setup / Reset".to_string(),
+        subject: "Raheja Vistas: Password Setup / Reset".to_string(),
         heading: "Set Up / Reset Your Password".to_string(),
         paragraphs: vec![
             "Click the button below to set up or reset your password.".to_string(),

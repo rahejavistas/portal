@@ -175,6 +175,19 @@ pub async fn assign_designation(
                 .await
             {
                 notify_designation_change(&user.email, &payload.designation_code, true).await;
+                let pool = state.pg_pool.clone();
+                let permissions_manager = state.permissions_manager.clone();
+                let designation_code = payload.designation_code.clone();
+                let holder_email = user.email.clone();
+                tokio::spawn(async move {
+                    crate::handlers::process::notify_designation_of_currently_open_steps(
+                        &pool,
+                        &permissions_manager,
+                        &designation_code,
+                        &holder_email,
+                    )
+                    .await;
+                });
             }
             (
                 StatusCode::OK,

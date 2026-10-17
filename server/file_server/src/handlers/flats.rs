@@ -43,13 +43,18 @@ pub struct CreateFlatRequest {
 
 pub async fn create_flat(
     State(state): State<AppState>,
-    SessionUser(_caller): SessionUser,
+    SessionUser(caller): SessionUser,
     Json(payload): Json<CreateFlatRequest>,
 ) -> Result<Json<FlatSummary>, ApiError> {
     let flat = FlatIdentifier::new(&payload.wing, &payload.flat_number).map_err(bad_request)?;
     if payload.area_sqft.is_some_and(|a| a <= Decimal::ZERO) {
         return Err(bad_request("area_sqft must be positive"));
     }
+    state
+        .permissions_manager
+        .ensure_wing_exists(flat.wing(), Some(caller.user_id))
+        .await
+        .map_err(internal_err)?;
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
 
     let (flat_id, wing, flat_number, area_sqft, is_fire_flat): (
@@ -93,7 +98,7 @@ pub struct BulkCreateFlatsResponse {
 
 pub async fn bulk_create_flats(
     State(state): State<AppState>,
-    SessionUser(_caller): SessionUser,
+    SessionUser(caller): SessionUser,
     Json(payload): Json<BulkCreateFlatsRequest>,
 ) -> Result<Json<BulkCreateFlatsResponse>, ApiError> {
     if payload.flat_numbers.is_empty() {
@@ -109,6 +114,11 @@ pub async fn bulk_create_flats(
         .map_err(bad_request)?
         .wing()
         .to_string();
+    state
+        .permissions_manager
+        .ensure_wing_exists(&wing, Some(caller.user_id))
+        .await
+        .map_err(internal_err)?;
 
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let rows = sqlx::query(

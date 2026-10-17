@@ -435,6 +435,8 @@ impl PermissionsManager {
             None => None,
         };
 
+        self.ensure_wing_exists(wing, created_by).await?;
+
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         let user_id =
