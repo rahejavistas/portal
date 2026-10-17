@@ -155,7 +155,7 @@ pub fn ensure_global_containers_running() {
                 "--entrypoint", "sh",
                 "curlimages/curl",
                 "-c",
-                "until curl -sf http://s3mock:9090 >/dev/null; do sleep 0.5; done; curl -sf -X PUT http://s3mock:9090/vistas-files >/dev/null || true"
+                "for i in $(seq 1 60); do curl -sf http://s3mock:9090 >/dev/null 2>&1 && break; sleep 0.5; done; curl -sf http://s3mock:9090 >/dev/null 2>&1 || exit 1; curl -sf -X PUT http://s3mock:9090/vistas-files >/dev/null || true"
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -163,7 +163,7 @@ pub fn ensure_global_containers_running() {
             .expect("Failed to create the S3 mock bucket");
 
         if !bucket_status.success() {
-            panic!("Failed to create the S3 mock bucket.");
+            panic!("Timed out waiting for the S3 mock container to become ready.");
         }
     });
 }

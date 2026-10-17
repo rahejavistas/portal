@@ -510,14 +510,14 @@ pub async fn list_user_processes(
         let wing_rep_codes =
             process::db::get_wing_representative_codes_for_ownerships(&mut conn, &ownership_ids)
                 .await
-                .unwrap_or_default();
+                .internal_err()?;
         let steps_by_process = process::db::load_steps_for_processes(&mut conn, &pending_ids)
             .await
-            .unwrap_or_default();
+            .internal_err()?;
         let reviews_by_process =
             process::db::get_process_reviews_for_processes(&mut conn, &pending_ids)
                 .await
-                .unwrap_or_default();
+                .internal_err()?;
 
         let mut template_cache: HashMap<i32, process::ProcessTemplate> = HashMap::new();
         for item in items.iter_mut() {
