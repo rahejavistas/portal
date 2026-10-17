@@ -32,9 +32,25 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS designations (
+    designation_id SERIAL PRIMARY KEY,
+    code VARCHAR(64) NOT NULL UNIQUE,
+    label VARCHAR(255) NOT NULL,
+    is_system BOOLEAN DEFAULT FALSE NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS wings (
+    name VARCHAR(255) PRIMARY KEY,
+    representative_designation_id INT NOT NULL REFERENCES designations(designation_id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS flats (
     flat_id SERIAL PRIMARY KEY,
-    wing VARCHAR(255) NOT NULL,
+    wing VARCHAR(255) NOT NULL REFERENCES wings(name),
     flat_number VARCHAR(255) NOT NULL,
     -- Property of the flat, not of whichever billing plan is assigned.
     area_sqft NUMERIC(10,2) CHECK (area_sqft > 0),
@@ -57,16 +73,6 @@ ON flat_ownerships (flat_id)
 WHERE (is_active = TRUE);
 
 CREATE INDEX IF NOT EXISTS idx_flat_ownerships_user ON flat_ownerships(user_id) WHERE is_active = TRUE;
-
-CREATE TABLE IF NOT EXISTS designations (
-    designation_id SERIAL PRIMARY KEY,
-    code VARCHAR(64) NOT NULL UNIQUE,
-    label VARCHAR(255) NOT NULL,
-    is_system BOOLEAN DEFAULT FALSE NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by INT REFERENCES users(user_id) ON DELETE SET NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
-);
 
 CREATE TABLE IF NOT EXISTS permissions (
     permission_id SERIAL PRIMARY KEY,

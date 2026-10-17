@@ -41,7 +41,20 @@ pub(super) async fn load_authorized_process(
     let info = process::db::get_process_info(conn, process_id)
         .await
         .internal_err()?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, Json("Process not found".to_string())))?;
+        .ok_or_else(|| {
+            // A nonexistent process can never be owned or designation-scoped by anyone,
+            // so an already-unauthorized caller learns nothing from 404 vs 403 — give
+            // them the same 403 a real-but-inaccessible process would, not a signal that
+            // distinguishes "doesn't exist" from "exists but isn't yours."
+            if precomputed_authorized {
+                (StatusCode::NOT_FOUND, Json("Process not found".to_string()))
+            } else {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json("Access Denied: You do not own this process".to_string()),
+                )
+            }
+        })?;
 
     let template = process::template_store::load_template_version(conn, info.template_version_id)
         .await
@@ -51,6 +64,15 @@ pub(super) async fn load_authorized_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
+    let wing_rep_code = match info.ownership_id {
+        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
+            .await
+            .internal_err()?,
+        None => None,
+    };
+    let template =
+        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
     let owns_process = info.user_id == user.user_id;
     let scoped_access = designation_owns_a_step(&template, designation_codes);
@@ -123,14 +145,133 @@ pub(super) async fn notify_newly_opened_designation_steps(
         if emails.is_empty() {
             continue;
         }
+        let label = permissions_manager
+            .get_designation_label(code)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| code.to_string());
         process::notification::notify_designation_turn(
             process_id,
             &template.name,
             &info.name,
-            code,
+            &label,
             &emails,
         )
         .await;
+    }
+}
+
+/// Catches up a newly-assigned designation holder on work that's already open and
+/// waiting — a "your turn" email fires once, at the moment a step opens, so someone
+/// assigned the designation afterward would otherwise never hear about it.
+pub(super) async fn notify_designation_of_currently_open_steps(
+    pool: &sqlx::PgPool,
+    permissions_manager: &authentication::PermissionsManager,
+    designation_code: &str,
+    holder_email: &str,
+) {
+    let Ok(mut conn) = pool.acquire().await else {
+        return;
+    };
+    let Ok(candidates) = process::db::processes_with_admin_turn(&mut conn).await else {
+        return;
+    };
+
+    let label = permissions_manager
+        .get_designation_label(designation_code)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| designation_code.to_string());
+
+    let mut template_cache: std::collections::HashMap<i32, process::ProcessTemplate> =
+        std::collections::HashMap::new();
+
+    for (process_id, template_version_id, ownership_id) in candidates {
+        let template = match template_cache.get(&template_version_id) {
+            Some(t) => t.clone(),
+            None => {
+                let Ok(t) =
+                    process::template_store::load_template_version(&mut conn, template_version_id)
+                        .await
+                else {
+                    continue;
+                };
+                template_cache.insert(template_version_id, t.clone());
+                t
+            }
+        };
+        let wing_rep_code = match ownership_id {
+            Some(oid) => process::db::get_wing_representative_code_for_ownership(&mut conn, oid)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        let Ok(template) = process::template_store::resolve_wing_representatives(
+            template,
+            wing_rep_code.as_deref(),
+        ) else {
+            continue;
+        };
+
+        let Ok(steps) = process::db::load_steps(&mut conn, process_id).await else {
+            continue;
+        };
+        let reviews = process::db::get_process_reviews(&mut conn, process_id)
+            .await
+            .unwrap_or_default();
+        let mut reviews_by_step: std::collections::HashMap<
+            i32,
+            Vec<process::state_machine::ReviewState>,
+        > = std::collections::HashMap::new();
+        for r in &reviews {
+            reviews_by_step.entry(r.template_step_id).or_default().push(
+                process::state_machine::ReviewState {
+                    is_approved: r.is_approved,
+                    created_at: r.created_at,
+                },
+            );
+        }
+        let state_input = process::state_machine::ProcessStateInput {
+            steps,
+            reviews: reviews_by_step,
+            ..Default::default()
+        };
+        let statuses = process::state_machine::compute_statuses(&template, &state_input);
+        let info_map = process::state_machine::build_step_info_map(&template);
+
+        let mut matching: Option<&process::state_machine::StepInfo> = None;
+        for (step_id, status) in &statuses {
+            if *status != process::state_machine::StepStatus::Open {
+                continue;
+            }
+            let Some(info) = info_map.get(step_id) else {
+                continue;
+            };
+            let process::StepOwner::Designation { code } = &info.filled_by else {
+                continue;
+            };
+            if code != designation_code {
+                continue;
+            }
+            let is_top_level = info.parent_id == Some(template.step_id);
+            if matching.is_none() || is_top_level {
+                matching = Some(info);
+            }
+        }
+
+        if let Some(info) = matching {
+            process::notification::notify_designation_turn(
+                process_id,
+                &template.name,
+                &info.name,
+                &label,
+                &[holder_email.to_string()],
+            )
+            .await;
+        }
     }
 }
 

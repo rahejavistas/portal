@@ -548,6 +548,29 @@ pub fn quick_create_designation(env: &TestEnv, caller_jwt: &str, code: &str, lab
         .expect("Failed to create designation");
 }
 
+/// `flats.wing` references `wings(name)` — a test inserting a flat by raw SQL (bypassing
+/// the real API, which provisions this itself) must create the wing row first.
+pub async fn ensure_wing_exists_for_test(pool: &sqlx::PgPool, wing: &str) {
+    let designation_id: i32 = sqlx::query_scalar(
+        "INSERT INTO designations (code, label) VALUES ($1, $1) \
+         ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code \
+         RETURNING designation_id",
+    )
+    .bind(format!("wing_rep_test_{}", wing.to_lowercase()))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO wings (name, representative_designation_id) VALUES ($1, $2) \
+         ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(wing)
+    .bind(designation_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Creates a new document category via the roles-management API, using the caller's JWT
 /// (which must hold `documents.categories.manage`). Only PUBLIC/RESIDENT_SPECIFIC are
 /// seeded, so tests must create any other category before uploading documents into it.

@@ -497,23 +497,32 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
     ]
   }
   ```
-  `filled_by` is set once per top-level Stage (`{"kind":"user"}`, `{"kind":"admin"}`, or
-  `{"kind":"designation","code":"secretary"}`) and denormalized onto every substep beneath
-  it at save time — a field no longer carries its own `filled_by`; every field in a stage
-  shares that stage's owner. `User` always requires a reviewer's approval to complete;
-  `Admin`/`Designation` never do — filling the stage completes it immediately. A
-  `Designation`-owned stage is exclusive to that designation's active holders and requires
-  no permission grant at all: holding the designation is itself enough to load, fill,
-  review, and reopen that stage on any resident's process, scoped to only the step(s) that
-  designation owns — nothing broader. Holding `process.reviewer` globally, even as a
-  super admin, does not grant access to a `Designation`-owned stage the caller doesn't
-  hold. The check is re-evaluated live on every request, so assigning or revoking the
-  designation takes effect on the holder's very next call, no caching involved. Every
-  write this scoping governs (`process_fields`, `process_step_reviews`,
-  `process_audit_log`) snapshots which designation authorized it, surfaced back as
-  `acted_as_designation` on the corresponding response entries. When a `Designation`-owned
-  stage transitions to `Open`, every active holder of that designation is emailed;
-  `Admin`-owned stages get no such email since there's no single owner to notify.
+  `filled_by` is set once per top-level Stage (`{"kind":"user"}`, `{"kind":"admin"}`,
+  `{"kind":"designation","code":"secretary"}`, or `{"kind":"wing_representative"}`) and
+  denormalized onto every substep beneath it at save time — a field no longer carries its
+  own `filled_by`; every field in a stage shares that stage's owner. `User` always
+  requires a reviewer's approval to complete; `Admin`/`Designation`/`WingRepresentative`
+  never do — filling the stage completes it immediately. A `Designation`-owned stage is
+  exclusive to that designation's active holders and requires no permission grant at all:
+  holding the designation is itself enough to load, fill, review, and reopen that stage
+  on any resident's process, scoped to only the step(s) that designation owns — nothing
+  broader. Holding `process.reviewer` globally, even as a super admin, does not grant
+  access to a `Designation`-owned stage the caller doesn't hold. The check is
+  re-evaluated live on every request, so assigning or revoking the designation takes
+  effect on the holder's very next call, no caching involved. Every write this scoping
+  governs (`process_fields`, `process_step_reviews`, `process_audit_log`) snapshots which
+  designation authorized it, surfaced back as `acted_as_designation` on the corresponding
+  response entries. When a `Designation`-owned stage transitions to `Open`, every active
+  holder of that designation is emailed; `Admin`-owned stages get no such email since
+  there's no single owner to notify.
+
+  `WingRepresentative` is the same as `Designation` ownership, except the designation
+  itself is resolved per-process from the resident-owner's own wing (`flats.wing` →
+  `wings.representative_designation_id` → `designations.code`), not fixed in the
+  template. Every wing gets its own representative designation auto-created the moment
+  its first flat is created (labeled "Wing Representative `<wing>`", no manual setup
+  needed) — this is why `flats.wing` is a foreign key into a `wings` table rather than a
+  free-text column.
 
   A document field's `requires_signature` (default `false`) does not itself declare who
   must sign, or provision anything — signature requirements are still always attached

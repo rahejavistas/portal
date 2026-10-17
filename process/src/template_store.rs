@@ -157,6 +157,41 @@ fn collect_example_document_ids(
     }
 }
 
+/// Substitutes every `WingRepresentative` owner with `designation_code`. Errs if a
+/// `WingRepresentative` step is found but no code could be resolved for this resident —
+/// surfacing that loudly beats silently producing a step nobody can ever act on.
+pub fn resolve_wing_representatives(
+    mut template: crate::ProcessTemplate,
+    designation_code: Option<&str>,
+) -> Result<crate::ProcessTemplate, String> {
+    if let Some(subs) = &mut template.substeps {
+        for s in subs {
+            resolve_wing_representative_step(s, designation_code)?;
+        }
+    }
+    Ok(template)
+}
+
+fn resolve_wing_representative_step(
+    step: &mut crate::ProcessStepTemplate,
+    designation_code: Option<&str>,
+) -> Result<(), String> {
+    if matches!(step.filled_by, crate::StepOwner::WingRepresentative) {
+        let code = designation_code.ok_or_else(|| {
+            "This process has a step assigned to a Wing Representative, but no wing could be resolved for this resident".to_string()
+        })?;
+        step.filled_by = crate::StepOwner::Designation {
+            code: code.to_string(),
+        };
+    }
+    if let Some(subs) = &mut step.substeps {
+        for s in subs {
+            resolve_wing_representative_step(s, designation_code)?;
+        }
+    }
+    Ok(())
+}
+
 /// Denormalizes owner onto every substep so downstream code never walks back up a parent.
 fn assign_step_ids(
     draft: StepDraft,

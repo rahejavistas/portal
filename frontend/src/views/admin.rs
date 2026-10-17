@@ -625,11 +625,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
             background-color: var(--primary);
             color: var(--background);
         }
-        .reviewer-dropdown-empty {
-            padding: 9px 12px;
-            font-size: 0.8125rem;
-            color: var(--muted-foreground);
-        }
         .sub-filter-chip {
             flex-shrink: 0;
             background-color: var(--background);
@@ -3767,14 +3762,21 @@ function openDesignationPicker(field) {
                 </div>
             `).join('');
 
-            const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin');
-            const specificReviewerLabel = owner.kind === 'designation'
+            const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin' && !d.code.startsWith('wing_rep_'));
+            const isDesignationPicker = owner.kind === 'admin' || owner.kind === 'designation' || owner.kind === 'wing_representative';
+            const designationPickerLabel = owner.kind === 'admin'
+                ? 'Any Designation'
+                : owner.kind === 'wing_representative'
+                ? 'Wing Representative'
+                : owner.kind === 'designation'
                 ? ((nonSystemDesignations.find(d => d.code === owner.code) || {}).label || owner.code)
-                : 'Specific Reviewer';
+                : 'Specific Designation';
             const reviewerDropdownHtml = reviewerDropdownOpen ? `
                 <div class="reviewer-dropdown-menu" onclick="event.stopPropagation();">
+                    <div class="reviewer-dropdown-item ${owner.kind === 'admin' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Any Designation</div>
+                    <div class="reviewer-dropdown-item ${owner.kind === 'wing_representative' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'wing_representative' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Wing Representative</div>
                     ${nonSystemDesignations.length === 0
-                        ? `<div class="reviewer-dropdown-empty">No designations yet</div>`
+                        ? ''
                         : nonSystemDesignations.map(d => `<div class="reviewer-dropdown-item ${owner.kind === 'designation' && owner.code === d.code ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'designation', code: '${jsAttrEscape(d.code)}' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">${escapeHtml(d.label)}</div>`).join('')}
                 </div>
             ` : '';
@@ -3782,9 +3784,8 @@ function openDesignationPicker(field) {
                 <div style="font-size:12px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Who fills this stage</div>
                 <div class="reviewer-switch" style="margin-bottom:8px;">
                     <button type="button" class="reviewer-switch-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident</button>
-                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'admin' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; renderBuilderStageDetail();">Any Reviewer</button>
                     <div style="position:relative;">
-                        <button type="button" class="reviewer-switch-btn reviewer-switch-caret ${owner.kind === 'designation' ? 'active' : ''}" onclick="toggleReviewerDropdown(event)">${escapeHtml(specificReviewerLabel)}</button>
+                        <button type="button" class="reviewer-switch-btn reviewer-switch-caret ${isDesignationPicker ? 'active' : ''}" onclick="toggleReviewerDropdown(event)">${escapeHtml(designationPickerLabel)}</button>
                         ${reviewerDropdownHtml}
                     </div>
                 </div>
@@ -3930,6 +3931,7 @@ function openDesignationPicker(field) {
             const stage = previewState.substeps[previewSelectedIndex];
             const owner = stage.filled_by || { kind: 'user' };
             const ownerLabel = owner.kind === 'user' ? 'Resident' : owner.kind === 'admin' ? 'Any Reviewer'
+                : owner.kind === 'wing_representative' ? 'Wing Representative'
                 : ((allDesignations.find(d => d.code === owner.code) || {}).label || owner.code);
             const substepsHtml = (stage.substeps || []).map(sub => `
                 <div class="step-card">

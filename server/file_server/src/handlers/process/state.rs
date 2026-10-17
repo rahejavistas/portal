@@ -247,6 +247,15 @@ async fn resolve_or_init_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
+    let wing_rep_code = match selected_ownership {
+        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
+            .await
+            .internal_err()?,
+        None => None,
+    };
+    let template =
+        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
     let init_outcome = process::db::init_process(
         conn,
@@ -383,8 +392,11 @@ fn map_step_template(
     }
 
     let filled_by_designation_label = match &step_tpl.filled_by {
+        process::StepOwner::User | process::StepOwner::Admin => None,
         process::StepOwner::Designation { code } => ctx.designation_label_map.get(code).cloned(),
-        _ => None,
+        process::StepOwner::WingRepresentative => unreachable!(
+            "WingRepresentative is resolved into a concrete Designation before reaching here"
+        ),
     };
 
     StepResponse {
@@ -612,6 +624,9 @@ fn compute_next_actions(
                         process::StepOwner::User => "user".to_string(),
                         process::StepOwner::Admin => "admin".to_string(),
                         process::StepOwner::Designation { code } => code.clone(),
+                        process::StepOwner::WingRepresentative => unreachable!(
+                            "WingRepresentative is resolved into a concrete Designation before reaching here"
+                        ),
                     };
                     next_actions.push(NextActionInfo {
                         template_step_id: step_id,
@@ -905,6 +920,38 @@ pub async fn audit_log_pdf(
         .await
         .internal_err()?;
 
+    let field_history = process::db::get_field_history(&mut conn, payload.process_id)
+        .await
+        .internal_err()?;
+
+    let mut designation_codes: Vec<String> = audit_log
+        .iter()
+        .filter_map(|e| e.acted_as_designation.clone())
+        .chain(
+            field_history
+                .iter()
+                .filter_map(|h| h.acted_as_designation.clone()),
+        )
+        .collect();
+    designation_codes.sort();
+    designation_codes.dedup();
+    let designation_label_map: HashMap<String, String> = if designation_codes.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT code, label FROM designations WHERE code = ANY($1)",
+        )
+        .bind(&designation_codes)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect()
+    };
+    let designation_label = |code: Option<String>| {
+        code.and_then(|c| designation_label_map.get(&c).cloned().or(Some(c)))
+    };
+
     let entries: Vec<accounting::pdf::AuditPdfEntry> = audit_log
         .into_iter()
         .map(|e| accounting::pdf::AuditPdfEntry {
@@ -912,6 +959,7 @@ pub async fn audit_log_pdf(
             event_label: audit_event_label(&e.event_type),
             actor_email: e.actor_email,
             detail: e.detail,
+            acted_as_designation: designation_label(e.acted_as_designation),
         })
         .collect();
 
@@ -920,10 +968,6 @@ pub async fn audit_log_pdf(
         .flat_map(|info| info.fields.iter())
         .map(|f| (f.field_id, f.name.clone()))
         .collect();
-
-    let field_history = process::db::get_field_history(&mut conn, payload.process_id)
-        .await
-        .internal_err()?;
 
     let field_changes: Vec<accounting::pdf::FieldChangePdfEntry> = field_history
         .into_iter()
@@ -943,6 +987,7 @@ pub async fn audit_log_pdf(
                     .unwrap_or_else(|| format!("Field {}", h.template_field_id)),
                 value,
                 actor_email: h.actor_email,
+                acted_as_designation: designation_label(h.acted_as_designation),
             }
         })
         .collect();
