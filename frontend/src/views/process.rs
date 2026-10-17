@@ -1462,7 +1462,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         }
 
         function canAccessAdminProcessPage(user) {
-            return !!(user && user.can_view_all_processes);
+            return !!(user && (user.can_view_all_processes || (user.designations && user.designations.length > 0)));
         }
 
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
@@ -3031,7 +3031,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
 
 
-            const isCurrentAdmin = canReviewProcess(user);
+            const isCurrentAdmin = canReviewProcess(user) || (stepOwner.kind === 'designation' && canActOnStepOwner(stepOwner));
             if (isCurrentAdmin) {
                 const isCompleted = stepStatus === 'COMPLETED';
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';

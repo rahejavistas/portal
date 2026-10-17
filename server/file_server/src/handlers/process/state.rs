@@ -477,9 +477,7 @@ pub async fn list_user_processes(
     let actor = build_actor_context(&state.permissions_manager, &user).await;
     // process.view sees every resident's list too, but never gains write access.
     let is_global_reviewer = super::can_view_all_processes(&user);
-    // A plain designation holder (no global permission) gets the reviewer-style list
-    // too, but it's filtered below to only what's actually pending on their own
-    // designation — never the full, unscoped resident list.
+    // A plain designation holder gets this list too, filtered below to their own pending work.
     let is_scoped_reviewer = !is_global_reviewer && !actor.designation_codes.is_empty();
     let can_view_all = !payload.personal_only && (is_global_reviewer || is_scoped_reviewer);
     let mut items = if can_view_all {

@@ -714,3 +714,119 @@ async fn test_cannot_delete_a_wings_representative_designation() {
         Err(e) => panic!("transport error: {:?}", e),
     }
 }
+
+/// A plain resident with no designation and no admin permission must never see another
+/// resident's process via `/process/list`, even when explicitly asking for the full list.
+#[tokio::test]
+async fn test_plain_resident_list_excludes_other_residents_processes_even_with_personal_only_false()
+{
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    quick_create_user(&env, &admin_jwt, "list_resident_a@dtest.test", "A", "301");
+    let a_jwt = quick_onboard_user(&env, "list_resident_a@dtest.test", "password123");
+    let a_state = start_process(&url, &a_jwt, template_id);
+    let a_process_id = a_state["process_id"].as_str().unwrap().to_string();
+
+    quick_create_user(&env, &admin_jwt, "list_resident_b@dtest.test", "A", "302");
+    let b_jwt = quick_onboard_user(&env, "list_resident_b@dtest.test", "password123");
+
+    let listed = list_processes(&url, &b_jwt);
+    let processes = listed["processes"].as_array().unwrap();
+    assert!(
+        processes
+            .iter()
+            .all(|p| p["process_id"].as_str() != Some(a_process_id.as_str())),
+        "a plain resident must never see another resident's process, personal_only or not"
+    );
+}
+
+/// Wing A's representative must not see wing B's resident's process in their own list —
+/// the same `WingRepresentative` owner kind, resolved to two different designations.
+#[tokio::test]
+async fn test_wing_representative_list_excludes_a_different_wings_process() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    quick_create_user(&env, &admin_jwt, "list_wing_a_owner@dtest.test", "A", "303");
+    let a_owner_jwt = quick_onboard_user(&env, "list_wing_a_owner@dtest.test", "password123");
+    let a_state = start_process(&url, &a_owner_jwt, template_id);
+    let a_process_id = a_state["process_id"].as_str().unwrap().to_string();
+
+    quick_create_user(&env, &admin_jwt, "list_wing_b_owner@dtest.test", "B", "304");
+    let b_owner_jwt = quick_onboard_user(&env, "list_wing_b_owner@dtest.test", "password123");
+    let b_state = start_process(&url, &b_owner_jwt, template_id);
+    let b_process_id = b_state["process_id"].as_str().unwrap().to_string();
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "list_wing_a_rep5@dtest.test", "A", "305");
+    let a_rep_jwt = quick_onboard_user(&env, "list_wing_a_rep5@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let listed = list_processes(&url, &a_rep_jwt);
+    let process_ids: Vec<&str> = listed["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["process_id"].as_str().unwrap())
+        .collect();
+
+    assert!(
+        process_ids.contains(&a_process_id.as_str()),
+        "wing A's rep must see wing A's own pending process"
+    );
+    assert!(
+        !process_ids.contains(&b_process_id.as_str()),
+        "wing A's rep must never see wing B's process in their list"
+    );
+}
+
+/// Wing B's representative cannot revoke/reopen a completed stage on wing A's resident's
+/// process — exclusivity on the review/reopen action itself, not just on filling the step.
+#[tokio::test]
+async fn test_wing_representative_cannot_reopen_a_different_wings_completed_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(
+        &env,
+        &admin_jwt,
+        "list_wing_a_owner2@dtest.test",
+        "A",
+        "306",
+    );
+    let owner_jwt = quick_onboard_user(&env, "list_wing_a_owner2@dtest.test", "password123");
+
+    let a_rep_id = quick_create_user(&env, &admin_jwt, "list_wing_a_rep6@dtest.test", "A", "307");
+    let a_rep_jwt = quick_onboard_user(&env, "list_wing_a_rep6@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, a_rep_id, "wing_rep_a");
+
+    let b_rep_id = quick_create_user(&env, &admin_jwt, "list_wing_b_rep2@dtest.test", "B", "308");
+    let b_rep_jwt = quick_onboard_user(&env, "list_wing_b_rep2@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, b_rep_id, "wing_rep_b");
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
+        .expect("wing A's rep completes the step");
+
+    let err = revoke_step(&url, &b_rep_jwt, process_id, step_id).unwrap_err();
+    assert_eq!(
+        err, 403,
+        "wing B's representative has no standing to reopen wing A's resident's step"
+    );
+
+    let result = revoke_step(&url, &a_rep_jwt, process_id, step_id)
+        .expect("wing A's own representative can reopen their own stage");
+    assert_eq!(result["status"], "success");
+}
