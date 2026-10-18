@@ -221,19 +221,31 @@ fn parse_member_xlsx(bytes: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, 
 
     for row in rows_iter {
         let unit_raw = row.get(unit_idx).map(cell_text).unwrap_or_default();
-        // Title/footer rows (e.g. a trailing "XXXX" summary line) have no real flat
-        // code at all - skip silently, these aren't data rows, not failures.
-        let Ok(flat) = FlatIdentifier::parse_concatenated(&unit_raw) else {
-            continue;
-        };
-        total_rows += 1;
-
         let email = row
             .get(email_idx)
             .map(cell_text)
             .unwrap_or_default()
             .trim()
             .to_lowercase();
+        let flat = match FlatIdentifier::parse_concatenated(&unit_raw) {
+            Ok(f) => f,
+            Err(_) => {
+                // A genuine title/footer row (e.g. a trailing "XXXX" summary line) has
+                // no real data at all - skip it silently. A row with a real EmailID but
+                // a broken UnitNo is an actual failed row, not a footer to ignore.
+                if email.is_empty() {
+                    continue;
+                }
+                total_rows += 1;
+                failed_users.push(FailedUser {
+                    email,
+                    reason: format!("Invalid UnitNo: {unit_raw}."),
+                });
+                continue;
+            }
+        };
+        total_rows += 1;
+
         if email.is_empty() {
             failed_users.push(FailedUser {
                 email: format!("(flat {})", flat),
@@ -397,10 +409,16 @@ mod tests {
         users.sort_by_key(|a| a.flat.to_string());
 
         assert_eq!(
-            total_rows, 3,
-            "the title row and the 'XXXX' trailer must not count as data rows"
+            total_rows, 4,
+            "the title row and the 'XXXX' trailer must not count as data rows, but the row with a broken UnitNo and a real EmailID must"
         );
-        assert!(failed.is_empty());
+        assert_eq!(
+            failed.len(),
+            1,
+            "the '????' row has a real EmailID, so a broken UnitNo must be a reported failure, not a silent skip"
+        );
+        assert_eq!(failed[0].email, "broken.unit@example.test");
+        assert!(failed[0].reason.contains("Invalid UnitNo"));
         assert_eq!(users.len(), 3);
 
         assert_eq!(users[0].flat.to_string(), "Z-0001");

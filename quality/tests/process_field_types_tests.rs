@@ -462,6 +462,61 @@ async fn dues_upload_matches_by_flat_code_and_reports_unmatched_rows() {
 }
 
 #[tokio::test]
+async fn a_flat_code_repeated_within_one_upload_does_not_fail_the_batch() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    seed_user_with_flat(&pool, "no_dues_duplicate_row@vistas.com", "509").await;
+    let uploader_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) VALUES ('duplicate_row_uploader@vistas.com', TRUE) RETURNING user_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // A single INSERT can't let ON CONFLICT DO UPDATE touch the same row twice -
+    // a clerical duplicate in the file must not crash the whole upload.
+    let rows = vec![
+        process::dues_import::FlatDueRow {
+            wing: "F".to_string(),
+            flat_number: "509".to_string(),
+            total_due: dec!(1000.00),
+            overdue_amount: dec!(0),
+        },
+        process::dues_import::FlatDueRow {
+            wing: "F".to_string(),
+            flat_number: "509".to_string(),
+            total_due: dec!(250.00),
+            overdue_amount: dec!(0),
+        },
+    ];
+    let summary = process::dues_import::upsert_flat_dues(
+        &mut conn,
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+        uploader_id,
+        &rows,
+    )
+    .await
+    .expect("a duplicated flat code in one file must not fail the whole upload");
+    assert_eq!(summary.matched, 1);
+
+    let stored: rust_decimal::Decimal = sqlx::query_scalar(
+        "SELECT total_due FROM flat_dues_from_file f \
+         JOIN flats ON flats.flat_id = f.flat_id \
+         WHERE flats.wing = 'F' AND flats.flat_number = '509'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stored,
+        dec!(250.00),
+        "the later occurrence of a duplicated row must win"
+    );
+}
+
+#[tokio::test]
 async fn re_uploading_the_file_overwrites_the_previous_snapshot_not_accumulates() {
     let env = setup_db_test_env().await;
     let pool = env.db_pool.clone();

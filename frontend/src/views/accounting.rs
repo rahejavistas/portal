@@ -272,8 +272,8 @@ const HTML: &str = r##"
             </div>
 
             <div class="subtab-bar" id="acct-subtab-bar">
-                <button class="subtab-btn" data-tab="nodues" onclick="switchAcctTab('nodues')">No Dues File</button>
-                <button class="subtab-btn active" data-tab="overview" onclick="switchAcctTab('overview')">Overview</button>
+                <button class="subtab-btn active" data-tab="nodues" onclick="switchAcctTab('nodues')">No Dues File</button>
+                <button class="subtab-btn" data-tab="overview" onclick="switchAcctTab('overview')">Overview</button>
                 <button class="subtab-btn" data-tab="billing" onclick="switchAcctTab('billing')">Billing &amp; Invoices</button>
                 <button class="subtab-btn" data-tab="payments" onclick="switchAcctTab('payments')">Payments &amp; Claims</button>
                 <button class="subtab-btn" data-tab="vendors" onclick="switchAcctTab('vendors')">Vendors &amp; Expenses</button>
@@ -283,9 +283,9 @@ const HTML: &str = r##"
                 <button class="subtab-btn" data-tab="settings" onclick="switchAcctTab('settings')">Settings</button>
             </div>
 
-            <section class="subtab-panel" id="panel-nodues"></section>
+            <section class="subtab-panel active" id="panel-nodues"></section>
 
-            <section class="subtab-panel active" id="panel-overview"></section>
+            <section class="subtab-panel" id="panel-overview"></section>
 
             <section class="subtab-panel" id="panel-billing"></section>
 
@@ -795,8 +795,7 @@ const HTML: &str = r##"
                     ${canManageAccounting ? `
                     <form id="upload-dues-form">
                         <div class="form-group">
-                            <label for="dues-file">Dues compliance file (XLSX)</label>
-                            <input type="file" id="dues-file" accept=".xlsx,.xls" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer; width:100%; box-sizing:border-box;">
+                            <input type="file" id="dues-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer; width:100%; box-sizing:border-box;">
                         </div>
                         <button type="submit" class="btn">Upload</button>
                     </form>
@@ -824,18 +823,20 @@ const HTML: &str = r##"
                         headers: { 'Authorization': `Bearer ${token}` },
                         body: formData
                     });
-                    const data = await response.json();
-
                     if (response.ok) {
+                        const data = await response.json();
                         const unmatchedNote = data.unmatched_flat_codes.length > 0
                             ? ` ${data.unmatched_flat_codes.length} flat code(s) had no match.`
                             : '';
-                        feedback.textContent = `Matched ${data.matched} of ${data.rows_parsed} rows.${unmatchedNote}`;
+                        const skippedNote = data.skipped_rows.length > 0
+                            ? ` ${data.skipped_rows.length} row(s) skipped: ${data.skipped_rows.join('; ')}.`
+                            : '';
+                        feedback.textContent = `Dues as of ${data.as_of}. Matched ${data.matched} of ${data.rows_parsed} rows.${unmatchedNote}${skippedNote}`;
                         feedback.className = 'feedback-box success';
                         feedback.style.display = 'block';
                         fileInput.value = '';
                     } else {
-                        feedback.textContent = data.message || 'Failed to process dues file';
+                        feedback.textContent = await readErrorMessage(response);
                         feedback.className = 'feedback-box error';
                         feedback.style.display = 'block';
                     }
@@ -2395,9 +2396,9 @@ const HTML: &str = r##"
         }
 
         (function init() {
-            const initialTab = (window.location.hash || '#overview').slice(1);
-            const validTabs = ['overview', 'billing', 'payments', 'vendors', 'bankrecon', 'budgets', 'reports', 'settings'];
-            const tab = validTabs.includes(initialTab) ? initialTab : 'overview';
+            const initialTab = (window.location.hash || '#nodues').slice(1);
+            const validTabs = ['nodues', 'overview', 'billing', 'payments', 'vendors', 'bankrecon', 'budgets', 'reports', 'settings'];
+            const tab = validTabs.includes(initialTab) ? initialTab : 'nodues';
             switchAcctTab(tab);
         })();
     </script>
