@@ -26,6 +26,29 @@ pub(super) fn designation_owns_a_step(
         })
 }
 
+/// Whether any step in `template` is `Tenant`-owned.
+pub(super) fn template_has_tenant_step(template: &process::ProcessTemplate) -> bool {
+    process::state_machine::build_step_info_map(template)
+        .values()
+        .any(|info| matches!(info.filled_by, process::StepOwner::Tenant))
+}
+
+/// Whether any step in `template` is `WingRepresentative`-owned and the caller holds
+/// any wing's representative designation — the scoped access path a wing rep gets
+/// onto someone else's process.
+pub(super) fn wing_representative_owns_a_step(
+    template: &process::ProcessTemplate,
+    designation_codes: &std::collections::HashSet<String>,
+    wing_representative_codes: &std::collections::HashSet<String>,
+) -> bool {
+    designation_codes
+        .iter()
+        .any(|c| wing_representative_codes.contains(c))
+        && process::state_machine::build_step_info_map(template)
+            .values()
+            .any(|info| matches!(info.filled_by, process::StepOwner::WingRepresentative))
+}
+
 /// Load a process by ID, verify user authorization, and load its pinned template
 /// version. `precomputed_authorized` covers whatever the caller already established
 /// (global reviewer, view-only oversight, a signer's own requirement, ...); this also
@@ -64,19 +87,26 @@ pub(super) async fn load_authorized_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
-    let wing_rep_code = match info.ownership_id {
-        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
-            .await
-            .internal_err()?,
-        None => None,
-    };
-    let template =
-        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
-            .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
 
     let owns_process = info.user_id == user.user_id;
-    let scoped_access = designation_owns_a_step(&template, designation_codes);
-    if !precomputed_authorized && !owns_process && !scoped_access {
+    let wing_representative_codes = process::db::get_all_wing_representative_codes(conn)
+        .await
+        .internal_err()?;
+    let scoped_access = designation_owns_a_step(&template, designation_codes)
+        || wing_representative_owns_a_step(
+            &template,
+            designation_codes,
+            &wing_representative_codes,
+        );
+    let tenant_access = !owns_process
+        && template_has_tenant_step(&template)
+        && match info.ownership_id {
+            Some(oid) => process::db::is_active_tenant_of_ownership(conn, user.user_id, oid)
+                .await
+                .internal_err()?,
+            None => false,
+        };
+    if !precomputed_authorized && !owns_process && !scoped_access && !tenant_access {
         return Err((
             StatusCode::FORBIDDEN,
             Json("Access Denied: You do not own this process".to_string()),
@@ -95,17 +125,23 @@ pub(super) fn can_view_all_processes(user: &authentication::User) -> bool {
 
 /// Resolved fresh on every call — never cached.
 pub(super) async fn build_actor_context(
+    conn: &mut sqlx::PgConnection,
     permissions_manager: &authentication::PermissionsManager,
     user: &authentication::User,
-) -> process::state_machine::ActorContext {
+) -> Result<process::state_machine::ActorContext, ApiError> {
     let designation_codes = permissions_manager
         .active_designation_codes(user.user_id)
         .await
         .unwrap_or_default();
-    process::state_machine::ActorContext {
+    let wing_representative_codes = process::db::get_all_wing_representative_codes(conn)
+        .await
+        .internal_err()?;
+    Ok(process::state_machine::ActorContext {
         is_admin: user.has_permission(authentication::Permission::ProcessReviewer),
         designation_codes,
-    }
+        wing_representative_codes,
+        is_active_tenant_for_this_flat: false,
+    })
 }
 
 /// Emails a designation's holders once per batch, even if a Stage and its own inherited
@@ -188,7 +224,7 @@ pub(super) async fn notify_designation_of_currently_open_steps(
     let mut template_cache: std::collections::HashMap<i32, process::ProcessTemplate> =
         std::collections::HashMap::new();
 
-    for (process_id, template_version_id, ownership_id) in candidates {
+    for (process_id, template_version_id, _ownership_id) in candidates {
         let template = match template_cache.get(&template_version_id) {
             Some(t) => t.clone(),
             None => {
@@ -202,20 +238,6 @@ pub(super) async fn notify_designation_of_currently_open_steps(
                 t
             }
         };
-        let wing_rep_code = match ownership_id {
-            Some(oid) => process::db::get_wing_representative_code_for_ownership(&mut conn, oid)
-                .await
-                .ok()
-                .flatten(),
-            None => None,
-        };
-        let Ok(template) = process::template_store::resolve_wing_representatives(
-            template,
-            wing_rep_code.as_deref(),
-        ) else {
-            continue;
-        };
-
         let Ok(steps) = process::db::load_steps(&mut conn, process_id).await else {
             continue;
         };

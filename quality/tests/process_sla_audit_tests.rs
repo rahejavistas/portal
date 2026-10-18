@@ -11,7 +11,7 @@ use quality::setup_db_test_env;
 fn actor(is_admin: bool) -> ActorContext {
     ActorContext {
         is_admin,
-        designation_codes: Default::default(),
+        ..Default::default()
     }
 }
 

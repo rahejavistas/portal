@@ -1098,6 +1098,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
             color: var(--muted-foreground); letter-spacing: 0.05em;
         }
         .step-nav-name { font-size: 0.9375rem; font-weight: 600; color: var(--foreground); }
+        .step-nav-item.dragging { opacity: 0.4; }
+        .step-nav-item.drag-over { border-color: var(--primary); border-style: dashed; }
+        .step-nav-drag-handle {
+            cursor: grab; touch-action: none; user-select: none; flex-shrink: 0;
+            padding: 4px 10px; margin-left: 8px; color: var(--muted-foreground); font-size: 16px;
+        }
+        .step-nav-drag-handle:active { cursor: grabbing; }
         .step-nav-add {
             padding: 14px; text-align: center; border: 2px dashed var(--border);
             border-radius: var(--radius-lg); cursor: pointer; color: var(--muted-foreground); font-weight: 700;
@@ -3212,6 +3219,53 @@ pub(crate) const ADMIN_HTML: &str = r#"
         let allProcessTemplates = [];
         let builderState = null;
         let builderSelectedPath = null;
+        let builderDragIndex = null;
+        let builderDragOverIndex = null;
+
+        function builderStageDragStart(event, i) {
+            event.stopPropagation();
+            builderDragIndex = i;
+            builderDragOverIndex = i;
+            document.addEventListener('pointermove', builderStageDragMove);
+            document.addEventListener('pointerup', builderStageDragEnd);
+            renderBuilderStages();
+        }
+
+        function builderStageDragMove(event) {
+            if (builderDragIndex === null) return;
+            const el = document.elementFromPoint(event.clientX, event.clientY);
+            const row = el && el.closest('[data-stage-index]');
+            if (!row) return;
+            const idx = parseInt(row.getAttribute('data-stage-index'), 10);
+            if (idx !== builderDragOverIndex) {
+                builderDragOverIndex = idx;
+                renderBuilderStages();
+            }
+        }
+
+        function builderStageDragEnd() {
+            document.removeEventListener('pointermove', builderStageDragMove);
+            document.removeEventListener('pointerup', builderStageDragEnd);
+            if (builderDragIndex !== null && builderDragOverIndex !== null && builderDragIndex !== builderDragOverIndex) {
+                const stages = builderState.substeps || [];
+                const [moved] = stages.splice(builderDragIndex, 1);
+                stages.splice(builderDragOverIndex, 0, moved);
+                if (builderSelectedPath && builderSelectedPath !== 'settings') {
+                    const sel = builderSelectedPath[0];
+                    if (sel === builderDragIndex) {
+                        builderSelectedPath = [builderDragOverIndex];
+                    } else if (builderDragIndex < sel && builderDragOverIndex >= sel) {
+                        builderSelectedPath = [sel - 1];
+                    } else if (builderDragIndex > sel && builderDragOverIndex <= sel) {
+                        builderSelectedPath = [sel + 1];
+                    }
+                }
+            }
+            builderDragIndex = null;
+            builderDragOverIndex = null;
+            renderBuilderStages();
+            renderBuilderStageDetail();
+        }
 
         async function loadPublicHolidays() {
             const tbody = document.getElementById('holiday-list-rows-target');
@@ -3497,11 +3551,14 @@ pub(crate) const ADMIN_HTML: &str = r#"
             </div>`;
             html += stages.map((stage, i) => {
                 const isSelected = !isSettingsSelected && builderSelectedPath && builderSelectedPath[0] === i;
-                return `<div class="step-nav-item ${isSelected ? 'active' : ''}" onclick="builderSelectedPath=[${i}]; builderSidebarExpanded=false; renderBuilderStages(); renderBuilderStageDetail();">
+                const isDragging = builderDragIndex === i;
+                const isDragOver = builderDragIndex !== null && builderDragIndex !== i && builderDragOverIndex === i;
+                return `<div class="step-nav-item ${isSelected ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''}" data-stage-index="${i}" onclick="builderSelectedPath=[${i}]; builderSidebarExpanded=false; renderBuilderStages(); renderBuilderStageDetail();">
                     <div class="step-nav-info">
                         <span class="step-nav-num">Stage ${i + 1}</span>
                         <span class="step-nav-name">${escapeHtml(stage.name || '(untitled stage)')}</span>
                     </div>
+                    <span class="step-nav-drag-handle" onpointerdown="builderStageDragStart(event, ${i});" onclick="event.stopPropagation();">⠿</span>
                 </div>`;
             }).join('');
             html += `<div class="step-nav-add" onclick="builderSidebarExpanded=false; addBuilderStage();">+ Add Stage</div>`;

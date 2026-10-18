@@ -29,9 +29,8 @@ pub async fn upsert_flat_dues(
         });
     }
 
-    // A single INSERT can't let ON CONFLICT DO UPDATE touch the same row twice, so a
-    // flat code repeated in one file would otherwise fail the whole upload. Last
-    // occurrence wins, same as a later row in the file correcting an earlier one.
+    // ON CONFLICT DO UPDATE can't touch the same row twice in one INSERT. Last
+    // occurrence wins.
     let mut deduped: HashMap<(&str, &str), &FlatDueRow> = HashMap::new();
     for row in rows {
         deduped.insert((row.wing.as_str(), row.flat_number.as_str()), row);

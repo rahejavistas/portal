@@ -13,3 +13,4 @@ pub mod roles;
 pub mod signatures;
 pub mod signers;
 pub mod support;
+pub mod tenants;

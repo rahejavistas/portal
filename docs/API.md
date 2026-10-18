@@ -245,7 +245,7 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
   }
   ```
 * **Response (200):** `{ "status": "success", "message": "Step saved successfully", "step": { "template_step_id": 3, "is_completed": true } }`
-* Attached documents must already be confirmed and be `RESIDENT_SPECIFIC`. **403** unless the caller owns the process, holds `process.reviewer`, or holds a designation that owns `template_step_id` — note `process.view` does **not** grant write access here. Loading the process this way only gets the caller in the door; the targeted step's own `filled_by` is still separately checked (a resident can only save their own `User`-owned steps, a designation holder only their own `Designation`-owned steps). **400** on validation/state-machine errors.
+* Attached documents must already be confirmed and be `RESIDENT_SPECIFIC`. **403** unless the caller owns the process, holds `process.reviewer`, holds a designation that owns `template_step_id` (including any wing's representative designation, for a `WingRepresentative`-owned step), or is the flat's current active tenant acting on a `Tenant`-owned step — note `process.view` does **not** grant write access here. Loading the process this way only gets the caller in the door; the targeted step's own `filled_by` is still separately checked (a resident can only save their own `User`-owned steps, a designation holder only their own `Designation`-owned steps, a tenant only a `Tenant`-owned step on their own flat). **400** on validation/state-machine errors.
 
 ### POST `/api/v1/process/download-url`
 * **Request:** `{ "process_id": "uuid", "document_id": "uuid" }`
@@ -498,11 +498,12 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   }
   ```
   `filled_by` is set once per top-level Stage (`{"kind":"user"}`, `{"kind":"admin"}`,
-  `{"kind":"designation","code":"secretary"}`, or `{"kind":"wing_representative"}`) and
-  denormalized onto every substep beneath it at save time — a field no longer carries its
-  own `filled_by`; every field in a stage shares that stage's owner. `User` always
-  requires a reviewer's approval to complete; `Admin`/`Designation`/`WingRepresentative`
-  never do — filling the stage completes it immediately. A `Designation`-owned stage is
+  `{"kind":"designation","code":"secretary"}`, `{"kind":"wing_representative"}`, or
+  `{"kind":"tenant"}`) and denormalized onto every substep beneath it at save time — a
+  field no longer carries its own `filled_by`; every field in a stage shares that
+  stage's owner. `User` always requires a reviewer's approval to complete;
+  `Admin`/`Designation`/`WingRepresentative`/`Tenant` never do — filling the stage
+  completes it immediately. A `Designation`-owned stage is
   exclusive to that designation's active holders and requires no permission grant at all:
   holding the designation is itself enough to load, fill, review, and reopen that stage
   on any resident's process, scoped to only the step(s) that designation owns — nothing
@@ -517,13 +518,21 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   holder of that designation is emailed; `Admin`-owned stages get no such email since
   there's no single owner to notify.
 
-  `WingRepresentative` is the same as `Designation` ownership, except the designation
-  itself is resolved per-process from the resident-owner's own wing (`flats.wing` →
-  `wings.representative_designation_id` → `designations.code`), not fixed in the
-  template. Every wing gets its own representative designation auto-created the moment
-  its first flat is created (labeled "Wing Representative `<wing>`", no manual setup
-  needed) — this is why `flats.wing` is a foreign key into a `wings` table rather than a
-  free-text column.
+  `WingRepresentative` grants access to **any** wing's representative, not only the
+  representative of the process's own flat's wing — holding any wing's rep designation
+  (`wings.representative_designation_id` → `designations.code`, auto-created per wing
+  the moment its first flat is created, labeled "Wing Representative `<wing>`", no
+  manual setup needed) is enough to load, fill, review, and reopen a
+  `WingRepresentative`-owned stage on any resident's process. The per-wing
+  *assignment* (who holds which wing's designation) stays wing-scoped — only the
+  authorization check itself is open to every wing's rep.
+
+  `Tenant` (`{"kind":"tenant"}`) is owned by the flat's current active tenant
+  (`tenant_ownerships`, see [Tenants](#tenants) below) — never the flat's owner, and
+  never any other flat's tenant. Only an admin can review or reopen a `Tenant`-owned
+  stage; there is no designation a tenant could hold to self-review. A process whose
+  template has no `Tenant`-owned stage is invisible to a tenant entirely, in both
+  `/api/v1/process/list` and `/api/v1/process/state`.
 
   A document field's `requires_signature` (default `false`) does not itself declare who
   must sign, or provision anything — signature requirements are still always attached
@@ -599,6 +608,29 @@ No special permission — any authenticated user. Resident-facing: populates the
 ### Signature status on process fields
 
 Signature requirements are never declared in the template — a process reviewer attaches signers to a document from the Process Review screen (see `process/documents/add-signers` below). `process/state` and `process/save-step` field responses expose the result as `signature_status: [{ requirement_id, signer_name, sign_order, status }]` on each `document`-type field, sorted by `sign_order`. While any entry is `PENDING`, the field does not count as filled and the step cannot complete — residents see a generic "Submitted — awaiting signature" placeholder instead of the document until every signer has signed.
+
+---
+
+## Tenants
+
+No router-level permission gate — each handler is self-scoped to the caller's own active flat ownership, checked against `ownership_id` on every request. A tenant is a normal `users` row with no `flat_ownerships` row of its own; which flat (if any) they're the active tenant of lives entirely in `tenant_ownerships`. A tenant inherits none of the owner's designations or permissions — it's a wholly separate account. See [`StepOwner::Tenant`](#post-apiv1adminprocess-templatessave) above for how a tenant acts inside a process, and [User Hierarchy](USER_HIERARCHY.md) for the full access-boundary rules (documents, process list scoping).
+
+### POST `/api/v1/tenants/add`
+Maps a tenant to the caller's own flat, deactivating any existing active tenant for it first (at most one active tenant per flat) and emailing the new tenant a "set your password" link.
+* **Request:** `{ "ownership_id": 5, "tenant_email": "tenant@example.com", "expires_at": "2027-01-01", "rental_agreement_document_id": "uuid|null" }`
+* **Response (200):** `{ "tenant_ownership_id": 8, "tenant_user_id": 41 }`
+* **403** if the caller doesn't actively own `ownership_id`; **400** on an invalid email, or if `rental_agreement_document_id` is given but isn't a `RESIDENT_SPECIFIC` document already attached to that flat.
+
+### POST `/api/v1/tenants/remove`
+Deactivates the flat's current active tenant, if any, with no replacement.
+* **Request:** `{ "ownership_id": 5 }`
+* **Response (200):** `{ "status": "removed" }`
+* **403** if the caller doesn't actively own `ownership_id`.
+
+### POST `/api/v1/tenants/current`
+* **Request:** `{ "ownership_id": 5 }`
+* **Response (200):** `{ "tenant_ownership_id": 8, "tenant_email": "tenant@example.com", "expires_at": "2027-01-01" }`, or `null` if the flat has no active tenant.
+* **403** if the caller doesn't actively own `ownership_id`.
 
 ---
 

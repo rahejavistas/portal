@@ -127,9 +127,15 @@ Three things are **not** permissions but still gate UI:
   designations, never cached. Reviewing or reopening is the one exception: a global
   `process.reviewer` can still do that on a designation-owned stage, same as any other.
 - A stage can also be assigned to "Wing Representative" instead of one fixed designation
-  — same exclusivity rule, but which designation it resolves to depends on which wing the
-  process-owning resident lives in. Every wing automatically gets its own representative
-  designation the moment its first flat is created, so this needs no manual setup.
+  — any wing's representative may act on it, not only the representative of the
+  process-owning resident's own wing. Who holds which wing's designation is still
+  assigned per wing (Admin → Roles), but the stage itself is open to all of them.
+  Every wing automatically gets its own representative designation the moment its
+  first flat is created, so this needs no manual setup.
+- A stage can also be assigned to "Tenant" — only the flat's current active tenant
+  (mapped by the owner via `POST /api/v1/tenants/add`) can fill it; the owner has no
+  standing on it even though they own the flat. No admin builder UI for assigning a
+  tenant exists yet — mapping a tenant is API-only for now.
 
 ## `process.templates.manage`
 *Create/edit process templates (the versioned builder) and activate versions.*

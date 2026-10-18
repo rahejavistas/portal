@@ -529,6 +529,29 @@ impl PermissionsManager {
         }))
     }
 
+    /// Tenant account — no flat ownership, no designation; a tenant never inherits the
+    /// owner's roles. Password is set via the same forgot-password flow as residents.
+    pub async fn create_tenant_user(
+        &self,
+        email: &str,
+        created_by: Option<i32>,
+    ) -> Result<User, String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let user_id = upsert_user_by_email(&mut tx, email, None, created_by).await?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        Ok(assemble_user(RawUser {
+            user_id,
+            email: email.to_string(),
+            is_active: true,
+            wing: "N/A".to_string(),
+            flat_number: "N/A".to_string(),
+            designations: Vec::new(),
+            permissions: Vec::new(),
+            can_manage_documents: false,
+        }))
+    }
+
     /// Passwordless seed account, assigned the given designation (e.g. "super_admin").
     pub async fn create_seeded_user(
         &self,

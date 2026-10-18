@@ -18,6 +18,18 @@ Any other designation (e.g. "committee", "treasurer") is entirely admin-defined:
 
 A user with no designations is a plain resident: no admin-panel access, document visibility limited to documents in an `is_public_read` category plus `RESIDENT_SPECIFIC` documents mapped to their own flat.
 
+## Tenants
+
+A flat's owner can map a tenant to it (`POST /api/v1/tenants/add`) — a separate `users` row with no `flat_ownerships` row of its own, holding no designations and inheriting none of the owner's permissions or designations. `tenant_ownerships` tracks the mapping, with at most one active tenant per flat at a time (`is_active`; adding a new tenant deactivates the previous one, which loses access immediately).
+
+| What | Owner | Tenant |
+|---|---|---|
+| Flat-scoped (`RESIDENT_SPECIFIC`) documents | Visible | Never visible — a tenant has no `flat_ownerships` row, which is what document visibility is keyed on |
+| Process list | Every process on their own flat(s) | Only processes whose template has a `Tenant`-owned stage, and only for the flat they're the current active tenant of |
+| Filling a `Tenant`-owned stage | Cannot — even the owner has no standing on it | Only the current active tenant can; reviewing/reopening it is admin-only |
+| Designations/permissions held by the owner | N/A | Never inherited — a tenant's session carries only their own designations (normally none) |
+| OTP/notification settings | Own profile | Own profile — same self-service endpoints as any user |
+
 ## Permissions
 
 The full permission catalog is a compile-time enum (`authentication::Permission`), seeded into the `permissions` table in the same migration as the designations above:
@@ -62,6 +74,7 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 | `permissions` | The permission catalog (see table above), seeded once, never admin-created. |
 | `designation_permissions` | Join table: which designations hold which permissions. |
 | `user_designations` | Join table: which users hold which designations, with `is_active` (revocation without deletion) and `assigned_by` (audit trail). |
+| `tenant_ownerships` | A flat's current (and historical) tenant, mapped by the owner — `ownership_id` → `tenant_user_id`, with `is_active` (at most one active tenant per flat, enforced by a partial unique index), `expires_at`, and an optional `rental_agreement_document_id`. |
 
 ### Documents
 

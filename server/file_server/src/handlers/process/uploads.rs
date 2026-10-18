@@ -43,7 +43,7 @@ pub async fn process_admin_upload_url(
 ) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
     let (info, _) = load_authorized_process(
         &mut conn,
         &user,
@@ -135,7 +135,7 @@ pub async fn process_admin_confirm_upload(
     Json(payload): Json<ProcessAdminConfirmUploadRequest>,
 ) -> Result<Json<ProcessAdminConfirmUploadResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
     let (info, _) = load_authorized_process(
         &mut conn,
         &user,
@@ -188,11 +188,11 @@ pub async fn process_download_url(
     // Read-only oversight (process.view) can download documents attached to any process,
     // same as a reviewer — this handler never writes anything.
     let can_view_all = super::can_view_all_processes(&user);
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
 
     // Auth check: is the caller allowed to view this process at all?
     let owner_id = {
-        let mut conn = state.pg_pool.acquire().await.internal_err()?;
         let (info, _) = load_authorized_process(
             &mut conn,
             &user,

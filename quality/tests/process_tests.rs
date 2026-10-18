@@ -9,7 +9,7 @@ use uuid::Uuid;
 fn actor(is_admin: bool) -> ActorContext {
     ActorContext {
         is_admin,
-        designation_codes: Default::default(),
+        ..Default::default()
     }
 }
 

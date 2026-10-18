@@ -1,5 +1,5 @@
 use chrono::Datelike;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::state_machine::{
@@ -567,6 +567,27 @@ pub async fn list_processes_for_user(
     sqlx::query_as(&query).bind(user_id).fetch_all(conn).await
 }
 
+/// Processes for flats where `tenant_user_id` is the active tenant; caller filters
+/// by Tenant-step.
+pub async fn list_processes_for_tenant(
+    conn: &mut sqlx::PgConnection,
+    tenant_user_id: i32,
+) -> Result<Vec<ProcessListItem>, sqlx::Error> {
+    let query = format!(
+        "{} WHERE p.ownership_id IN ( \
+             SELECT ownership_id FROM tenant_ownerships \
+             WHERE tenant_user_id = $1 AND is_active = TRUE \
+         ) \
+         {} \
+         ORDER BY p.created_at DESC",
+        PROCESS_LIST_QUERY_BASE, PROCESS_LIST_GROUP_BY
+    );
+    sqlx::query_as(&query)
+        .bind(tenant_user_id)
+        .fetch_all(conn)
+        .await
+}
+
 /// Ordered by `inward_reg_no` ascending — the FIFO queue a compliance manager
 /// works through, not creation time.
 pub async fn list_all_processes(
@@ -607,42 +628,35 @@ pub async fn get_flat_info_for_ownership(
     Ok(row.map(|(flat_id, label)| OwnershipFlatInfo { flat_id, label }))
 }
 
-/// The designation code of a flat ownership's own wing's representative, via
-/// `wings.representative_designation_id` — used to resolve a `WingRepresentative`-owned
-/// step.
-pub async fn get_wing_representative_code_for_ownership(
+/// Every wing's representative designation code, system-wide.
+pub async fn get_all_wing_representative_codes(
     conn: &mut sqlx::PgConnection,
-    ownership_id: i32,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT d.code FROM flat_ownerships fo \
-         JOIN flats f ON fo.flat_id = f.flat_id \
-         JOIN wings w ON w.name = f.wing \
-         JOIN designations d ON d.designation_id = w.representative_designation_id \
-         WHERE fo.ownership_id = $1",
+) -> Result<HashSet<String>, sqlx::Error> {
+    let codes: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT d.code FROM wings w \
+         JOIN designations d ON d.designation_id = w.representative_designation_id",
     )
-    .bind(ownership_id)
-    .fetch_optional(conn)
-    .await
-}
-
-/// Batched form of `get_wing_representative_code_for_ownership`, for listing many
-/// processes without one query per row. Ownerships with no wing-rep resolve to nothing.
-pub async fn get_wing_representative_codes_for_ownerships(
-    conn: &mut sqlx::PgConnection,
-    ownership_ids: &[i32],
-) -> Result<HashMap<i32, String>, sqlx::Error> {
-    let rows: Vec<(i32, String)> = sqlx::query_as(
-        "SELECT fo.ownership_id, d.code FROM flat_ownerships fo \
-         JOIN flats f ON fo.flat_id = f.flat_id \
-         JOIN wings w ON w.name = f.wing \
-         JOIN designations d ON d.designation_id = w.representative_designation_id \
-         WHERE fo.ownership_id = ANY($1)",
-    )
-    .bind(ownership_ids)
     .fetch_all(conn)
     .await?;
-    Ok(rows.into_iter().collect())
+    Ok(codes.into_iter().collect())
+}
+
+/// Whether `user_id` is the current active tenant of the flat behind `ownership_id`.
+pub async fn is_active_tenant_of_ownership(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+    ownership_id: i32,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM tenant_ownerships \
+            WHERE tenant_user_id = $1 AND ownership_id = $2 AND is_active = TRUE \
+         )",
+    )
+    .bind(user_id)
+    .bind(ownership_id)
+    .fetch_one(conn)
+    .await
 }
 
 /// Batched form of `load_steps`, keyed by `process_id`.
