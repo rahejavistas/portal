@@ -898,8 +898,7 @@ pub async fn load_state(
     })
 }
 
-/// `NoDues` is never stored in `process_fields` — resolve the flat's current
-/// outstanding dues live, every call, so paying up mid-process unblocks it.
+/// `NoDues` is resolved live from the dues snapshot every call, never stored in `process_fields`.
 pub async fn inject_no_dues_amounts(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -928,9 +927,7 @@ pub async fn inject_no_dues_amounts(
     Ok(())
 }
 
-/// Persists completion for every step gated by a `NoDues` field. Nothing else ever
-/// triggers a save for such a stage, so the live dues check alone would never flip
-/// `process_steps.is_completed` — call this before computing statuses to display.
+/// Syncs completion for every step gated by a `NoDues` field — nothing else ever saves one.
 pub async fn sync_no_dues_step_completions(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -954,16 +951,13 @@ pub async fn sync_no_dues_step_completions(
         let Some(info) = step_info_map.get(&step_id) else {
             continue;
         };
-        // A stage that went through formal admin review must never be silently
-        // reopened by a background sync just because dues reappeared later -
-        // that needs an explicit reopen action, with its own audit trail.
+        // A formally admin-reviewed stage must never be silently reopened by this sync.
         let already_completed = state.steps.get(&step_id).map(|s| s.is_completed) == Some(true);
         if info.requires_review(template.step_id) && already_completed {
             continue;
         }
         let updates = state_machine::compute_completion_updates(template, &state, step_id);
-        // Only persist steps whose flag actually flips — every read recomputes this,
-        // so persisting an unchanged `true` would stamp completed_at to NOW() each time.
+        // Only persist steps whose flag actually flips, or completed_at drifts on every read.
         let changed: Vec<(i32, bool)> = updates
             .into_iter()
             .filter(|&(id, completed)| {
@@ -975,9 +969,7 @@ pub async fn sync_no_dues_step_completions(
     Ok(())
 }
 
-/// Total outstanding (unpaid + partially paid) invoice balance for a process's flat.
-/// Reads the latest admin-uploaded dues snapshot, not the accounting module —
-/// a flat with no snapshot row yet owes nothing as far as this is concerned.
+/// Reads the uploaded dues snapshot, not accounting — no row yet means zero due.
 pub async fn get_outstanding_dues_for_process(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
@@ -995,9 +987,7 @@ pub async fn get_outstanding_dues_for_process(
     Ok(amount.unwrap_or_default())
 }
 
-/// Batched form of `get_outstanding_dues_for_process`, keyed by `ownership_id` —
-/// for listing many processes without a per-row query. An ownership with no
-/// uploaded snapshot yet is simply absent from the result (owes nothing).
+/// Batched, ownership_id-keyed form of `get_outstanding_dues_for_process` for lists.
 pub async fn get_outstanding_dues_for_ownerships(
     conn: &mut sqlx::PgConnection,
     ownership_ids: &[i32],

@@ -1,5 +1,4 @@
-//! Admin-uploaded dues snapshot, independent of the accounting module — see
-//! `db::get_outstanding_dues_for_process`, the only place this feeds into.
+//! Admin-uploaded dues snapshot — see `db::get_outstanding_dues_for_process`.
 
 use rust_decimal::Decimal;
 
@@ -15,8 +14,7 @@ pub struct DuesImportSummary {
     pub unmatched_flat_codes: Vec<String>,
 }
 
-/// Replaces each matched flat's dues row; a flat code with no match in `flats` is
-/// reported back, not an error, since one bad row shouldn't fail the whole upload.
+/// Upserts each matched flat's dues row, skipping any upload older than what's stored.
 pub async fn upsert_flat_dues(
     conn: &mut sqlx::PgConnection,
     as_of: chrono::NaiveDate,
@@ -47,7 +45,8 @@ pub async fn upsert_flat_dues(
              overdue_amount = EXCLUDED.overdue_amount, \
              as_of = EXCLUDED.as_of, \
              uploaded_by = EXCLUDED.uploaded_by, \
-             uploaded_at = NOW()",
+             uploaded_at = NOW() \
+         WHERE EXCLUDED.as_of >= flat_dues_from_file.as_of",
     )
     .bind(&wings)
     .bind(&flat_numbers)

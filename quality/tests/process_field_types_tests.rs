@@ -224,6 +224,23 @@ async fn seed_dues_snapshot(
     total_due: rust_decimal::Decimal,
     overdue_amount: rust_decimal::Decimal,
 ) {
+    seed_dues_snapshot_as_of(
+        pool,
+        flat_number,
+        total_due,
+        overdue_amount,
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+    )
+    .await;
+}
+
+async fn seed_dues_snapshot_as_of(
+    pool: &sqlx::PgPool,
+    flat_number: &str,
+    total_due: rust_decimal::Decimal,
+    overdue_amount: rust_decimal::Decimal,
+    as_of: chrono::NaiveDate,
+) {
     let uploader_id: i32 = sqlx::query_scalar(
         "INSERT INTO users (email, is_active) VALUES ('no_dues_file_uploader@vistas.com', TRUE) \
          ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email RETURNING user_id",
@@ -234,7 +251,7 @@ async fn seed_dues_snapshot(
     let mut conn = pool.acquire().await.unwrap();
     process::dues_import::upsert_flat_dues(
         &mut conn,
-        chrono::NaiveDate::from_ymd_opt(2026, 10, 18).unwrap(),
+        as_of,
         uploader_id,
         &[process::dues_import::FlatDueRow {
             wing: "F".to_string(),
@@ -245,6 +262,38 @@ async fn seed_dues_snapshot(
     )
     .await
     .unwrap();
+}
+
+fn no_dues_review_gated_template() -> ProcessTemplate {
+    ProcessTemplate {
+        name: "No Dues Review Gated Test".to_string(),
+        description: None,
+        step_id: 1,
+        is_optional: false,
+        fields: None,
+        tat_working_days: None,
+        filled_by: StepOwner::User,
+        substeps: Some(vec![ProcessStepTemplate {
+            step_id: 2,
+            name: "Dues Check Stage".to_string(),
+            description: None,
+            is_optional: false,
+            filled_by: StepOwner::User,
+            substeps: None,
+            fields: Some(vec![ProcessFieldTemplate {
+                field_id: 301,
+                name: "No Dues".to_string(),
+                description: None,
+                r#type: FieldType::NoDues,
+                is_optional: false,
+                requirements: None,
+                requires_signature: false,
+                required_signs_from_designations: vec![],
+                options: None,
+                example_document_id: None,
+            }]),
+        }]),
+    }
 }
 
 #[tokio::test]
@@ -506,5 +555,185 @@ async fn no_dues_is_unblocked_for_a_flat_with_no_snapshot_uploaded_yet() {
             .get(&2),
         Some(&StepStatus::Completed),
         "a flat with no dues snapshot uploaded yet owes nothing as far as this is concerned"
+    );
+}
+
+#[tokio::test]
+async fn an_older_dated_upload_never_overwrites_a_newer_snapshot() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    let (user_id, ownership_id) =
+        seed_user_with_flat(&pool, "no_dues_stale_guard@vistas.com", "510").await;
+
+    let newer = chrono::NaiveDate::from_ymd_opt(2026, 10, 18).unwrap();
+    let older = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+
+    seed_dues_snapshot_as_of(&pool, "510", dec!(0), dec!(0), newer).await;
+
+    // A file uploaded out of order, dated before the one already stored, carrying
+    // a stale non-zero figure - must never clobber the newer, already-cleared snapshot.
+    seed_dues_snapshot_as_of(&pool, "510", dec!(5000.00), dec!(5000.00), older).await;
+
+    let template = no_dues_template();
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(
+        &mut conn,
+        user_id,
+        version_id,
+        &template,
+        Some(ownership_id),
+    )
+    .await
+    .unwrap()
+    .process_id;
+
+    let amount = process::db::get_outstanding_dues_for_process(&mut conn, process_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        amount,
+        dec!(0),
+        "an older-dated upload must never overwrite a newer stored snapshot"
+    );
+
+    // The reverse must still work: a genuinely newer upload replaces the stored figure.
+    let newest = chrono::NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+    seed_dues_snapshot_as_of(&pool, "510", dec!(750.00), dec!(0), newest).await;
+    let amount = process::db::get_outstanding_dues_for_process(&mut conn, process_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        amount,
+        dec!(750.00),
+        "a genuinely newer upload must still replace the stored figure"
+    );
+}
+
+#[tokio::test]
+async fn an_approved_no_dues_stage_is_never_silently_reopened_if_dues_reappear() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    let (user_id, ownership_id) =
+        seed_user_with_flat(&pool, "no_dues_review_gate@vistas.com", "511").await;
+    seed_dues_snapshot(&pool, "511", dec!(0), dec!(0)).await;
+
+    let template = no_dues_review_gated_template();
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(
+        &mut conn,
+        user_id,
+        version_id,
+        &template,
+        Some(ownership_id),
+    )
+    .await
+    .unwrap()
+    .process_id;
+
+    process::db::sync_no_dues_step_completions(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(
+        process::db::get_statuses(&mut conn, process_id, &template)
+            .await
+            .unwrap()
+            .get(&2),
+        Some(&StepStatus::PendingReview),
+        "a User-owned top-level stage must wait for admin review even with zero dues"
+    );
+
+    process::db::review_step(
+        &mut conn,
+        process_id,
+        &template,
+        process::db::ReviewStepParams {
+            step_id: 2,
+            reviewer_user_id: Some(user_id),
+            is_approved: true,
+            notes: None,
+            flagged_step_ids: &[],
+            acted_as_designation: None,
+        },
+        &actor(true),
+    )
+    .await
+    .expect("admin approves the cleared dues stage");
+    assert_eq!(
+        process::db::get_statuses(&mut conn, process_id, &template)
+            .await
+            .unwrap()
+            .get(&2),
+        Some(&StepStatus::Completed)
+    );
+
+    // Dues reappear via a later upload for the same flat - the formally approved
+    // stage must never be silently reopened by a background sync.
+    seed_dues_snapshot(&pool, "511", dec!(9000.00), dec!(0)).await;
+    process::db::sync_no_dues_step_completions(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(
+        process::db::get_statuses(&mut conn, process_id, &template)
+            .await
+            .unwrap()
+            .get(&2),
+        Some(&StepStatus::Completed),
+        "an already-approved stage must not be reopened just because dues reappeared"
+    );
+}
+
+#[tokio::test]
+async fn completed_at_does_not_drift_on_repeated_unchanged_syncs() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let mut conn = pool.acquire().await.unwrap();
+
+    let (user_id, ownership_id) =
+        seed_user_with_flat(&pool, "no_dues_completed_at@vistas.com", "512").await;
+    seed_dues_snapshot(&pool, "512", dec!(0), dec!(0)).await;
+
+    let template = no_dues_template();
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(
+        &mut conn,
+        user_id,
+        version_id,
+        &template,
+        Some(ownership_id),
+    )
+    .await
+    .unwrap()
+    .process_id;
+
+    process::db::sync_no_dues_step_completions(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    let first_completed_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT completed_at FROM process_steps WHERE process_id = $1 AND template_step_id = 2",
+    )
+    .bind(process_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Nothing changed since the last sync - a repeat must not re-stamp completed_at.
+    process::db::sync_no_dues_step_completions(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    let second_completed_at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "SELECT completed_at FROM process_steps WHERE process_id = $1 AND template_step_id = 2",
+    )
+    .bind(process_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        first_completed_at, second_completed_at,
+        "completed_at must not drift forward on an unchanged sync"
     );
 }

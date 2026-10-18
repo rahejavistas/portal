@@ -13,9 +13,7 @@ struct DeclarationValue {
     blanks: HashMap<String, String>,
 }
 
-/// The `##TOKEN##` names a declaration's text requires a blank for — same
-/// `[A-Z]+`-only grammar the frontend renders a blank input for, so a token the
-/// backend requires is never one the resident has no way to actually fill in.
+/// The `##TOKEN##` names a declaration's text needs a blank for — `[A-Z]+` only.
 fn declaration_blank_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut rest = text;
@@ -35,8 +33,7 @@ fn declaration_text(requirements: Option<&serde_json::Value>) -> Option<&str> {
     requirements?.get("declaration_text")?.as_str()
 }
 
-/// Agreed, and every blank the declaration's own text calls for is non-empty —
-/// ticking "agreed" with blanks left empty does not count as filled.
+/// Agreed, and every blank the declaration's text calls for is non-empty.
 fn declaration_is_satisfied(val: &str, requirements: Option<&serde_json::Value>) -> bool {
     let Ok(parsed) = serde_json::from_str::<DeclarationValue>(val) else {
         return false;

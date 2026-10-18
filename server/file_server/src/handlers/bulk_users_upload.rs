@@ -389,4 +389,29 @@ mod tests {
         assert_eq!(cell_text(&Data::String(" UnitNo ".to_string())), "UnitNo");
         assert!(cell_text(&Data::Empty).is_empty());
     }
+
+    #[test]
+    fn parse_member_xlsx_reads_the_committed_sample_fixture() {
+        let bytes = include_bytes!("../../../../quality/fixtures/member_data_sample.xlsx");
+        let (mut users, failed, total_rows) =
+            parse_member_xlsx(bytes).expect("fixture must parse");
+        users.sort_by(|a, b| a.flat.to_string().cmp(&b.flat.to_string()));
+
+        assert_eq!(
+            total_rows, 3,
+            "the title row and the 'XXXX' trailer must not count as data rows"
+        );
+        assert!(failed.is_empty());
+        assert_eq!(users.len(), 3);
+
+        assert_eq!(users[0].flat.to_string(), "Z-0001");
+        assert_eq!(users[0].email, "resident.one@example.test");
+        assert_eq!(users[1].flat.to_string(), "Z-0002");
+        assert_eq!(
+            users[1].email, "resident.two@example.test",
+            "CCMail must never be onboarded as the account email"
+        );
+        assert_eq!(users[2].flat.to_string(), "Z-0003");
+        assert_eq!(users[2].email, "resident.three@example.test");
+    }
 }

@@ -67,9 +67,7 @@ impl FlatIdentifier {
         Self { wing, flat_number }
     }
 
-    /// Splits a concatenated code like `"A0301"` (wing letters immediately followed by
-    /// the flat number, as exported by external society-management spreadsheets) and
-    /// normalizes it the same way `new` does.
+    /// Splits a concatenated code like `"A0301"` into wing+number and normalizes it.
     pub fn parse_concatenated(code: &str) -> Result<Self, String> {
         let code = code.trim();
         let split_at = code
