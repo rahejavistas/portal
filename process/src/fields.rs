@@ -1,8 +1,14 @@
 use crate::FieldType;
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use std::str::FromStr;
 use uuid::Uuid;
+
+#[derive(Deserialize)]
+struct DeclarationValue {
+    agreed: bool,
+}
 
 /// Validates the input values against the field's type.
 pub fn validate_field(
@@ -52,6 +58,14 @@ fn validate_field_value(
                 Err(format!("'{val}' is not one of the allowed options"))
             }
         }
+        FieldType::Declaration => serde_json::from_str::<DeclarationValue>(val)
+            .map(|_| ())
+            .map_err(|_| {
+                "Declaration value must be a JSON object with an 'agreed' flag".to_string()
+            }),
+        FieldType::NoDues => Decimal::from_str(val)
+            .map(|_| ())
+            .map_err(|_| format!("'{val}' is not a valid dues amount")),
     }
 }
 
@@ -69,6 +83,14 @@ pub fn is_field_filled(
         | FieldType::Date
         | FieldType::Bool
         | FieldType::Enum => text_value.map(|v| !v.trim().is_empty()).unwrap_or(false),
+        FieldType::Declaration => text_value
+            .and_then(|v| serde_json::from_str::<DeclarationValue>(v).ok())
+            .map(|d| d.agreed)
+            .unwrap_or(false),
+        FieldType::NoDues => text_value
+            .and_then(|v| Decimal::from_str(v).ok())
+            .map(|d| d.is_zero())
+            .unwrap_or(false),
     }
 }
 
@@ -134,5 +156,33 @@ mod tests {
     fn optional_empty_field_of_any_type_passes_validation() {
         assert!(validate_field(FieldType::Int, None, None, true, None).is_ok());
         assert!(validate_field(FieldType::Date, Some(""), None, true, None).is_ok());
+    }
+
+    #[test]
+    fn declaration_requires_the_agreed_flag_set_true() {
+        assert!(is_field_filled(
+            FieldType::Declaration,
+            Some(r#"{"agreed":true,"blanks":{"NAME":"A"}}"#),
+            None
+        ));
+        assert!(!is_field_filled(
+            FieldType::Declaration,
+            Some(r#"{"agreed":false,"blanks":{}}"#),
+            None
+        ));
+        assert!(!is_field_filled(
+            FieldType::Declaration,
+            Some("not json"),
+            None
+        ));
+        assert!(!is_field_filled(FieldType::Declaration, None, None));
+    }
+
+    #[test]
+    fn no_dues_is_filled_only_when_the_amount_is_exactly_zero() {
+        assert!(is_field_filled(FieldType::NoDues, Some("0"), None));
+        assert!(is_field_filled(FieldType::NoDues, Some("0.00"), None));
+        assert!(!is_field_filled(FieldType::NoDues, Some("500.00"), None));
+        assert!(!is_field_filled(FieldType::NoDues, None, None));
     }
 }

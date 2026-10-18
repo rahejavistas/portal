@@ -234,13 +234,21 @@ pub(super) async fn notify_designation_of_currently_open_steps(
                 },
             );
         }
+        let mut fields = std::collections::HashMap::new();
+        let info_map = process::state_machine::build_step_info_map(&template);
+        if process::db::inject_no_dues_amounts(&mut conn, process_id, &info_map, &mut fields)
+            .await
+            .is_err()
+        {
+            continue;
+        }
         let state_input = process::state_machine::ProcessStateInput {
             steps,
+            fields,
             reviews: reviews_by_step,
             ..Default::default()
         };
         let statuses = process::state_machine::compute_statuses(&template, &state_input);
-        let info_map = process::state_machine::build_step_info_map(&template);
 
         let mut matching: Option<&process::state_machine::StepInfo> = None;
         for (step_id, status) in &statuses {

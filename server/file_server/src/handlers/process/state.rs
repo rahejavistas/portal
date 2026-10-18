@@ -202,6 +202,7 @@ fn compute_pending_on_caller(
     wing_rep_codes: &HashMap<i32, String>,
     steps_by_process: &HashMap<Uuid, HashMap<i32, process::state_machine::StepStateDb>>,
     reviews_by_process: &HashMap<Uuid, Vec<process::db::ProcessReviewHistory>>,
+    no_dues_by_ownership: &HashMap<i32, rust_decimal::Decimal>,
 ) -> Option<bool> {
     let template = template_cache.get(&item.template_version_id)?.clone();
     let wing_rep_code = item
@@ -210,6 +211,7 @@ fn compute_pending_on_caller(
     let template =
         process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
             .ok()?;
+    let info_map = process::state_machine::build_step_info_map(&template);
 
     let steps = steps_by_process
         .get(&item.process_id)
@@ -229,8 +231,27 @@ fn compute_pending_on_caller(
             },
         );
     }
+    let mut fields = HashMap::new();
+    let no_dues_amount = item
+        .ownership_id
+        .and_then(|oid| no_dues_by_ownership.get(&oid).copied())
+        .unwrap_or(rust_decimal::Decimal::ZERO);
+    for info in info_map.values() {
+        for f in &info.fields {
+            if f.r#type == process::FieldType::NoDues {
+                fields.insert(
+                    f.field_id,
+                    process::state_machine::FieldState {
+                        text_value: Some(no_dues_amount.to_string()),
+                        document_id: None,
+                    },
+                );
+            }
+        }
+    }
     let state_input = process::state_machine::ProcessStateInput {
         steps,
+        fields,
         reviews: reviews_by_step,
         ..Default::default()
     };
@@ -518,6 +539,10 @@ pub async fn list_user_processes(
             process::db::get_process_reviews_for_processes(&mut conn, &pending_ids)
                 .await
                 .internal_err()?;
+        let no_dues_by_ownership =
+            process::db::get_outstanding_dues_for_ownerships(&mut conn, &ownership_ids)
+                .await
+                .internal_err()?;
 
         let mut template_cache: HashMap<i32, process::ProcessTemplate> = HashMap::new();
         for item in items.iter_mut() {
@@ -544,6 +569,7 @@ pub async fn list_user_processes(
                 &wing_rep_codes,
                 &steps_by_process,
                 &reviews_by_process,
+                &no_dues_by_ownership,
             );
         }
         if is_scoped_reviewer {
@@ -777,6 +803,9 @@ pub async fn get_process_state(
         )
         .await?;
 
+    process::db::sync_no_dues_step_completions(&mut tx, process_id, &template)
+        .await
+        .internal_err()?;
     let steps = process::db::load_steps(&mut tx, process_id)
         .await
         .internal_err()?;
@@ -851,20 +880,31 @@ pub async fn get_process_state(
     }
 
     // Latest field state per field (history is ordered DESC, so first = latest).
-    let latest_field_states: HashMap<i32, process::state_machine::FieldState> = field_history_map
-        .iter()
-        .filter_map(|(&fid, hist)| {
-            hist.first().map(|latest| {
-                (
-                    fid,
-                    process::state_machine::FieldState {
-                        text_value: latest.text_value.clone(),
-                        document_id: latest.document_id,
-                    },
-                )
+    let mut latest_field_states: HashMap<i32, process::state_machine::FieldState> =
+        field_history_map
+            .iter()
+            .filter_map(|(&fid, hist)| {
+                hist.first().map(|latest| {
+                    (
+                        fid,
+                        process::state_machine::FieldState {
+                            text_value: latest.text_value.clone(),
+                            document_id: latest.document_id,
+                        },
+                    )
+                })
             })
-        })
-        .collect();
+            .collect();
+
+    let step_info_map = process::state_machine::build_step_info_map(&template);
+    process::db::inject_no_dues_amounts(
+        &mut tx,
+        process_id,
+        &step_info_map,
+        &mut latest_field_states,
+    )
+    .await
+    .internal_err()?;
 
     // Derived from the review history already fetched above, no second query.
     let mut reviews_by_step: HashMap<i32, Vec<process::state_machine::ReviewState>> =
@@ -889,7 +929,6 @@ pub async fn get_process_state(
     };
     let statuses = process::state_machine::compute_statuses(&template, &proc_state);
 
-    let step_info_map = process::state_machine::build_step_info_map(&template);
     let next_actions = compute_next_actions(&statuses, &step_info_map);
 
     let step_map_ctx = StepMapContext {
