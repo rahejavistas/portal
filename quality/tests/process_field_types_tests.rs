@@ -11,7 +11,7 @@ use rust_decimal_macros::dec;
 fn actor(is_admin: bool) -> ActorContext {
     ActorContext {
         is_admin,
-        designation_codes: Default::default(),
+        ..Default::default()
     }
 }
 

@@ -90,7 +90,7 @@ pub async fn save_process_step(
 ) -> Result<Json<SaveStepResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let mut actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
     // process.view is read-only oversight; never grants write access here.
     let (info, template) = load_authorized_process(
         &mut tx,
@@ -100,6 +100,12 @@ pub async fn save_process_step(
         &actor.designation_codes,
     )
     .await?;
+    if let Some(oid) = info.ownership_id {
+        actor.is_active_tenant_for_this_flat =
+            process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
+                .await
+                .internal_err()?;
+    }
 
     // Validate document ownership and upload confirmation
     for f in &payload.fields {
@@ -220,7 +226,7 @@ pub async fn admin_review_step(
 ) -> Result<Json<AdminReviewResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
     let (info, template) = load_authorized_process(
         &mut tx,
         &user,
@@ -318,7 +324,7 @@ pub async fn admin_revoke_step(
 ) -> Result<Json<AdminRevokeResponse>, ApiError> {
     let mut tx = state.pg_pool.begin().await.internal_err()?;
 
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
     let (info, template) = load_authorized_process(
         &mut tx,
         &user,
@@ -397,7 +403,7 @@ pub async fn admin_add_note(
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     // Verify the process exists and the caller has access to it
-    let actor = build_actor_context(&state.permissions_manager, &user.0).await;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user.0).await?;
     let (_info, template) = load_authorized_process(
         &mut conn,
         &user.0,
@@ -465,7 +471,7 @@ pub async fn admin_add_document_signers(
     Json(payload): Json<AddDocumentSignersRequest>,
 ) -> Result<Json<AddDocumentSignersResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
     let (_info, template) = load_authorized_process(
         &mut conn,
         &user,

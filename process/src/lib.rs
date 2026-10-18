@@ -38,9 +38,11 @@ pub enum StepOwner {
     Designation {
         code: String,
     },
-    /// Resolved per-process to the owning resident's own wing's designation.
+    /// Any wing's representative may act — not scoped to the process's own flat's wing.
     #[serde(rename = "wing_representative")]
     WingRepresentative,
+    /// Only the flat's current active tenant (`tenant_ownerships`), never the owner.
+    Tenant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -39,33 +39,48 @@ impl ProcessTurn {
 pub struct ActorContext {
     pub is_admin: bool,
     pub designation_codes: HashSet<String>,
+    /// Every wing's representative designation code, system-wide.
+    pub wing_representative_codes: HashSet<String>,
+    /// Whether the caller is the active tenant of this process's own flat.
+    pub is_active_tenant_for_this_flat: bool,
 }
 
 impl ActorContext {
+    /// Which of `designation_codes` is also a wing-representative code, if any.
+    fn matching_wing_representative_code(&self) -> Option<&str> {
+        self.designation_codes
+            .iter()
+            .find(|c| self.wing_representative_codes.contains(c.as_str()))
+            .map(|s| s.as_str())
+    }
+
     /// `Designation`-owned steps are exclusive to that designation, even over `is_admin`.
     pub fn may_act_on(&self, owner: &crate::StepOwner) -> bool {
         match owner {
             crate::StepOwner::User => true,
             crate::StepOwner::Admin => self.is_admin,
             crate::StepOwner::Designation { code } => self.designation_codes.contains(code),
-            crate::StepOwner::WingRepresentative => unreachable!(
-                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
-            ),
+            crate::StepOwner::WingRepresentative => {
+                self.matching_wing_representative_code().is_some()
+            }
+            crate::StepOwner::Tenant => self.is_active_tenant_for_this_flat,
         }
     }
 
     /// For reviewer-only actions (review, reopen, admin notes) — unlike `may_act_on`,
     /// a `User`-owned step is never self-actionable; only an admin or the owning
-    /// designation may act.
+    /// designation may act. `Tenant` is admin-only too.
     pub fn may_review(&self, owner: &crate::StepOwner) -> bool {
         match owner {
-            crate::StepOwner::User | crate::StepOwner::Admin => self.is_admin,
+            crate::StepOwner::User | crate::StepOwner::Admin | crate::StepOwner::Tenant => {
+                self.is_admin
+            }
             crate::StepOwner::Designation { code } => {
                 self.is_admin || self.designation_codes.contains(code)
             }
-            crate::StepOwner::WingRepresentative => unreachable!(
-                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
-            ),
+            crate::StepOwner::WingRepresentative => {
+                self.is_admin || self.matching_wing_representative_code().is_some()
+            }
         }
     }
 }
@@ -482,14 +497,20 @@ pub fn validate_save(
                 "This stage can only be filled by someone holding the '{}' designation",
                 code
             ),
-            crate::StepOwner::WingRepresentative => unreachable!(
-                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
-            ),
+            crate::StepOwner::WingRepresentative => {
+                "This stage can only be filled by a wing representative".to_string()
+            }
+            crate::StepOwner::Tenant => {
+                "This stage can only be filled by the flat's current tenant".to_string()
+            }
         });
     }
 
     let acted_as_designation = match &info.filled_by {
         crate::StepOwner::Designation { code } => Some(code.clone()),
+        crate::StepOwner::WingRepresentative => actor
+            .matching_wing_representative_code()
+            .map(|c| c.to_string()),
         _ => None,
     };
 
@@ -673,22 +694,25 @@ pub fn compute_review_updates(
 
     if !actor.may_review(&info.filled_by) {
         return Err(match &info.filled_by {
-            crate::StepOwner::User | crate::StepOwner::Admin => {
+            crate::StepOwner::User | crate::StepOwner::Admin | crate::StepOwner::Tenant => {
                 "This stage can only be reviewed by an admin".to_string()
             }
             crate::StepOwner::Designation { code } => format!(
                 "This stage can only be reviewed by someone holding the '{}' designation",
                 code
             ),
-            crate::StepOwner::WingRepresentative => unreachable!(
-                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
-            ),
+            crate::StepOwner::WingRepresentative => {
+                "This stage can only be reviewed by an admin or a wing representative".to_string()
+            }
         });
     }
     let acted_as_designation = match &info.filled_by {
         crate::StepOwner::Designation { code } if actor.designation_codes.contains(code) => {
             Some(code.clone())
         }
+        crate::StepOwner::WingRepresentative => actor
+            .matching_wing_representative_code()
+            .map(|c| c.to_string()),
         _ => None,
     };
 
@@ -763,22 +787,25 @@ pub fn compute_reopen_updates(
 
     if !actor.may_review(&info.filled_by) {
         return Err(match &info.filled_by {
-            crate::StepOwner::User | crate::StepOwner::Admin => {
+            crate::StepOwner::User | crate::StepOwner::Admin | crate::StepOwner::Tenant => {
                 "This stage can only be reopened by an admin".to_string()
             }
             crate::StepOwner::Designation { code } => format!(
                 "This stage can only be reopened by someone holding the '{}' designation",
                 code
             ),
-            crate::StepOwner::WingRepresentative => unreachable!(
-                "WingRepresentative is resolved into a concrete Designation before reaching the state machine"
-            ),
+            crate::StepOwner::WingRepresentative => {
+                "This stage can only be reopened by an admin or a wing representative".to_string()
+            }
         });
     }
     let acted_as_designation = match &info.filled_by {
         crate::StepOwner::Designation { code } if actor.designation_codes.contains(code) => {
             Some(code.clone())
         }
+        crate::StepOwner::WingRepresentative => actor
+            .matching_wing_representative_code()
+            .map(|c| c.to_string()),
         _ => None,
     };
 
@@ -809,7 +836,7 @@ mod tests {
     fn actor(is_admin: bool) -> ActorContext {
         ActorContext {
             is_admin,
-            designation_codes: HashSet::new(),
+            ..Default::default()
         }
     }
 
@@ -1206,6 +1233,7 @@ mod tests {
         let secretary = ActorContext {
             is_admin: true,
             designation_codes,
+            ..Default::default()
         };
         let result = validate_save(
             &template,
@@ -1262,6 +1290,7 @@ mod tests {
         let secretary = ActorContext {
             is_admin: true,
             designation_codes,
+            ..Default::default()
         };
 
         let result = compute_review_updates(&template, &state, 7, true, &secretary);
@@ -1322,6 +1351,7 @@ mod tests {
         let secretary = ActorContext {
             is_admin: false,
             designation_codes,
+            ..Default::default()
         };
         assert!(
             is_pending_on_actor(&template, &state, &secretary),

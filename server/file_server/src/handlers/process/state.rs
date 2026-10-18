@@ -194,25 +194,18 @@ pub struct ProcessListResponse {
 
 /// Whether `actor` can personally act on `item` right now. `template_cache` avoids
 /// reloading the same version for every row sharing it.
-/// Pure once `template_cache`/`wing_rep_codes`/`steps_by_process`/`reviews_by_process`
-/// are pre-loaded in batch — a per-row DB round trip here would cost 3xN queries on a
-/// `/process/list` call for a scoped reviewer, who always gets the full unfiltered list.
+/// Pure once `template_cache`/`steps_by_process`/`reviews_by_process` are pre-loaded in
+/// batch — a per-row DB round trip here would cost 3xN queries on a `/process/list`
+/// call for a scoped reviewer, who always gets the full unfiltered list.
 fn compute_pending_on_caller(
     item: &process::db::ProcessListItem,
     actor: &process::state_machine::ActorContext,
     template_cache: &HashMap<i32, process::ProcessTemplate>,
-    wing_rep_codes: &HashMap<i32, String>,
     steps_by_process: &HashMap<Uuid, HashMap<i32, process::state_machine::StepStateDb>>,
     reviews_by_process: &HashMap<Uuid, Vec<process::db::ProcessReviewHistory>>,
     no_dues_by_ownership: &HashMap<i32, rust_decimal::Decimal>,
 ) -> Option<bool> {
     let template = template_cache.get(&item.template_version_id)?.clone();
-    let wing_rep_code = item
-        .ownership_id
-        .and_then(|oid| wing_rep_codes.get(&oid).cloned());
-    let template =
-        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
-            .ok()?;
     let info_map = process::state_machine::build_step_info_map(&template);
 
     let steps = steps_by_process
@@ -321,16 +314,6 @@ async fn resolve_or_init_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
-    let wing_rep_code = match selected_ownership {
-        Some(oid) => process::db::get_wing_representative_code_for_ownership(conn, oid)
-            .await
-            .internal_err()?,
-        None => None,
-    };
-    let template =
-        process::template_store::resolve_wing_representatives(template, wing_rep_code.as_deref())
-            .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
-
     let init_outcome = process::db::init_process(
         conn,
         user.user_id,
@@ -467,11 +450,11 @@ fn map_step_template(
     }
 
     let filled_by_designation_label = match &step_tpl.filled_by {
-        process::StepOwner::User | process::StepOwner::Admin => None,
+        process::StepOwner::User
+        | process::StepOwner::Admin
+        | process::StepOwner::WingRepresentative
+        | process::StepOwner::Tenant => None,
         process::StepOwner::Designation { code } => ctx.designation_label_map.get(code).cloned(),
-        process::StepOwner::WingRepresentative => unreachable!(
-            "WingRepresentative is resolved into a concrete Designation before reaching here"
-        ),
     };
 
     StepResponse {
@@ -494,18 +477,36 @@ pub async fn list_user_processes(
 ) -> Result<Json<ProcessListResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
     // process.view sees every resident's list too, but never gains write access.
     let is_global_reviewer = super::can_view_all_processes(&user);
     // A plain designation holder gets this list too, filtered below to their own pending work.
     let is_scoped_reviewer = !is_global_reviewer && !actor.designation_codes.is_empty();
     let can_view_all = !payload.personal_only && (is_global_reviewer || is_scoped_reviewer);
     let mut items = if can_view_all {
-        process::db::list_all_processes(&mut conn).await
+        process::db::list_all_processes(&mut conn)
+            .await
+            .internal_err()?
     } else {
-        list_processes_for_user(&mut conn, user.user_id).await
-    }
-    .internal_err()?;
+        // Tenants have no flat_ownership row; only Tenant-step processes are shown.
+        let mut owned = list_processes_for_user(&mut conn, user.user_id)
+            .await
+            .internal_err()?;
+        let tenant_items = process::db::list_processes_for_tenant(&mut conn, user.user_id)
+            .await
+            .internal_err()?;
+        for item in tenant_items {
+            let has_tenant_step =
+                process::template_store::load_template_version(&mut conn, item.template_version_id)
+                    .await
+                    .map(|t| super::template_has_tenant_step(&t))
+                    .unwrap_or(false);
+            if has_tenant_step {
+                owned.push(item);
+            }
+        }
+        owned
+    };
     for item in items.iter_mut() {
         item.status = Some(match item.current_turn.as_deref() {
             Some("none") => "COMPLETED".to_string(),
@@ -531,10 +532,6 @@ pub async fn list_user_processes(
             .filter_map(|item| item.ownership_id)
             .collect();
 
-        let wing_rep_codes =
-            process::db::get_wing_representative_codes_for_ownerships(&mut conn, &ownership_ids)
-                .await
-                .internal_err()?;
         let steps_by_process = process::db::load_steps_for_processes(&mut conn, &pending_ids)
             .await
             .internal_err()?;
@@ -569,7 +566,6 @@ pub async fn list_user_processes(
                 item,
                 &actor,
                 &template_cache,
-                &wing_rep_codes,
                 &steps_by_process,
                 &reviews_by_process,
                 &no_dues_by_ownership,
@@ -764,9 +760,8 @@ fn compute_next_actions(
                         process::StepOwner::User => "user".to_string(),
                         process::StepOwner::Admin => "admin".to_string(),
                         process::StepOwner::Designation { code } => code.clone(),
-                        process::StepOwner::WingRepresentative => unreachable!(
-                            "WingRepresentative is resolved into a concrete Designation before reaching here"
-                        ),
+                        process::StepOwner::WingRepresentative => "wing_representative".to_string(),
+                        process::StepOwner::Tenant => "tenant".to_string(),
                     };
                     next_actions.push(NextActionInfo {
                         template_step_id: step_id,
@@ -793,7 +788,7 @@ pub async fn get_process_state(
     // reviewer — this handler never writes to another user's process, only the caller's own.
     // personal_only (set by the plain /process page) always forces the caller's own view.
     let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
-    let actor = build_actor_context(&state.permissions_manager, &user).await;
+    let actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
 
     let (process_id, template_version_id, ownership_id, template, newly_opened_step_ids) =
         resolve_process_target(

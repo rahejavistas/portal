@@ -806,6 +806,15 @@ async fn main() {
                     "/api/v1/process/download-url",
                     post(handlers::process::process_download_url),
                 )
+                .route("/api/v1/tenants/add", post(handlers::tenants::add_tenant))
+                .route(
+                    "/api/v1/tenants/remove",
+                    post(handlers::tenants::remove_tenant),
+                )
+                .route(
+                    "/api/v1/tenants/current",
+                    post(handlers::tenants::get_tenant),
+                )
                 .merge({
                     let accounting_resident_routes = Router::new()
                         .route(

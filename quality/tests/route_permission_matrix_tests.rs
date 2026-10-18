@@ -908,3 +908,51 @@ async fn test_accounting_disabled_blocks_every_accounting_route_regardless_of_pe
         "society-profile must remain reachable even when accounting is disabled",
     );
 }
+
+/// `/tenants/*` has no router-level permission layer — any resident reaches it, scoped
+/// internally to flats they actually own.
+#[tokio::test]
+async fn test_tenant_routes_are_self_service_with_no_permission_gate() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let rid = quick_create_user(&env, &admin_jwt, "tenantroute@matrix.test", "Z", "830");
+    let jwt = quick_onboard_user(&env, "tenantroute@matrix.test", "password123");
+    let a = auth(&jwt);
+
+    let ownership_id: i32 = sqlx::query_scalar(
+        "SELECT ownership_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+    )
+    .bind(rid)
+    .fetch_one(&env.db_pool)
+    .await
+    .unwrap();
+
+    assert_not_forbidden(
+        ureq::post(&format!("{}/api/v1/tenants/current", url))
+            .set("Authorization", &a)
+            .send_json(serde_json::json!({ "ownership_id": ownership_id })),
+        "tenants/current needs only a valid session",
+    );
+
+    let unauthenticated = ureq::post(&format!("{}/api/v1/tenants/current", url))
+        .send_json(serde_json::json!({ "ownership_id": ownership_id }));
+    assert!(unauthenticated.is_err());
+    assert_eq!(
+        unauthenticated
+            .unwrap_err()
+            .into_response()
+            .unwrap()
+            .status(),
+        401,
+        "tenants/current without any token must be 401",
+    );
+
+    let other_jwt = seeded_resident(&env, &admin_jwt, "tenantroute-other", "831", &[]);
+    assert_forbidden(
+        ureq::post(&format!("{}/api/v1/tenants/current", url))
+            .set("Authorization", &auth(&other_jwt))
+            .send_json(serde_json::json!({ "ownership_id": ownership_id })),
+        "tenants/current for a flat the caller does not own",
+    );
+}

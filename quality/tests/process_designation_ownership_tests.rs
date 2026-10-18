@@ -262,11 +262,11 @@ fn wing_representative_draft() -> serde_json::Value {
     })
 }
 
-/// `WingRepresentative` resolves to the resident-owner's OWN wing's designation —
-/// never a fixed, template-authored code. A different wing's own representative must
-/// have zero standing on it.
+/// Any wing's representative may act on a `WingRepresentative`-owned step, regardless
+/// of which wing the process's own flat belongs to — the per-wing representative
+/// *assignment* stays wing-scoped, but the authorization check itself is not.
 #[tokio::test]
-async fn test_wing_representative_resolves_to_owners_own_wing_and_excludes_other_wings() {
+async fn test_any_wing_representative_can_act_on_any_wings_process() {
     let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -288,16 +288,59 @@ async fn test_wing_representative_resolves_to_owners_own_wing_and_excludes_other
     let process_id = state["process_id"].as_str().unwrap();
     let (step_id, field_id) = field_and_step_ids(&state);
 
-    let err = save_step(&url, &b_rep_jwt, process_id, step_id, field_id).unwrap_err();
-    assert_eq!(
-        err, 403,
-        "wing B's own representative has no standing on wing A's resident's process"
-    );
-
-    let result = save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
-        .expect("wing A's own representative must be able to act");
+    let result = save_step(&url, &b_rep_jwt, process_id, step_id, field_id)
+        .expect("wing B's own representative must also be able to act on wing A's process");
     assert_eq!(result["status"], "success");
     assert_eq!(result["step"]["is_completed"], true);
+
+    let second_owner_jwt = {
+        quick_create_user(&env, &admin_jwt, "wing_a_owner2@dtest.test", "A", "213");
+        quick_onboard_user(&env, "wing_a_owner2@dtest.test", "password123")
+    };
+    let second_state = start_process(&url, &second_owner_jwt, template_id);
+    let second_process_id = second_state["process_id"].as_str().unwrap();
+    let (second_step_id, second_field_id) = field_and_step_ids(&second_state);
+
+    let result = save_step(
+        &url,
+        &a_rep_jwt,
+        second_process_id,
+        second_step_id,
+        second_field_id,
+    )
+    .expect("wing A's own representative must still be able to act");
+    assert_eq!(result["status"], "success");
+}
+
+/// A caller holding no wing-representative designation at all (not even for their own
+/// wing) still has zero standing — the check grants access to any wing's *rep*, not to
+/// every resident.
+#[tokio::test]
+async fn test_plain_resident_without_any_wing_representative_designation_is_rejected() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &wing_representative_draft());
+
+    let _owner_id = quick_create_user(
+        &env,
+        &admin_jwt,
+        "wing_a_owner_plain@dtest.test",
+        "A",
+        "212",
+    );
+    let owner_jwt = quick_onboard_user(&env, "wing_a_owner_plain@dtest.test", "password123");
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let err = save_step(&url, &owner_jwt, process_id, step_id, field_id).unwrap_err();
+    assert_eq!(
+        err, 400,
+        "the process's own owner, holding no wing-rep designation, must not be able to act"
+    );
 }
 
 fn revoke_step(
@@ -616,6 +659,7 @@ async fn test_review_step_reports_cascaded_designation_stage_as_newly_opened() {
     let actor = process::state_machine::ActorContext {
         is_admin: false,
         designation_codes: Default::default(),
+        ..Default::default()
     };
     process::db::save_step(
         &mut conn,
@@ -650,6 +694,7 @@ async fn test_review_step_reports_cascaded_designation_stage_as_newly_opened() {
     let admin_actor = process::state_machine::ActorContext {
         is_admin: true,
         designation_codes: Default::default(),
+        ..Default::default()
     };
     let outcome = process::db::review_step(
         &mut conn,
@@ -744,10 +789,11 @@ async fn test_plain_resident_list_excludes_other_residents_processes_even_with_p
     );
 }
 
-/// Wing A's representative must not see wing B's resident's process in their own list —
-/// the same `WingRepresentative` owner kind, resolved to two different designations.
+/// Wing A's representative also sees wing B's resident's process in their own list —
+/// any wing's rep has standing on a `WingRepresentative`-owned step, regardless of
+/// which wing the process's own flat belongs to.
 #[tokio::test]
-async fn test_wing_representative_list_excludes_a_different_wings_process() {
+async fn test_wing_representative_list_includes_a_different_wings_process() {
     let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -781,15 +827,15 @@ async fn test_wing_representative_list_excludes_a_different_wings_process() {
         "wing A's rep must see wing A's own pending process"
     );
     assert!(
-        !process_ids.contains(&b_process_id.as_str()),
-        "wing A's rep must never see wing B's process in their list"
+        process_ids.contains(&b_process_id.as_str()),
+        "wing A's rep must also see wing B's process, since any wing rep may act on it"
     );
 }
 
-/// Wing B's representative cannot revoke/reopen a completed stage on wing A's resident's
-/// process — exclusivity on the review/reopen action itself, not just on filling the step.
+/// Wing B's representative CAN revoke/reopen a completed stage on wing A's resident's
+/// process — the review/reopen action follows the same cross-wing rule as filling it.
 #[tokio::test]
-async fn test_wing_representative_cannot_reopen_a_different_wings_completed_step() {
+async fn test_wing_representative_can_reopen_a_different_wings_completed_step() {
     let env = setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -820,13 +866,7 @@ async fn test_wing_representative_cannot_reopen_a_different_wings_completed_step
     save_step(&url, &a_rep_jwt, process_id, step_id, field_id)
         .expect("wing A's rep completes the step");
 
-    let err = revoke_step(&url, &b_rep_jwt, process_id, step_id).unwrap_err();
-    assert_eq!(
-        err, 403,
-        "wing B's representative has no standing to reopen wing A's resident's step"
-    );
-
-    let result = revoke_step(&url, &a_rep_jwt, process_id, step_id)
-        .expect("wing A's own representative can reopen their own stage");
+    let result = revoke_step(&url, &b_rep_jwt, process_id, step_id)
+        .expect("any wing's representative, including wing B's, can reopen the step");
     assert_eq!(result["status"], "success");
 }
