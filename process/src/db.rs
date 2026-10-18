@@ -888,12 +888,110 @@ pub async fn load_state(
         blocking_document_ids.extend(unattached);
     }
 
+    inject_no_dues_amounts(&mut *conn, process_id, &step_info_map, &mut fields).await?;
+
     Ok(ProcessStateInput {
         steps,
         fields,
         reviews,
         blocking_document_ids,
     })
+}
+
+/// `NoDues` is never stored in `process_fields` — resolve the flat's current
+/// outstanding dues live, every call, so paying up mid-process unblocks it.
+pub async fn inject_no_dues_amounts(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    step_info_map: &HashMap<i32, state_machine::StepInfo>,
+    fields: &mut HashMap<i32, FieldState>,
+) -> Result<(), sqlx::Error> {
+    let no_dues_field_ids: Vec<i32> = step_info_map
+        .values()
+        .flat_map(|info| &info.fields)
+        .filter(|f| f.r#type == crate::FieldType::NoDues)
+        .map(|f| f.field_id)
+        .collect();
+    if no_dues_field_ids.is_empty() {
+        return Ok(());
+    }
+    let outstanding = get_outstanding_dues_for_process(conn, process_id).await?;
+    for field_id in no_dues_field_ids {
+        fields.insert(
+            field_id,
+            FieldState {
+                text_value: Some(outstanding.to_string()),
+                document_id: None,
+            },
+        );
+    }
+    Ok(())
+}
+
+/// Persists completion for every step gated by a `NoDues` field. Nothing else ever
+/// triggers a save for such a stage, so the live dues check alone would never flip
+/// `process_steps.is_completed` — call this before computing statuses to display.
+pub async fn sync_no_dues_step_completions(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template: &crate::ProcessTemplate,
+) -> Result<(), sqlx::Error> {
+    let step_info_map = state_machine::build_step_info_map(template);
+    let no_dues_step_ids: Vec<i32> = step_info_map
+        .values()
+        .filter(|info| {
+            info.fields
+                .iter()
+                .any(|f| f.r#type == crate::FieldType::NoDues)
+        })
+        .map(|info| info.step_id)
+        .collect();
+    if no_dues_step_ids.is_empty() {
+        return Ok(());
+    }
+    for step_id in no_dues_step_ids {
+        let state = load_state(&mut *conn, process_id, template).await?;
+        let updates = state_machine::compute_completion_updates(template, &state, step_id);
+        persist_step_completions(&mut *conn, process_id, &updates).await?;
+    }
+    Ok(())
+}
+
+/// Total outstanding (unpaid + partially paid) invoice balance for a process's flat.
+pub async fn get_outstanding_dues_for_process(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+) -> Result<rust_decimal::Decimal, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(SUM(i.total_amount - i.amount_paid), 0) \
+         FROM processes p \
+         JOIN flat_ownerships fo ON fo.ownership_id = p.ownership_id \
+         JOIN invoices i ON i.flat_id = fo.flat_id \
+         WHERE p.process_id = $1 AND i.status IN ('UNPAID', 'PARTIALLY_PAID')",
+    )
+    .bind(process_id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Batched form of `get_outstanding_dues_for_process`, keyed by `ownership_id` —
+/// for listing many processes without a per-row query. An ownership with zero
+/// outstanding invoices is simply absent from the result.
+pub async fn get_outstanding_dues_for_ownerships(
+    conn: &mut sqlx::PgConnection,
+    ownership_ids: &[i32],
+) -> Result<HashMap<i32, rust_decimal::Decimal>, sqlx::Error> {
+    let rows: Vec<(i32, rust_decimal::Decimal)> = sqlx::query_as(
+        "SELECT fo.ownership_id, COALESCE(SUM(i.total_amount - i.amount_paid), 0) \
+         FROM flat_ownerships fo \
+         JOIN invoices i ON i.flat_id = fo.flat_id AND i.status IN ('UNPAID', 'PARTIALLY_PAID') \
+         WHERE fo.ownership_id = ANY($1) \
+         GROUP BY fo.ownership_id",
+    )
+    .bind(ownership_ids)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Sets started_at for newly-unlocked steps and refreshes processes.current_turn.

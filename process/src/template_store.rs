@@ -125,12 +125,18 @@ fn assign_field_ids(
             .map(|f| {
                 let field_id = *next_id;
                 *next_id += 1;
+                // Declaration/NoDues are never skippable — the first is a legal
+                // attestation, the second is what actually blocks the step on dues.
+                let is_optional = match f.r#type {
+                    crate::FieldType::Declaration | crate::FieldType::NoDues => false,
+                    _ => f.is_optional,
+                };
                 crate::ProcessFieldTemplate {
                     field_id,
                     name: f.name,
                     description: f.description,
                     r#type: f.r#type,
-                    is_optional: f.is_optional,
+                    is_optional,
                     requirements: f.requirements,
                     requires_signature: f.requires_signature,
                     required_signs_from_designations: f.required_signs_from_designations,

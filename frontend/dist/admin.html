@@ -3372,6 +3372,8 @@
             { value: 'date', label: 'Date' },
             { value: 'bool', label: 'Yes/No' },
             { value: 'enum', label: 'Choice (fixed list)' },
+            { value: 'declaration', label: 'Declaration' },
+            { value: 'no_dues', label: 'No Dues Check' },
         ];
 
         function fieldTypeLabel(type) {
@@ -3379,7 +3381,7 @@
         }
 
         function emptyField() {
-            return { name: '', type: 'document', is_optional: false, requires_signature: false, required_signs_from_designations: [], options: [], example_document_id: null };
+            return { name: '', type: 'document', is_optional: false, requires_signature: false, required_signs_from_designations: [], options: [], example_document_id: null, requirements: null };
         }
         function emptyStage() {
             return { name: 'New Stage', description: '', is_optional: false, filled_by: { kind: 'user' }, fields: null, substeps: [emptySubstep()] };
@@ -3677,6 +3679,8 @@ function openDesignationPicker(field) {
             const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
             const optionsCsv = (field.options || []).join(', ');
             const ownerIsUser = stageOwner.kind === 'user';
+            const isFixedRequired = field.type === 'declaration' || field.type === 'no_dues';
+            const declarationText = (field.requirements && field.requirements.declaration_text) || '';
             return `
                 <div class="field-row">
                     <div class="field-row-main">
@@ -3689,8 +3693,16 @@ function openDesignationPicker(field) {
                     <div class="field-row-meta">
                         <input type="text" class="field-name-input" style="flex:1;" value="${escapeHtml(optionsCsv)}" placeholder="Allowed values, comma-separated (e.g. Owner, Tenant, Agent)" oninput="${onchangePrefix}.options=this.value.split(',').map(s=>s.trim()).filter(Boolean)">
                     </div>` : ''}
+                    ${field.type === 'declaration' ? `
                     <div class="field-row-meta">
-                        <label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>
+                        <textarea class="field-name-input" style="flex:1; min-height:80px;" placeholder="Declaration text. Use ##NAME##, ##FLAT##, ##WING## for blanks the resident fills in." oninput="${onchangePrefix}.requirements={declaration_text: this.value}">${escapeHtml(declarationText)}</textarea>
+                    </div>` : ''}
+                    ${field.type === 'no_dues' ? `
+                    <div class="field-row-meta">
+                        <span style="font-size:12px; color:var(--muted-foreground);">Automatically checks the resident's flat for outstanding dues and blocks this stage until they're cleared.</span>
+                    </div>` : ''}
+                    <div class="field-row-meta">
+                        ${isFixedRequired ? '' : `<label class="field-check-label"><input type="checkbox" ${field.is_optional ? 'checked' : ''} onchange="${onchangePrefix}.is_optional=this.checked"> Optional</label>`}
                         ${(field.type === 'document' && !ownerIsUser) ? `<label class="field-check-label"><input type="checkbox" ${field.requires_signature ? 'checked' : ''} onchange="${onchangePrefix}.requires_signature=this.checked; if (!this.checked) { ${onchangePrefix}.required_signs_from_designations = []; } renderBuilderStageDetail();"> Requires signature</label>` : ''}
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>

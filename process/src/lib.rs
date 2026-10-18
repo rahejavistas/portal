@@ -21,6 +21,10 @@ pub enum FieldType {
     Enum,
     #[serde(rename = "document")]
     File,
+    /// Declaration text with blanks and a required agree checkbox; never optional.
+    Declaration,
+    /// Read-only, system-computed outstanding dues — never resident-entered.
+    NoDues,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

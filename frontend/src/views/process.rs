@@ -2579,6 +2579,60 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return !!(user && user.designations && user.designations.includes(owner.code));
         }
 
+        function declarationBlankTokens(text) {
+            const matches = (text || '').match(/##([A-Z]+)##/g) || [];
+            return [...new Set(matches.map(m => m.slice(2, -2)))];
+        }
+
+        function parseDeclarationValue(textValue) {
+            if (!textValue) return { agreed: false, blanks: {} };
+            try {
+                const parsed = JSON.parse(textValue);
+                return { agreed: !!parsed.agreed, blanks: parsed.blanks || {} };
+            } catch (e) {
+                return { agreed: false, blanks: {} };
+            }
+        }
+
+        function renderDeclarationFieldHtml(f, fieldId, isReadOnly, stepId) {
+            const declarationText = (f.requirements && f.requirements.declaration_text) || '';
+            const val = f.value || { text_value: null };
+            const { agreed, blanks } = parseDeclarationValue(val.text_value);
+            const onInputAttr = `oninput="updateSaveButtonState(${stepId})"`;
+            const renderedText = escapeHtml(declarationText).replace(/##([A-Z]+)##/g, (m, token) => {
+                const existing = blanks[token] || '';
+                if (isReadOnly) {
+                    return `<strong>${escapeHtml(existing) || '_____'}</strong>`;
+                }
+                return `<input type="text" class="declaration-blank-input" id="decl-blank-${fieldId}-${token}" value="${escapeHtml(existing)}" placeholder="${escapeHtml(token)}" style="display:inline-block; width:160px; border:none; border-bottom:2px solid var(--primary); background:transparent; font-weight:700; padding:2px 4px;" ${onInputAttr}>`;
+            });
+            if (isReadOnly) {
+                return `
+                    <div class="field-value-display" style="padding: 14px 16px; border-radius: var(--radius-lg); background-color: var(--muted); border: 1px solid var(--border); line-height:1.7;">
+                        <div>${renderedText}</div>
+                        <div style="margin-top:10px; font-weight:700; color: ${agreed ? 'var(--primary)' : 'var(--danger)'};">${agreed ? 'Agreed' : 'Not yet agreed'}</div>
+                    </div>
+                `;
+            }
+            return `
+                <div style="max-width: 700px;">
+                    <div style="padding: 14px 16px; border-radius: var(--radius-lg); background-color: var(--muted); border: 1px solid var(--border); line-height:1.9; margin-bottom:12px;">${renderedText}</div>
+                    <label class="field-check-label" style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" id="decl-agree-${fieldId}" ${agreed ? 'checked' : ''} onchange="updateSaveButtonState(${stepId})">
+                        I agree to the above declaration
+                    </label>
+                </div>
+            `;
+        }
+
+        function renderNoDuesFieldHtml(val) {
+            const amount = parseFloat(val.text_value || '0') || 0;
+            if (amount <= 0) {
+                return `<div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); background-color: #ECFDF5; border: 1px solid #A7F3D0; color: #065F46; font-weight: 700;">No outstanding dues on this flat</div>`;
+            }
+            return `<div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); background-color: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; font-weight: 700;">&#8377;${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} due on this flat &mdash; this stage cannot be completed until dues are cleared</div>`;
+        }
+
         function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
@@ -2587,7 +2641,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             let anyRequiredEmpty = false;
 
             const editableFieldIds = fields.filter(f => {
-                if (f.type === 'document') return false;
+                if (f.type === 'document' || f.type === 'declaration' || f.type === 'no_dues') return false;
                 if (!(stepStatus === 'OPEN' || parentStatus === 'OPEN')) return false;
                 return ownerCanAct;
             }).map(f => f.template_field_id);
@@ -2652,6 +2706,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                             </div>
                         `;
                     }
+                } else if (type === 'declaration') {
+                    if (!isReadOnly) hasEditableTextField = true;
+                    inputHtml = renderDeclarationFieldHtml(f, fieldId, isReadOnly, stepId);
+                } else if (type === 'no_dues') {
+                    inputHtml = renderNoDuesFieldHtml(val);
                 } else {
                     if (isReadOnly) {
                         const displayValue = type === 'bool'
@@ -2772,7 +2831,16 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const btn = document.getElementById(`step-save-btn-${stepId}`);
             if (!step || !btn) return;
             const anyRequiredEmpty = step.fields.some(f => {
-                if (f.type === 'document' || f.is_optional) return false;
+                if (f.type === 'document' || f.type === 'no_dues' || f.is_optional) return false;
+                if (f.type === 'declaration') {
+                    const agreeEl = document.getElementById(`decl-agree-${f.template_field_id}`);
+                    if (!agreeEl || !agreeEl.checked) return true;
+                    const declarationText = (f.requirements && f.requirements.declaration_text) || '';
+                    return declarationBlankTokens(declarationText).some(t => {
+                        const el = document.getElementById(`decl-blank-${f.template_field_id}-${t}`);
+                        return !el || !el.value.trim();
+                    });
+                }
                 const el = document.getElementById(`text-input-${f.template_field_id}`);
                 return el && !el.value.trim();
             });
@@ -3521,7 +3589,33 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const fieldId = f.template_field_id;
 
                 if (isFieldEditable) {
-                    if (f.type !== 'document') {
+                    if (f.type === 'no_dues') {
+                        return;
+                    } else if (f.type === 'declaration') {
+                        const declarationText = (f.requirements && f.requirements.declaration_text) || '';
+                        const tokens = declarationBlankTokens(declarationText);
+                        const blanks = {};
+                        let anyBlankEmpty = false;
+                        tokens.forEach(t => {
+                            const el = document.getElementById(`decl-blank-${fieldId}-${t}`);
+                            const v = el ? el.value.trim() : '';
+                            if (!v) anyBlankEmpty = true;
+                            blanks[t] = v;
+                        });
+                        const agreeEl = document.getElementById(`decl-agree-${fieldId}`);
+                        const agreed = !!(agreeEl && agreeEl.checked);
+                        if (anyBlankEmpty || !agreed) {
+                            showAlert(`Please fill in "${f.name}" completely and tick the agreement checkbox.`);
+                            hasError = true;
+                            return;
+                        }
+                        fieldsPayload.push({
+                            template_field_id: fieldId,
+                            text_value: JSON.stringify({ agreed: true, blanks }),
+                            document_id: null
+                        });
+                        editableTextFieldIds.push(fieldId);
+                    } else if (f.type !== 'document') {
                         const inputEl = document.getElementById(`text-input-${fieldId}`);
                         if (inputEl) {
                             const val = inputEl.value.trim();
