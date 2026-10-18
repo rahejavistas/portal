@@ -234,6 +234,7 @@ pub fn check_step_completed(
                     field.r#type,
                     fs.text_value.as_deref(),
                     fs.document_id,
+                    field.requirements.as_ref(),
                 );
                 let blocked = fs
                     .document_id
@@ -514,6 +515,7 @@ pub fn validate_save(
             submitted.document_id,
             field_meta.is_optional,
             field_meta.options.as_deref(),
+            field_meta.requirements.as_ref(),
         )?;
 
         updated_fields.insert(
