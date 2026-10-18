@@ -261,6 +261,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn field_type_no_dues_serializes_to_the_wire_name_the_frontend_expects() {
+        assert_eq!(
+            serde_json::to_value(FieldType::NoDues).unwrap(),
+            serde_json::json!("no_dues")
+        );
+        assert_eq!(
+            serde_json::from_value::<FieldType>(serde_json::json!("no_dues")).unwrap(),
+            FieldType::NoDues
+        );
+        assert!(serde_json::from_value::<FieldType>(serde_json::json!("nodues")).is_err());
+    }
+
+    #[test]
     fn test_load_test_template_fixture() {
         let template = tenant_onboarding_fixture();
         assert_eq!(template.step_id, 1);

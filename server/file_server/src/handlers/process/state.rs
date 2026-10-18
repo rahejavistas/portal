@@ -79,6 +79,8 @@ pub struct FieldResponse {
     pub required_signs_from_designations: Vec<String>,
     /// `Enum` fields only — the closed list of valid values.
     pub options: Option<Vec<String>>,
+    /// `Declaration` fields only — holds `declaration_text`.
+    pub requirements: Option<serde_json::Value>,
     pub example_document_id: Option<Uuid>,
     pub example_document_title: Option<String>,
     pub value: Option<FieldValue>,
@@ -444,6 +446,7 @@ fn map_step_template(
                 requires_signature: f.requires_signature,
                 required_signs_from_designations: f.required_signs_from_designations.clone(),
                 options: f.options.clone(),
+                requirements: f.requirements.clone(),
                 example_document_id: f.example_document_id,
                 example_document_title: f
                     .example_document_id

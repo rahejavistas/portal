@@ -194,4 +194,34 @@ mod tests {
         );
         assert!(cell_text(&Data::String(" FLAT ".to_string())).eq_ignore_ascii_case("flat"));
     }
+
+    #[test]
+    fn parse_dues_file_reads_the_committed_sample_fixture() {
+        let bytes = include_bytes!("../../../../quality/fixtures/no_dues_sample.xlsx");
+        let mut rows = parse_dues_file(bytes).expect("fixture must parse");
+        rows.sort_by(|a, b| a.flat_number.cmp(&b.flat_number));
+
+        assert_eq!(
+            rows.len(),
+            3,
+            "the 'Total' sentinel row must not be parsed as a flat"
+        );
+        assert!(rows.iter().all(|r| r.wing == "Z"));
+
+        assert_eq!(rows[0].flat_number, "0001");
+        assert_eq!(rows[0].total_due, Decimal::from(1000));
+        assert_eq!(rows[0].overdue_amount, Decimal::from(0));
+
+        assert_eq!(rows[1].flat_number, "0002");
+        assert_eq!(rows[1].total_due, Decimal::from(0));
+        assert_eq!(rows[1].overdue_amount, Decimal::from(0));
+
+        assert_eq!(rows[2].flat_number, "0003");
+        assert_eq!(
+            rows[2].total_due,
+            Decimal::from(500),
+            "a negative figure in an unrelated column must not corrupt Total Due"
+        );
+        assert_eq!(rows[2].overdue_amount, Decimal::from(200));
+    }
 }

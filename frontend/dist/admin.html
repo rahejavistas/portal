@@ -1595,6 +1595,19 @@
                         </table>
                     </div>
                 </div>
+
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">No Dues File</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Upload the latest dues compliance export. Every flat's outstanding amount is replaced with this file's figures - the No Dues check in any process always reflects whichever upload is most recent.</p>
+                    <form id="upload-dues-form">
+                        <div class="form-group">
+                            <label for="dues-file">Dues compliance file (XLSX)</label>
+                            <input type="file" id="dues-file" accept=".xlsx,.xls" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
+                        </div>
+                        <button type="submit" class="submit-btn">Upload</button>
+                    </form>
+                    <div class="feedback-box" id="upload-dues-feedback"></div>
+                </div>
             </section>
 
             <section class="suite-panel" id="suite-signatures">
@@ -3002,6 +3015,48 @@
             }
         });
 
+        const uploadDuesForm = document.getElementById('upload-dues-form');
+        const uploadDuesFeedback = document.getElementById('upload-dues-feedback');
+
+        uploadDuesForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            uploadDuesFeedback.style.display = 'none';
+
+            const fileInput = document.getElementById('dues-file');
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/process-templates/no-dues/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const unmatchedNote = data.unmatched_flat_codes.length > 0
+                        ? ` ${data.unmatched_flat_codes.length} flat code(s) had no match.`
+                        : '';
+                    uploadDuesFeedback.textContent = `Matched ${data.matched} of ${data.rows_parsed} rows.${unmatchedNote}`;
+                    uploadDuesFeedback.className = 'feedback-box success';
+                    uploadDuesFeedback.style.display = 'block';
+                    fileInput.value = '';
+                } else {
+                    uploadDuesFeedback.textContent = data.message || 'Failed to process dues file';
+                    uploadDuesFeedback.className = 'feedback-box error';
+                    uploadDuesFeedback.style.display = 'block';
+                }
+            } catch (err) {
+                uploadDuesFeedback.textContent = 'Failed to connect to backend server';
+                uploadDuesFeedback.className = 'feedback-box error';
+                uploadDuesFeedback.style.display = 'block';
+            }
+        });
+
         let allUsers = [];
         async function loadUsers() {
             const tbody = document.getElementById('user-rows-target');
@@ -3444,7 +3499,7 @@
             };
         }
         function fieldFromServer(f) {
-            return { name: f.name, type: f.type, is_optional: f.is_optional, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [], example_document_id: f.example_document_id || null };
+            return { name: f.name, type: f.type, is_optional: f.is_optional, requires_signature: !!f.requires_signature, required_signs_from_designations: f.required_signs_from_designations || [], options: f.options || [], example_document_id: f.example_document_id || null, requirements: f.requirements || null };
         }
 
         function closeTemplateBuilder() {

@@ -340,13 +340,21 @@ async fn main() {
                     "/process-templates/tat-report",
                     post(handlers::process_templates::tat_report),
                 )
+                .layer(axum_middleware::from_fn_with_state(
+                    $state.clone(),
+                    middleware::require_any_of(&[Permission::ProcessTemplatesManage]),
+                ));
+
+            // Independent of the accounting module itself - no require_accounting_enabled -
+            // since the NoDues process field works whether or not accounting is on.
+            let no_dues_upload_routes = Router::new()
                 .route(
                     "/process-templates/no-dues/upload",
                     post(handlers::dues::upload_no_dues_file),
                 )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
-                    middleware::require_any_of(&[Permission::ProcessTemplatesManage]),
+                    middleware::require_any_of(&[Permission::AccountingManage]),
                 ));
 
             // No permission gate — each handler is self-scoped to the caller's own signer.
@@ -701,6 +709,7 @@ async fn main() {
                 .merge(document_categories_manage_routes)
                 .merge(roles_shared_read_routes)
                 .merge(process_templates_manage_routes)
+                .merge(no_dues_upload_routes)
                 .merge(document_signatures_sign_routes)
                 .merge(document_signatures_read_routes)
                 .merge(signer_directory_manage_routes)
