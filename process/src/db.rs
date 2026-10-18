@@ -951,42 +951,62 @@ pub async fn sync_no_dues_step_completions(
     }
     for step_id in no_dues_step_ids {
         let state = load_state(&mut *conn, process_id, template).await?;
+        let Some(info) = step_info_map.get(&step_id) else {
+            continue;
+        };
+        // A stage that went through formal admin review must never be silently
+        // reopened by a background sync just because dues reappeared later -
+        // that needs an explicit reopen action, with its own audit trail.
+        let already_completed = state.steps.get(&step_id).map(|s| s.is_completed) == Some(true);
+        if info.requires_review(template.step_id) && already_completed {
+            continue;
+        }
         let updates = state_machine::compute_completion_updates(template, &state, step_id);
-        persist_step_completions(&mut *conn, process_id, &updates).await?;
+        // Only persist steps whose flag actually flips — every read recomputes this,
+        // so persisting an unchanged `true` would stamp completed_at to NOW() each time.
+        let changed: Vec<(i32, bool)> = updates
+            .into_iter()
+            .filter(|&(id, completed)| {
+                state.steps.get(&id).map(|s| s.is_completed) != Some(completed)
+            })
+            .collect();
+        persist_step_completions(&mut *conn, process_id, &changed).await?;
     }
     Ok(())
 }
 
 /// Total outstanding (unpaid + partially paid) invoice balance for a process's flat.
+/// Reads the latest admin-uploaded dues snapshot, not the accounting module —
+/// a flat with no snapshot row yet owes nothing as far as this is concerned.
 pub async fn get_outstanding_dues_for_process(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
 ) -> Result<rust_decimal::Decimal, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT COALESCE(SUM(i.total_amount - i.amount_paid), 0) \
+    let amount: Option<rust_decimal::Decimal> = sqlx::query_scalar(
+        "SELECT d.total_due \
          FROM processes p \
          JOIN flat_ownerships fo ON fo.ownership_id = p.ownership_id \
-         JOIN invoices i ON i.flat_id = fo.flat_id \
-         WHERE p.process_id = $1 AND i.status IN ('UNPAID', 'PARTIALLY_PAID')",
+         JOIN flat_dues_from_file d ON d.flat_id = fo.flat_id \
+         WHERE p.process_id = $1",
     )
     .bind(process_id)
-    .fetch_one(conn)
-    .await
+    .fetch_optional(conn)
+    .await?;
+    Ok(amount.unwrap_or_default())
 }
 
 /// Batched form of `get_outstanding_dues_for_process`, keyed by `ownership_id` —
-/// for listing many processes without a per-row query. An ownership with zero
-/// outstanding invoices is simply absent from the result.
+/// for listing many processes without a per-row query. An ownership with no
+/// uploaded snapshot yet is simply absent from the result (owes nothing).
 pub async fn get_outstanding_dues_for_ownerships(
     conn: &mut sqlx::PgConnection,
     ownership_ids: &[i32],
 ) -> Result<HashMap<i32, rust_decimal::Decimal>, sqlx::Error> {
     let rows: Vec<(i32, rust_decimal::Decimal)> = sqlx::query_as(
-        "SELECT fo.ownership_id, COALESCE(SUM(i.total_amount - i.amount_paid), 0) \
+        "SELECT fo.ownership_id, d.total_due \
          FROM flat_ownerships fo \
-         JOIN invoices i ON i.flat_id = fo.flat_id AND i.status IN ('UNPAID', 'PARTIALLY_PAID') \
-         WHERE fo.ownership_id = ANY($1) \
-         GROUP BY fo.ownership_id",
+         JOIN flat_dues_from_file d ON d.flat_id = fo.flat_id \
+         WHERE fo.ownership_id = ANY($1)",
     )
     .bind(ownership_ids)
     .fetch_all(conn)

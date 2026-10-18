@@ -13,14 +13,19 @@ struct DeclarationValue {
     blanks: HashMap<String, String>,
 }
 
-/// The `##TOKEN##` names a declaration's text requires a blank for.
+/// The `##TOKEN##` names a declaration's text requires a blank for — same
+/// `[A-Z]+`-only grammar the frontend renders a blank input for, so a token the
+/// backend requires is never one the resident has no way to actually fill in.
 fn declaration_blank_tokens(text: &str) -> Vec<&str> {
     let mut tokens = Vec::new();
     let mut rest = text;
     while let Some(start) = rest.find("##") {
         rest = &rest[start + 2..];
         let Some(end) = rest.find("##") else { break };
-        tokens.push(&rest[..end]);
+        let candidate = &rest[..end];
+        if !candidate.is_empty() && candidate.bytes().all(|b| b.is_ascii_uppercase()) {
+            tokens.push(candidate);
+        }
         rest = &rest[end + 2..];
     }
     tokens

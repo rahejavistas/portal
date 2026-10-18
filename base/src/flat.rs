@@ -67,6 +67,17 @@ impl FlatIdentifier {
         Self { wing, flat_number }
     }
 
+    /// Splits a concatenated code like `"A0301"` (wing letters immediately followed by
+    /// the flat number, as exported by external society-management spreadsheets) and
+    /// normalizes it the same way `new` does.
+    pub fn parse_concatenated(code: &str) -> Result<Self, String> {
+        let code = code.trim();
+        let split_at = code
+            .find(|c: char| c.is_ascii_digit())
+            .ok_or_else(|| format!("'{}' has no flat number", code))?;
+        Self::new(&code[..split_at], &code[split_at..])
+    }
+
     /// Returns the normalized wing (e.g., "A").
     pub fn wing(&self) -> &str {
         &self.wing
@@ -133,5 +144,36 @@ mod tests {
     fn test_numeric_wing_rejected() {
         assert!(FlatIdentifier::new("3", "0301").is_err());
         assert!(FlatIdentifier::new("K3", "0303").is_err());
+    }
+
+    #[test]
+    fn test_parse_concatenated_splits_wing_from_number() {
+        let flat = FlatIdentifier::parse_concatenated("A0301").unwrap();
+        assert_eq!(flat.wing(), "A");
+        assert_eq!(flat.flat_number(), "0301");
+    }
+
+    #[test]
+    fn test_parse_concatenated_lowercases_and_pads() {
+        let flat = FlatIdentifier::parse_concatenated("k2002").unwrap();
+        assert_eq!(flat.wing(), "K");
+        assert_eq!(flat.flat_number(), "2002");
+
+        let flat = FlatIdentifier::parse_concatenated(" a301 ").unwrap();
+        assert_eq!(flat.wing(), "A");
+        assert_eq!(flat.flat_number(), "0301");
+    }
+
+    #[test]
+    fn test_parse_concatenated_rejects_malformed_codes() {
+        assert!(FlatIdentifier::parse_concatenated("").is_err());
+        assert!(
+            FlatIdentifier::parse_concatenated("A").is_err(),
+            "no digits at all"
+        );
+        assert!(
+            FlatIdentifier::parse_concatenated("1234").is_err(),
+            "no wing letters at all"
+        );
     }
 }

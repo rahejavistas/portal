@@ -526,11 +526,16 @@ pub fn validate_save(
             },
         );
 
-        fields_to_save.push((
-            submitted.template_field_id,
-            submitted.text_value.clone(),
-            submitted.document_id,
-        ));
+        // NoDues is never resident-entered — load_state re-injects the real, live
+        // amount on every read regardless, so persisting a submitted value here
+        // would just be dead data sitting in process_fields.
+        if field_meta.r#type != crate::FieldType::NoDues {
+            fields_to_save.push((
+                submitted.template_field_id,
+                submitted.text_value.clone(),
+                submitted.document_id,
+            ));
+        }
     }
 
     let updated_state = ProcessStateInput {
