@@ -1268,8 +1268,8 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload Residents</h3>
                             <form id="upload-csv-form">
                                 <div class="form-group">
-                                    <label for="csv-file">CSV (Email, Wing, Flat) or the member data XLSX export (UnitNo, EmailID)</label>
-                                    <input type="file" id="csv-file" accept=".csv,.xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
+                                    <label for="csv-file">Member data Excel export (UnitNo, EmailID)</label>
+                                    <input type="file" id="csv-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
                                 </div>
                                 <button type="submit" class="submit-btn">Upload</button>
                             </form>
@@ -1298,7 +1298,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         <div style="margin-bottom: 24px;">
                             <input type="text" id="search-input" placeholder="Search User...">
                         </div>
-                        <div class="table-container">
+                        <div class="table-container" style="max-height: 560px; overflow-y: auto;">
                             <table>
                                 <tbody id="user-rows-target">
                                     <tr>
@@ -1595,19 +1595,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             </tbody>
                         </table>
                     </div>
-                </div>
-
-                <div class="card">
-                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">No Dues File</h3>
-                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Upload the latest dues compliance export. Every flat's outstanding amount is replaced with this file's figures - the No Dues check in any process always reflects whichever upload is most recent.</p>
-                    <form id="upload-dues-form">
-                        <div class="form-group">
-                            <label for="dues-file">Dues compliance file (XLSX)</label>
-                            <input type="file" id="dues-file" accept=".xlsx,.xls" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
-                        </div>
-                        <button type="submit" class="submit-btn">Upload</button>
-                    </form>
-                    <div class="feedback-box" id="upload-dues-feedback"></div>
                 </div>
             </section>
 
@@ -3013,48 +3000,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 uploadFeedback.textContent = 'Failed to connect to backend server';
                 uploadFeedback.className = 'feedback-box error';
                 uploadFeedback.style.display = 'block';
-            }
-        });
-
-        const uploadDuesForm = document.getElementById('upload-dues-form');
-        const uploadDuesFeedback = document.getElementById('upload-dues-feedback');
-
-        uploadDuesForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            uploadDuesFeedback.style.display = 'none';
-
-            const fileInput = document.getElementById('dues-file');
-            if (fileInput.files.length === 0) return;
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-
-            try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/process-templates/no-dues/upload`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    const unmatchedNote = data.unmatched_flat_codes.length > 0
-                        ? ` ${data.unmatched_flat_codes.length} flat code(s) had no match.`
-                        : '';
-                    uploadDuesFeedback.textContent = `Matched ${data.matched} of ${data.rows_parsed} rows.${unmatchedNote}`;
-                    uploadDuesFeedback.className = 'feedback-box success';
-                    uploadDuesFeedback.style.display = 'block';
-                    fileInput.value = '';
-                } else {
-                    uploadDuesFeedback.textContent = data.message || 'Failed to process dues file';
-                    uploadDuesFeedback.className = 'feedback-box error';
-                    uploadDuesFeedback.style.display = 'block';
-                }
-            } catch (err) {
-                uploadDuesFeedback.textContent = 'Failed to connect to backend server';
-                uploadDuesFeedback.className = 'feedback-box error';
-                uploadDuesFeedback.style.display = 'block';
             }
         });
 
