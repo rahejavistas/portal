@@ -33,6 +33,7 @@ telemetry = { version = "0.1.0", path = "../../telemetry" }
 governor = "0.6"
 lambda_http = "0.8"
 csv = "1.4.0"
+calamine = "0.24"
 reqwest = { version = "0.11", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 async-trait = "0.1"
 hmac = "0.12"

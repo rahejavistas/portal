@@ -340,6 +340,10 @@ async fn main() {
                     "/process-templates/tat-report",
                     post(handlers::process_templates::tat_report),
                 )
+                .route(
+                    "/process-templates/no-dues/upload",
+                    post(handlers::dues::upload_no_dues_file),
+                )
                 .layer(axum_middleware::from_fn_with_state(
                     $state.clone(),
                     middleware::require_any_of(&[Permission::ProcessTemplatesManage]),

@@ -1265,13 +1265,13 @@ pub(crate) const ADMIN_HTML: &str = r#"
                         </div>
 
                         <div class="card">
-                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload CSV</h3>
+                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload Residents</h3>
                             <form id="upload-csv-form">
                                 <div class="form-group">
-                                    <label for="csv-file">CSV File (Email, Wing, Flat)</label>
-                                    <input type="file" id="csv-file" accept=".csv" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
+                                    <label for="csv-file">CSV (Email, Wing, Flat) or the member data XLSX export (UnitNo, EmailID)</label>
+                                    <input type="file" id="csv-file" accept=".csv,.xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
                                 </div>
-                                <button type="submit" class="submit-btn">Upload CSV</button>
+                                <button type="submit" class="submit-btn">Upload</button>
                             </form>
                             <div class="feedback-box" id="upload-feedback"></div>
                             <div id="upload-results" style="display: none; margin-top: 16px;">

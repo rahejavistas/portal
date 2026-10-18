@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod db;
+pub mod dues_import;
 pub mod fields;
 pub mod notification;
 pub mod state_machine;
@@ -24,6 +25,7 @@ pub enum FieldType {
     /// Declaration text with blanks and a required agree checkbox; never optional.
     Declaration,
     /// Read-only, system-computed outstanding dues — never resident-entered.
+    #[serde(rename = "no_dues")]
     NoDues,
 }
 
