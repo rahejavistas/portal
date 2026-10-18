@@ -4,7 +4,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vistas Portal - Admin Suite</title>
+    <title>Vistas Portal: Admin Suite</title>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         document.documentElement.setAttribute(
@@ -1268,7 +1268,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload Residents</h3>
                             <form id="upload-csv-form">
                                 <div class="form-group">
-                                    <label for="csv-file">Member data Excel export (UnitNo, EmailID)</label>
                                     <input type="file" id="csv-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
                                 </div>
                                 <button type="submit" class="submit-btn">Upload</button>
@@ -1733,7 +1732,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         <div class="builder-topbar">
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <span id="preview-template-name" style="font-size:18px; font-weight:800;"></span>
-                <span style="font-size:12px; font-weight:700; color:var(--muted-foreground);">Preview - how this looks to a resident</span>
+                <span style="font-size:12px; font-weight:700; color:var(--muted-foreground);">Preview: how this looks to a resident</span>
             </div>
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <button onclick="closeTemplatePreview()" style="height:38px; padding:0 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
@@ -1750,7 +1749,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             <h3 id="template-versions-modal-title" style="margin-top:0; margin-bottom:16px; color:var(--foreground); font-size:18px;"></h3>
             <div id="template-versions-modal-rows"></div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px;">
-                <button type="button" id="template-versions-deactivate-btn" style="display:none; padding:10px 16px; background:transparent; border:1px solid #B91C1C; color:#B91C1C; border-radius:6px; cursor:pointer;" onclick="deactivateTemplate()">Deactivate - hide from residents</button>
+                <button type="button" id="template-versions-deactivate-btn" style="display:none; padding:10px 16px; background:transparent; border:1px solid #B91C1C; color:#B91C1C; border-radius:6px; cursor:pointer;" onclick="deactivateTemplate()">Deactivate: hide from residents</button>
                 <button onclick="closeTemplateVersionsModal()" style="padding:10px 16px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Close</button>
             </div>
         </div>
@@ -3033,7 +3032,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 if (wings[i] && flats[i] && wings[i] !== 'TBD' && flats[i] !== 'TBD') {
                     const opt = document.createElement('option');
                     opt.value = JSON.stringify({wing: wings[i], flat: flats[i]});
-                    opt.textContent = `Wing ${wings[i]} - Flat ${flats[i]}`;
+                    opt.textContent = `Wing ${wings[i]}, Flat ${flats[i]}`;
                     select.appendChild(opt);
                 }
             }
@@ -3171,7 +3170,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
             'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
             'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions. Also allows changing which designations are required to sign a document field.' },
-            'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report - GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
+            'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report: GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
             'accounting.manage': { title: 'Manage Accounting', desc: 'Full control of the accounting module: create billing plans and generate invoices, record payments, run the interest job, manage vendors/expenses and TDS, reconcile bank statements, set budgets, edit GST/interest rules and the chart of accounts, and close or reopen fiscal years. Includes everything View Accounting allows.' },
         };
 
@@ -3619,7 +3618,7 @@ function openDesignationPicker(field) {
                     <span style="font-size:13px;">${escapeHtml(d.document.title)}</span>
                     <span style="font-weight:800; color:var(--primary);">+</span>
                 </div>
-            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No PUBLIC documents available — upload one below.</p>';
+            `).join('') : '<p style="color:var(--muted-foreground); font-size:13px; padding:10px;">No PUBLIC documents available. Upload one below.</p>';
         }
 
         async function uploadNewExampleDocument() {

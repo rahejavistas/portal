@@ -35,12 +35,28 @@ fn cell_decimal(cell: &Data) -> Option<Decimal> {
     match cell {
         Data::Float(f) => Decimal::from_str(&f.to_string()).ok(),
         Data::Int(i) => Some(Decimal::from(*i)),
-        Data::String(s) => Decimal::from_str(s.trim()).ok(),
+        Data::String(s) => Decimal::from_str(s.trim().replace(',', "").as_str()).ok(),
         _ => None,
     }
 }
 
-fn parse_dues_file(bytes: &[u8]) -> Result<Vec<FlatDueRow>, String> {
+/// Finds a row like `"AS On 20/10/2026"` and parses its date. Falls back to today
+/// if no such row exists or its date doesn't parse, rather than failing the upload.
+fn extract_as_of_date(range: &calamine::Range<Data>) -> chrono::NaiveDate {
+    range
+        .rows()
+        .find_map(|row| {
+            let text = row.first().map(cell_text)?;
+            let idx = text.to_ascii_lowercase().find("as on")?;
+            let date_str = text[idx + "as on".len()..].trim();
+            chrono::NaiveDate::parse_from_str(date_str, "%d/%m/%Y").ok()
+        })
+        .unwrap_or_else(|| chrono::Utc::now().date_naive())
+}
+
+fn parse_dues_file(
+    bytes: &[u8],
+) -> Result<(chrono::NaiveDate, Vec<FlatDueRow>, Vec<String>), String> {
     let cursor = Cursor::new(bytes);
     let mut workbook: Xlsx<_> =
         open_workbook_from_rs(cursor).map_err(|e| format!("Could not open file: {e}"))?;
@@ -52,6 +68,7 @@ fn parse_dues_file(bytes: &[u8]) -> Result<Vec<FlatDueRow>, String> {
     let range = workbook
         .worksheet_range(&sheet_name)
         .map_err(|e| format!("Could not read sheet: {e}"))?;
+    let as_of = extract_as_of_date(&range);
 
     let mut rows_iter = range.rows();
     let header_row = rows_iter
@@ -72,15 +89,18 @@ fn parse_dues_file(bytes: &[u8]) -> Result<Vec<FlatDueRow>, String> {
         .position(|c| cell_text(c).eq_ignore_ascii_case("over due"));
 
     let mut out = Vec::new();
+    let mut skipped = Vec::new();
     for row in rows_iter {
         let flat_code = row.first().map(cell_text).unwrap_or_default();
         if flat_code.is_empty() || flat_code.eq_ignore_ascii_case("total") {
             continue;
         }
         let Ok(flat) = FlatIdentifier::parse_concatenated(&flat_code) else {
+            skipped.push(format!("{flat_code}: not a recognizable flat code"));
             continue;
         };
         let Some(total_due) = row.get(total_due_idx).and_then(cell_decimal) else {
+            skipped.push(format!("{flat_code}: Total Due did not parse as a number"));
             continue;
         };
         let overdue_amount = overdue_idx
@@ -94,14 +114,16 @@ fn parse_dues_file(bytes: &[u8]) -> Result<Vec<FlatDueRow>, String> {
             overdue_amount,
         });
     }
-    Ok(out)
+    Ok((as_of, out, skipped))
 }
 
 #[derive(serde::Serialize)]
 pub struct UploadDuesFileResponse {
+    pub as_of: chrono::NaiveDate,
     pub rows_parsed: usize,
     pub matched: usize,
     pub unmatched_flat_codes: Vec<String>,
+    pub skipped_rows: Vec<String>,
 }
 
 /// POST /api/v1/admin/process-templates/no-dues/upload
@@ -124,7 +146,7 @@ pub async fn upload_no_dues_file(
                 .to_vec();
             if file_bytes.len() > MAX_DUES_FILE_BYTES {
                 return Err(bad_request(format!(
-                    "Dues file is too large - {} MB, max {} MB",
+                    "Dues file is too large: {} MB, max {} MB",
                     file_bytes.len() / (1024 * 1024),
                     MAX_DUES_FILE_BYTES / (1024 * 1024)
                 )));
@@ -136,22 +158,19 @@ pub async fn upload_no_dues_file(
         return Err(bad_request("No file uploaded"));
     }
 
-    let rows = parse_dues_file(&file_bytes).map_err(bad_request)?;
+    let (as_of, rows, skipped_rows) = parse_dues_file(&file_bytes).map_err(bad_request)?;
     if rows.is_empty() {
         return Err(bad_request("No flat rows found in the uploaded file"));
     }
 
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
-    let summary = process::dues_import::upsert_flat_dues(
-        &mut conn,
-        chrono::Utc::now().date_naive(),
-        user.user_id,
-        &rows,
-    )
-    .await
-    .map_err(internal_err)?;
+    let summary = process::dues_import::upsert_flat_dues(&mut conn, as_of, user.user_id, &rows)
+        .await
+        .map_err(internal_err)?;
 
     Ok(Json(UploadDuesFileResponse {
+        as_of,
+        skipped_rows,
         rows_parsed: rows.len(),
         matched: summary.matched,
         unmatched_flat_codes: summary.unmatched_flat_codes,
@@ -177,6 +196,14 @@ mod tests {
     }
 
     #[test]
+    fn cell_decimal_strips_thousands_separators_from_a_text_amount() {
+        assert_eq!(
+            cell_decimal(&Data::String("7,500.00".to_string())),
+            Some(Decimal::from_str("7500.00").unwrap())
+        );
+    }
+
+    #[test]
     fn cell_decimal_preserves_a_negative_amount() {
         // The real compliance file has at least one row with a negative figure
         // (a credit note netted into a column) - must not silently become positive.
@@ -196,9 +223,57 @@ mod tests {
     }
 
     #[test]
+    fn parse_dues_file_reads_the_as_of_date_from_the_file_itself() {
+        let bytes = include_bytes!("../../../../quality/fixtures/no_dues_sample.xlsx");
+        let (as_of, _, _) = parse_dues_file(bytes).expect("fixture must parse");
+        assert_eq!(
+            as_of,
+            chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            "the file's own 'AS On 01/01/2026' row must be used, not today's date"
+        );
+    }
+
+    #[test]
+    fn extract_as_of_date_is_case_insensitive_and_trims_trailing_space() {
+        use calamine::{Cell, Range};
+        let range = Range::from_sparse(vec![Cell::new(
+            (0, 0),
+            Data::String("as ON 20/10/2026 ".to_string()),
+        )]);
+        assert_eq!(
+            extract_as_of_date(&range),
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap()
+        );
+    }
+
+    #[test]
+    fn extract_as_of_date_falls_back_to_today_when_the_row_is_missing_or_malformed() {
+        use calamine::{Cell, Range};
+        let range = Range::from_sparse(vec![Cell::new(
+            (0, 0),
+            Data::String("No date row here".to_string()),
+        )]);
+        assert_eq!(extract_as_of_date(&range), chrono::Utc::now().date_naive());
+
+        let malformed = Range::from_sparse(vec![Cell::new(
+            (0, 0),
+            Data::String("AS On not-a-date".to_string()),
+        )]);
+        assert_eq!(
+            extract_as_of_date(&malformed),
+            chrono::Utc::now().date_naive()
+        );
+    }
+
+    #[test]
     fn parse_dues_file_reads_the_committed_sample_fixture() {
         let bytes = include_bytes!("../../../../quality/fixtures/no_dues_sample.xlsx");
-        let mut rows = parse_dues_file(bytes).expect("fixture must parse");
+        let (_, mut rows, skipped) = parse_dues_file(bytes).expect("fixture must parse");
+        assert_eq!(
+            skipped,
+            vec!["Z0004: Total Due did not parse as a number".to_string()],
+            "Z0004's non-numeric Total Due must be reported, not silently dropped"
+        );
         rows.sort_by_key(|r| r.flat_number.clone());
 
         assert_eq!(

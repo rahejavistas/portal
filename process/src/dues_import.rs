@@ -1,6 +1,7 @@
 //! Admin-uploaded dues snapshot — see `db::get_outstanding_dues_for_process`.
 
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 
 pub struct FlatDueRow {
     pub wing: String,
@@ -27,6 +28,15 @@ pub async fn upsert_flat_dues(
             unmatched_flat_codes: Vec::new(),
         });
     }
+
+    // A single INSERT can't let ON CONFLICT DO UPDATE touch the same row twice, so a
+    // flat code repeated in one file would otherwise fail the whole upload. Last
+    // occurrence wins, same as a later row in the file correcting an earlier one.
+    let mut deduped: HashMap<(&str, &str), &FlatDueRow> = HashMap::new();
+    for row in rows {
+        deduped.insert((row.wing.as_str(), row.flat_number.as_str()), row);
+    }
+    let rows: Vec<&FlatDueRow> = deduped.into_values().collect();
 
     let wings: Vec<&str> = rows.iter().map(|r| r.wing.as_str()).collect();
     let flat_numbers: Vec<&str> = rows.iter().map(|r| r.flat_number.as_str()).collect();

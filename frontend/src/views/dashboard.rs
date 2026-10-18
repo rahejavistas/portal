@@ -4,7 +4,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vistas Portal - Resident Dashboard</title>
+    <title>Vistas Portal: Resident Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         document.documentElement.setAttribute(
@@ -1527,7 +1527,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
                     <div>
                         <div style="font-weight:800; font-size:1.0625rem;">${escapeHtml(inv.invoice_number)}</div>
-                        <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">Billing period ${fmtDate(inv.billing_period_start)} to ${fmtDate(inv.billing_period_end)} - due ${fmtDate(inv.due_date)}</div>
+                        <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">Billing period ${fmtDate(inv.billing_period_start)} to ${fmtDate(inv.billing_period_end)}, due ${fmtDate(inv.due_date)}</div>
                     </div>
                     <span class="badge ${cls}">${(inv.status || '').replace(/_/g, ' ')}</span>
                 </div>
@@ -1566,7 +1566,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 const paid = invoices.filter(i => i.status === 'PAID');
                 document.getElementById('billing-pending-list').innerHTML = pending.length
                     ? pending.map(invoiceCard).join('')
-                    : '<p class="empty-note">No pending bills - you\'re all caught up.</p>';
+                    : '<p class="empty-note">No pending bills. You\'re all caught up.</p>';
                 document.getElementById('billing-paid-list').innerHTML = paid.length
                     ? paid.map(invoiceCard).join('')
                     : '<p class="empty-note">No paid bills yet.</p>';
@@ -1592,8 +1592,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 el.innerHTML = claims.map(c => `<div class="card" style="padding:20px; margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
                         <div>
-                            <div style="font-weight:700;">${escapeHtml(c.invoice_number)} - ${money(c.amount)}</div>
-                            <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">${paymentMethodLabelResident(c.payment_method)} - reference ${escapeHtml(c.reference_number)} - reported ${fmtDate(c.submitted_at)}</div>
+                            <div style="font-weight:700;">${escapeHtml(c.invoice_number)}: ${money(c.amount)}</div>
+                            <div style="color:var(--muted-foreground); font-size:0.8125rem; margin-top:4px;">${paymentMethodLabelResident(c.payment_method)}. Reference ${escapeHtml(c.reference_number)}. Reported ${fmtDate(c.submitted_at)}</div>
                             ${c.status === 'REJECTED' && c.review_note ? `<div style="color:#991B1B; font-size:0.8125rem; margin-top:4px;">Reason: ${escapeHtml(c.review_note)}</div>` : ''}
                         </div>
                         <span class="badge ${statusMap[c.status] || 'badge-gray'}">${c.status}</span>
