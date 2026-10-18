@@ -1148,13 +1148,13 @@ pub async fn audit_log_pdf(
     let bytes = accounting::pdf::render_process_audit_pdf(
         &template.name,
         flat_label.as_deref(),
-        &payload.process_id.to_string(),
+        &info.inward_reg_no,
         &entries,
         &field_changes,
     );
 
     Ok(pdf_response(
-        &format!("audit-trail-{}.pdf", payload.process_id),
+        &format!("audit-trail-{}.pdf", info.inward_reg_no),
         bytes,
     ))
 }

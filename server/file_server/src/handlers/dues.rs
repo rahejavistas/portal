@@ -199,7 +199,7 @@ mod tests {
     fn parse_dues_file_reads_the_committed_sample_fixture() {
         let bytes = include_bytes!("../../../../quality/fixtures/no_dues_sample.xlsx");
         let mut rows = parse_dues_file(bytes).expect("fixture must parse");
-        rows.sort_by(|a, b| a.flat_number.cmp(&b.flat_number));
+        rows.sort_by_key(|r| r.flat_number.clone());
 
         assert_eq!(
             rows.len(),

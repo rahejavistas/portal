@@ -768,7 +768,7 @@ const AUDIT_COL_ACTOR: f32 = 108.0;
 pub fn render_process_audit_pdf(
     process_name: &str,
     flat_label: Option<&str>,
-    process_id: &str,
+    inward_reg_no: &str,
     entries: &[AuditPdfEntry],
     field_changes: &[FieldChangePdfEntry],
 ) -> Vec<u8> {
@@ -779,7 +779,7 @@ pub fn render_process_audit_pdf(
     doc.double_rule();
 
     doc.two_col_line(
-        &format!("Process ID: {}", truncate(process_id, 36)),
+        &format!("Process: {}", inward_reg_no),
         &format!(
             "Generated: {}",
             chrono::Utc::now().format("%d %b %Y, %I:%M %p")

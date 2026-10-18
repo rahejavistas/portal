@@ -267,6 +267,7 @@
             </div>
 
             <div class="subtab-bar" id="acct-subtab-bar">
+                <button class="subtab-btn" data-tab="nodues" onclick="switchAcctTab('nodues')">No Dues File</button>
                 <button class="subtab-btn active" data-tab="overview" onclick="switchAcctTab('overview')">Overview</button>
                 <button class="subtab-btn" data-tab="billing" onclick="switchAcctTab('billing')">Billing &amp; Invoices</button>
                 <button class="subtab-btn" data-tab="payments" onclick="switchAcctTab('payments')">Payments &amp; Claims</button>
@@ -276,6 +277,8 @@
                 <button class="subtab-btn" data-tab="reports" onclick="switchAcctTab('reports')">Reports</button>
                 <button class="subtab-btn" data-tab="settings" onclick="switchAcctTab('settings')">Settings</button>
             </div>
+
+            <section class="subtab-panel" id="panel-nodues"></section>
 
             <section class="subtab-panel active" id="panel-overview"></section>
 
@@ -352,6 +355,15 @@
         });
 
         const HELP_CONTENT = {
+            nodues: {
+                title: 'No Dues File',
+                body: `
+                    <h3>What this does</h3>
+                    <p>Uploads the latest dues compliance export. Every flat's outstanding amount is replaced with this file's figures - the No Dues check in any process always reflects whichever upload is most recent.</p>
+                    <h3>Still stuck?</h3>
+                    <p>Click your avatar in the top right, then "Contact Support".</p>
+                `,
+            },
             overview: {
                 title: 'Overview',
                 body: `
@@ -652,6 +664,7 @@
 
         function searchDestinations() {
             return [
+                { label: 'No Dues File', action: () => switchAcctTab('nodues'), show: true },
                 { label: 'Overview', action: () => switchAcctTab('overview'), show: true },
                 { label: 'Billing & Invoices', action: () => switchAcctTab('billing'), show: true },
                 { label: 'Payments & Claims', action: () => switchAcctTab('payments'), show: true },
@@ -758,7 +771,8 @@
 
         const _loadedTabs = new Set();
         function loadTab(tab) {
-            if (tab === 'overview') loadOverview();
+            if (tab === 'nodues') loadNoDuesTab();
+            else if (tab === 'overview') loadOverview();
             else if (tab === 'billing') loadBillingTab();
             else if (tab === 'payments') loadPaymentsTab();
             else if (tab === 'vendors') loadVendorsTab();
@@ -766,6 +780,66 @@
             else if (tab === 'budgets') loadBudgetsTab();
             else if (tab === 'reports') loadReportsTab();
             else if (tab === 'settings') loadSettingsTab();
+        }
+
+        function loadNoDuesTab() {
+            const panel = document.getElementById('panel-nodues');
+            panel.innerHTML = `
+                <div class="card" style="max-width:560px;">
+                    <h3 style="margin-top:0;">No Dues File</h3>
+                    ${canManageAccounting ? `
+                    <form id="upload-dues-form">
+                        <div class="form-group">
+                            <label for="dues-file">Dues compliance file (XLSX)</label>
+                            <input type="file" id="dues-file" accept=".xlsx,.xls" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer; width:100%; box-sizing:border-box;">
+                        </div>
+                        <button type="submit" class="btn">Upload</button>
+                    </form>
+                    <div class="feedback-box" id="upload-dues-feedback" style="display:none; margin-top:12px;"></div>
+                    ` : `<p class="empty-state">You need accounting management access to upload this file.</p>`}
+                </div>
+            `;
+            if (!canManageAccounting) return;
+
+            const form = document.getElementById('upload-dues-form');
+            const feedback = document.getElementById('upload-dues-feedback');
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                feedback.style.display = 'none';
+
+                const fileInput = document.getElementById('dues-file');
+                if (fileInput.files.length === 0) return;
+
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+
+                try {
+                    const response = await fetch(`${API_BASE}/api/v1/admin/process-templates/no-dues/upload`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${token}` },
+                        body: formData
+                    });
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        const unmatchedNote = data.unmatched_flat_codes.length > 0
+                            ? ` ${data.unmatched_flat_codes.length} flat code(s) had no match.`
+                            : '';
+                        feedback.textContent = `Matched ${data.matched} of ${data.rows_parsed} rows.${unmatchedNote}`;
+                        feedback.className = 'feedback-box success';
+                        feedback.style.display = 'block';
+                        fileInput.value = '';
+                    } else {
+                        feedback.textContent = data.message || 'Failed to process dues file';
+                        feedback.className = 'feedback-box error';
+                        feedback.style.display = 'block';
+                    }
+                } catch (err) {
+                    feedback.textContent = 'Failed to connect to backend server';
+                    feedback.className = 'feedback-box error';
+                    feedback.style.display = 'block';
+                }
+            });
         }
 
         async function loadOverview() {

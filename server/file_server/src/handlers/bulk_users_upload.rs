@@ -393,9 +393,8 @@ mod tests {
     #[test]
     fn parse_member_xlsx_reads_the_committed_sample_fixture() {
         let bytes = include_bytes!("../../../../quality/fixtures/member_data_sample.xlsx");
-        let (mut users, failed, total_rows) =
-            parse_member_xlsx(bytes).expect("fixture must parse");
-        users.sort_by(|a, b| a.flat.to_string().cmp(&b.flat.to_string()));
+        let (mut users, failed, total_rows) = parse_member_xlsx(bytes).expect("fixture must parse");
+        users.sort_by_key(|a| a.flat.to_string());
 
         assert_eq!(
             total_rows, 3,

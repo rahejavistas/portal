@@ -2608,7 +2608,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             });
             if (isReadOnly) {
                 return `
-                    <div class="field-value-display" style="padding: 14px 16px; border-radius: var(--radius-lg); background-color: var(--muted); border: 1px solid var(--border); line-height:1.7;">
+                    <div class="field-value-display" style="display:block; padding: 14px 16px; border-radius: var(--radius-lg); background-color: var(--muted); border: 1px solid var(--border); line-height:1.7;">
                         <div>${renderedText}</div>
                         <div style="margin-top:10px; font-weight:700; color: ${agreed ? 'var(--primary)' : 'var(--danger)'};">${agreed ? 'Agreed' : 'Not yet agreed'}</div>
                     </div>
