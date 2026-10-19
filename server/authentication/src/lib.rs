@@ -400,16 +400,24 @@ impl PermissionsManager {
     }
 
     /// Resolves a session user from a bare user_id. Called on every authenticated request.
+    /// Falls back to a tenant's active tenancy flat if they own no flat themselves.
     pub async fn get_user_by_id(&self, user_id: i32) -> Result<Option<User>, sqlx::Error> {
         let row: Option<RawUser> = sqlx::query_as(
             "SELECT u.user_id, u.email, u.is_active, \
                     COALESCE(uea.designations, ARRAY[]::TEXT[]) AS designations, \
                     COALESCE(uea.permissions, ARRAY[]::TEXT[]) AS permissions, \
                     COALESCE(uea.can_manage_documents, FALSE) AS can_manage_documents, \
-                    COALESCE(uea.wing, 'TBD') AS wing, \
-                    COALESCE(uea.flat_number, 'TBD') AS flat_number \
+                    COALESCE(NULLIF(uea.wing, 'TBD'), tf.wing, 'TBD') AS wing, \
+                    COALESCE(NULLIF(uea.flat_number, 'TBD'), tf.flat_number, 'TBD') AS flat_number \
              FROM users u \
              LEFT JOIN user_effective_access uea ON uea.user_id = u.user_id \
+             LEFT JOIN ( \
+                 SELECT t.tenant_user_id, f.wing, f.flat_number \
+                 FROM tenant_ownerships t \
+                 JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+                 JOIN flats f ON f.flat_id = fo.flat_id \
+                 WHERE t.is_active = TRUE AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
+             ) tf ON tf.tenant_user_id = u.user_id \
              WHERE u.user_id = $1",
         )
         .bind(user_id)

@@ -115,18 +115,29 @@ fn field_and_step_ids(state: &serde_json::Value) -> (i64, i64) {
 }
 
 fn add_tenant(
-    url: &str,
+    env: &quality::TestEnv,
+    admin_jwt: &str,
     owner_jwt: &str,
     ownership_id: i64,
+    owner_wing: &str,
+    owner_flat_number: &str,
     tenant_email: &str,
 ) -> Result<serde_json::Value, u16> {
+    let url = env.server_url();
+    let doc_id = quick_create_document(
+        env,
+        admin_jwt,
+        "Rental Agreement",
+        "RESIDENT_SPECIFIC",
+        Some((owner_wing, owner_flat_number)),
+    );
     let resp = ureq::post(&format!("{}/api/v1/tenants/add", url))
         .set("Authorization", &auth(owner_jwt))
         .send_json(serde_json::json!({
             "ownership_id": ownership_id,
             "tenant_email": tenant_email,
             "expires_at": "2027-01-01",
-            "rental_agreement_document_id": null
+            "rental_agreement_document_id": doc_id
         }));
     match resp {
         Ok(r) => Ok(r.into_json().unwrap()),
@@ -166,8 +177,16 @@ async fn test_tenant_can_act_on_own_flats_tenant_step_but_owner_cannot() {
         .expect("process must have an ownership");
     let (step_id, field_id) = field_and_step_ids(&state);
 
-    let add_resp = add_tenant(&url, &owner_jwt, ownership_id, "tenant1@dtest.test")
-        .expect("owner must be able to add a tenant for their own flat");
+    let add_resp = add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "501",
+        "tenant1@dtest.test",
+    )
+    .expect("owner must be able to add a tenant for their own flat");
     assert!(add_resp["tenant_user_id"].as_i64().is_some());
 
     let tenant_jwt = quick_onboard_user(&env, "tenant1@dtest.test", "password123");
@@ -203,13 +222,25 @@ async fn test_a_different_flats_tenant_cannot_act_on_this_flats_tenant_step() {
     let ownership_id = state["ownership_id"].as_i64().unwrap();
     let (step_id, field_id) = field_and_step_ids(&state);
 
-    add_tenant(&url, &owner_jwt, ownership_id, "tenant2a@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "502",
+        "tenant2a@dtest.test",
+    )
+    .unwrap();
     let other_state = start_process(&url, &other_owner_jwt, template_id);
     let other_ownership_id = other_state["ownership_id"].as_i64().unwrap();
     add_tenant(
-        &url,
+        &env,
+        &admin_jwt,
         &other_owner_jwt,
         other_ownership_id,
+        "B",
+        "502",
         "tenant2b@dtest.test",
     )
     .unwrap();
@@ -240,11 +271,28 @@ async fn test_adding_a_new_tenant_deactivates_the_previous_one() {
     let ownership_id = state["ownership_id"].as_i64().unwrap();
     let (step_id, field_id) = field_and_step_ids(&state);
 
-    add_tenant(&url, &owner_jwt, ownership_id, "old_tenant@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "503",
+        "old_tenant@dtest.test",
+    )
+    .unwrap();
     let old_tenant_jwt = quick_onboard_user(&env, "old_tenant@dtest.test", "password123");
 
-    add_tenant(&url, &owner_jwt, ownership_id, "new_tenant@dtest.test")
-        .expect("owner must be able to replace the current tenant");
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "503",
+        "new_tenant@dtest.test",
+    )
+    .expect("owner must be able to replace the current tenant");
     let new_tenant_jwt = quick_onboard_user(&env, "new_tenant@dtest.test", "password123");
 
     let old_err = save_step(&url, &old_tenant_jwt, &process_id, step_id, field_id).unwrap_err();
@@ -274,9 +322,12 @@ async fn test_non_owner_cannot_add_a_tenant_for_someone_elses_flat() {
     let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
 
     let err = add_tenant(
-        &url,
+        &env,
+        &admin_jwt,
         &intruder_jwt,
         ownership_id,
+        "A",
+        "504",
         "intruder_tenant@dtest.test",
     )
     .unwrap_err();
@@ -311,7 +362,16 @@ async fn test_tenant_process_list_excludes_processes_without_a_tenant_step() {
     let owner_only_state = start_process(&url, &owner_jwt, owner_only_template_id);
     let owner_only_process_id = owner_only_state["process_id"].as_str().unwrap().to_string();
 
-    add_tenant(&url, &owner_jwt, ownership_id, "listtenant5@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "505",
+        "listtenant5@dtest.test",
+    )
+    .unwrap();
     let tenant_jwt = quick_onboard_user(&env, "listtenant5@dtest.test", "password123");
 
     let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
@@ -357,7 +417,16 @@ async fn test_tenant_cannot_see_the_owners_flat_documents() {
     );
 
     let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
-    add_tenant(&url, &owner_jwt, ownership_id, "doctenant6@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "506",
+        "doctenant6@dtest.test",
+    )
+    .unwrap();
     let tenant_jwt = quick_onboard_user(&env, "doctenant6@dtest.test", "password123");
 
     let owner_docs: Vec<serde_json::Value> = ureq::post(&format!("{}/api/v1/documents", url))
@@ -408,7 +477,16 @@ async fn test_owners_designation_never_translates_to_the_tenant() {
     quick_assign_designation(&env, &admin_jwt, owner_id, "secretary");
 
     let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
-    add_tenant(&url, &owner_jwt, ownership_id, "designtenant7@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "507",
+        "designtenant7@dtest.test",
+    )
+    .unwrap();
     let tenant_jwt = quick_onboard_user(&env, "designtenant7@dtest.test", "password123");
 
     let login: serde_json::Value = ureq::post(&format!("{}/api/v1/login", url))
@@ -466,7 +544,16 @@ async fn test_admin_can_fill_tenant_step_only_when_no_tenant_is_mapped_yet() {
         .expect("an admin must be able to fill a Tenant-owned step when no tenant is mapped yet");
     assert_eq!(result["status"], "success");
 
-    add_tenant(&url, &owner_jwt, ownership_id, "override8@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "508",
+        "override8@dtest.test",
+    )
+    .unwrap();
     let tenant_jwt = quick_onboard_user(&env, "override8@dtest.test", "password123");
 
     let state2 = start_process(&url, &owner_jwt, template_id);
@@ -500,7 +587,16 @@ async fn test_cannot_map_an_existing_privileged_account_as_a_tenant() {
     quick_create_user(&env, &admin_jwt, "other_owner9@dtest.test", "B", "509");
     quick_onboard_user(&env, "other_owner9@dtest.test", "password123");
 
-    let err = add_tenant(&url, &owner_jwt, ownership_id, "other_owner9@dtest.test").unwrap_err();
+    let err = add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "509",
+        "other_owner9@dtest.test",
+    )
+    .unwrap_err();
     assert_eq!(
         err, 400,
         "an existing resident's account must not be silently cross-linked as a tenant"
@@ -511,16 +607,28 @@ async fn test_cannot_map_an_existing_privileged_account_as_a_tenant() {
     quick_onboard_user(&env, "staff_rep9@dtest.test", "password123");
     quick_assign_designation(&env, &admin_jwt, staff_id, "committee9");
 
-    let err2 = add_tenant(&url, &owner_jwt, ownership_id, "staff_rep9@dtest.test").unwrap_err();
+    let err2 = add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "509",
+        "staff_rep9@dtest.test",
+    )
+    .unwrap_err();
     assert_eq!(
         err2, 400,
         "an account holding a designation must not be silently cross-linked as a tenant either"
     );
 
     let ok = add_tenant(
-        &url,
+        &env,
+        &admin_jwt,
         &owner_jwt,
         ownership_id,
+        "A",
+        "509",
         "brand_new_tenant9@dtest.test",
     );
     assert!(
@@ -568,7 +676,16 @@ async fn test_tenant_cannot_fill_the_owners_user_owned_step() {
         .as_i64()
         .unwrap();
 
-    add_tenant(&url, &owner_jwt, ownership_id, "scopedtenant10@dtest.test").unwrap();
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "510",
+        "scopedtenant10@dtest.test",
+    )
+    .unwrap();
     let tenant_jwt = quick_onboard_user(&env, "scopedtenant10@dtest.test", "password123");
 
     let err = save_step(
@@ -582,5 +699,76 @@ async fn test_tenant_cannot_fill_the_owners_user_owned_step() {
     assert_eq!(
         err, 400,
         "a tenant's scoped access to this process must not let them fill the owner's own User-owned step"
+    );
+}
+
+/// A tenant's session falls back to their tenancy's flat, not 'TBD'.
+#[tokio::test]
+async fn test_tenant_login_shows_their_tenanted_flat_not_tbd() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner11@dtest.test", "A", "511");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner11@dtest.test", "password123");
+    let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
+
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        "511",
+        "flatcheck11@dtest.test",
+    )
+    .unwrap();
+    quick_onboard_user(&env, "flatcheck11@dtest.test", "password123");
+
+    let login: serde_json::Value = ureq::post(&format!("{}/api/v1/login", url))
+        .send_json(serde_json::json!({
+            "email": "flatcheck11@dtest.test",
+            "password": "password123"
+        }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+
+    assert_eq!(login["user"]["wing"], "A");
+    assert_eq!(login["user"]["flat_number"], "0511");
+}
+
+/// An admin cannot approve an unfilled Open Tenant-owned step.
+#[tokio::test]
+async fn test_admin_cannot_approve_an_unfilled_open_tenant_step() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner12@dtest.test", "A", "512");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner12@dtest.test", "password123");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let (step_id, _field_id) = field_and_step_ids(&state);
+
+    let resp = ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "is_approved": true,
+            "notes": null,
+            "flagged_step_ids": null
+        }));
+    let err = match resp {
+        Ok(_) => panic!("expected the approval to be rejected"),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {:?}", e),
+    };
+    assert_eq!(
+        err, 400,
+        "an admin must not be able to approve an Open Tenant-owned step that was never filled"
     );
 }

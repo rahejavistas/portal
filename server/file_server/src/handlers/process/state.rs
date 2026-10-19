@@ -98,6 +98,10 @@ pub struct StepResponse {
     pub filled_by: process::StepOwner,
     /// `Designation`-owned steps only — the human label for `filled_by`'s code.
     pub filled_by_designation_label: Option<String>,
+    /// Whether the caller can fill this step, per the same check save-step uses.
+    pub can_caller_act: bool,
+    /// Whether the caller can review/reopen this step (approve/reject/revoke).
+    pub can_caller_review: bool,
     pub fields: Vec<FieldResponse>,
     pub substeps: Vec<StepResponse>,
 }
@@ -263,7 +267,17 @@ async fn resolve_or_init_process(
     user: &authentication::User,
     template_id: i32,
     flat_id: Option<i32>,
-) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate, Vec<i32>), ApiError> {
+) -> Result<
+    (
+        Uuid,
+        i32,
+        Option<i32>,
+        i32,
+        process::ProcessTemplate,
+        Vec<i32>,
+    ),
+    ApiError,
+> {
     let active_ownerships = get_active_ownerships_for_user(conn, user.user_id)
         .await
         .internal_err()?;
@@ -332,6 +346,7 @@ async fn resolve_or_init_process(
         init_outcome.process_id,
         version_id,
         selected_ownership,
+        user.user_id,
         template,
         init_outcome.newly_opened_step_ids,
     ))
@@ -374,6 +389,7 @@ struct StepMapContext<'a> {
     example_doc_title_map: &'a HashMap<Uuid, String>,
     signature_map: &'a HashMap<Uuid, Vec<FieldSignatureStatus>>,
     designation_label_map: &'a HashMap<String, String>,
+    actor: &'a process::state_machine::ActorContext,
 }
 
 /// Recursively map step templates to the response structure.
@@ -464,6 +480,8 @@ fn map_step_template(
         status,
         filled_by: step_tpl.filled_by.clone(),
         filled_by_designation_label,
+        can_caller_act: ctx.actor.may_act_on(&step_tpl.filled_by),
+        can_caller_review: ctx.actor.may_review(&step_tpl.filled_by),
         fields,
         substeps,
     }
@@ -601,7 +619,17 @@ async fn resolve_process_target(
     payload: &ProcessStateRequest,
     can_view_all: bool,
     designation_codes: &std::collections::HashSet<String>,
-) -> Result<(Uuid, i32, Option<i32>, process::ProcessTemplate, Vec<i32>), ApiError> {
+) -> Result<
+    (
+        Uuid,
+        i32,
+        Option<i32>,
+        i32,
+        process::ProcessTemplate,
+        Vec<i32>,
+    ),
+    ApiError,
+> {
     match payload.process_id {
         Some(pid) => {
             // A signer on this process gets read-only access to it even without
@@ -619,6 +647,7 @@ async fn resolve_process_target(
                 pid,
                 info.template_version_id,
                 info.ownership_id,
+                info.user_id,
                 template,
                 vec![],
             ))
@@ -788,18 +817,37 @@ pub async fn get_process_state(
     // reviewer — this handler never writes to another user's process, only the caller's own.
     // personal_only (set by the plain /process page) always forces the caller's own view.
     let can_view_all = !payload.personal_only && super::can_view_all_processes(&user);
-    let actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
+    let mut actor = build_actor_context(&mut tx, &state.permissions_manager, &user).await?;
 
-    let (process_id, template_version_id, ownership_id, template, newly_opened_step_ids) =
-        resolve_process_target(
-            &mut tx,
-            &state,
-            &user,
-            &payload,
-            can_view_all,
-            &actor.designation_codes,
-        )
-        .await?;
+    let (
+        process_id,
+        template_version_id,
+        ownership_id,
+        owner_user_id,
+        template,
+        newly_opened_step_ids,
+    ) = resolve_process_target(
+        &mut tx,
+        &state,
+        &user,
+        &payload,
+        can_view_all,
+        &actor.designation_codes,
+    )
+    .await?;
+    actor.is_process_owner = owner_user_id == user.user_id;
+    match ownership_id {
+        Some(oid) => {
+            actor.is_active_tenant_for_this_flat =
+                process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
+                    .await
+                    .internal_err()?;
+            actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(&mut tx, oid)
+                .await
+                .internal_err()?;
+        }
+        None => actor.tenant_missing_for_this_flat = true,
+    }
 
     process::db::sync_no_dues_step_completions(&mut tx, process_id, &template)
         .await
@@ -937,6 +985,7 @@ pub async fn get_process_state(
         example_doc_title_map: &example_doc_title_map,
         signature_map: &signature_map,
         designation_label_map: &designation_label_map,
+        actor: &actor,
     };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {

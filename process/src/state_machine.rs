@@ -723,18 +723,22 @@ pub fn compute_review_updates(
         _ => None,
     };
 
-    // Open Designation step: block approval unless its holder actually filled it first.
+    // Open exclusive-owner step: block approval unless its holder actually filled it first.
     match status {
         StepStatus::PendingReview => {}
         StepStatus::Open => {
             if is_approved
-                && matches!(info.filled_by, crate::StepOwner::Designation { .. })
+                && matches!(
+                    info.filled_by,
+                    crate::StepOwner::Designation { .. }
+                        | crate::StepOwner::WingRepresentative
+                        | crate::StepOwner::Tenant
+                )
                 && !(actor.may_act_on(&info.filled_by)
                     && check_step_completed(step_id, &info_map, state))
             {
                 return Err(
-                    "A designation-owned stage must be filled by its designation before approval"
-                        .to_string(),
+                    "This stage must be filled by its assigned owner before approval".to_string(),
                 );
             }
         }

@@ -617,9 +617,9 @@ No router-level permission gate — each handler is self-scoped to the caller's 
 
 ### POST `/api/v1/tenants/add`
 Maps a tenant to the caller's own flat, deactivating any existing active tenant for it first (at most one active tenant per flat) and emailing the new tenant a "set your password" link.
-* **Request:** `{ "ownership_id": 5, "tenant_email": "tenant@example.com", "expires_at": "2027-01-01", "rental_agreement_document_id": "uuid|null" }`
+* **Request:** `{ "ownership_id": 5, "tenant_email": "tenant@example.com", "expires_at": "2027-01-01", "rental_agreement_document_id": "uuid" }`
 * **Response (200):** `{ "tenant_ownership_id": 8, "tenant_user_id": 41 }`
-* **403** if the caller doesn't actively own `ownership_id`; **400** on an invalid email, or if `rental_agreement_document_id` is given but isn't a `RESIDENT_SPECIFIC` document already attached to that flat.
+* **403** if the caller doesn't actively own `ownership_id`; **400** on an invalid email, or if `rental_agreement_document_id` isn't a `RESIDENT_SPECIFIC` document already attached to that flat. A rental agreement is mandatory — there is no way to map a tenant without one.
 
 ### POST `/api/v1/tenants/remove`
 Deactivates the flat's current active tenant, if any, with no replacement.
