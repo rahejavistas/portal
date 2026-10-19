@@ -815,6 +815,10 @@ async fn main() {
                     "/api/v1/tenants/current",
                     post(handlers::tenants::get_tenant),
                 )
+                .route(
+                    "/api/v1/tenants/my-flats",
+                    post(handlers::tenants::my_flats),
+                )
                 .merge({
                     let accounting_resident_routes = Router::new()
                         .route(

@@ -857,6 +857,8 @@
                     </div>
                 </div>
 
+                <div id="tenant-management-container"></div>
+
                 <div class="card" id="account-settings-card">
                     <h3 style="margin-top:0; font-size:18px; font-weight:800; margin-bottom:8px;">Security &amp; Notifications</h3>
                     <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 0; border-bottom:1px solid var(--border);">
@@ -1257,6 +1259,7 @@
                 document.getElementById('user-flat').innerHTML = '<span style="color: var(--foreground); font-style: italic;">Administrative Account</span>';
             } else {
                 document.getElementById('user-flat').textContent = `${user.wing}-${user.flat_number}`;
+                loadTenantManagement();
             }
 
             document.getElementById('admin-link').style.display = isAdmin ? 'block' : 'none';
@@ -1407,6 +1410,210 @@
                 feedback.style.display = 'block';
                 feedback.className = 'feedback-box error';
                 feedback.textContent = 'Network error communicating with server.';
+            }
+        }
+
+        async function loadTenantManagement() {
+            const container = document.getElementById('tenant-management-container');
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/tenants/my-flats`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!resp.ok) { container.innerHTML = ''; return; }
+                const flats = await resp.json();
+                if (!flats.length) { container.innerHTML = ''; return; }
+                container.innerHTML = flats.map(renderTenantCard).join('');
+                flats.forEach(f => loadCurrentTenant(f.ownership_id));
+            } catch (err) {
+                container.innerHTML = '';
+            }
+        }
+
+        function renderTenantCard(flat) {
+            const oid = flat.ownership_id;
+            return `<div class="card" id="tenant-card-${oid}">
+                <h3 style="margin-top:0; font-size:18px; font-weight:800; margin-bottom:8px;">Tenant: ${escapeHtml(flat.wing)}-${escapeHtml(flat.flat_number)}</h3>
+                <div id="tenant-current-${oid}" style="margin-bottom:12px; color:var(--muted-foreground); font-size:14px;">Loading...</div>
+                <div id="tenant-form-${oid}"></div>
+                <div class="feedback-box" id="tenant-feedback-${oid}" style="margin-top:12px; display:none;"></div>
+            </div>`;
+        }
+
+        async function loadCurrentTenant(ownershipId) {
+            const currentEl = document.getElementById(`tenant-current-${ownershipId}`);
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/tenants/current`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ownership_id: ownershipId })
+                });
+                if (!resp.ok) {
+                    currentEl.textContent = 'Could not load tenant information.';
+                    return;
+                }
+                const tenant = await resp.json();
+                const formEl = document.getElementById(`tenant-form-${ownershipId}`);
+                if (tenant) {
+                    currentEl.innerHTML = `Current tenant: <strong>${escapeHtml(tenant.tenant_email)}</strong>, expires ${escapeHtml(tenant.expires_at)}`;
+                    formEl.innerHTML = `
+                        <button type="button" class="download-btn" style="background:var(--background); color:var(--foreground); border:1px solid var(--border);" onclick="renderTenantForm(${ownershipId})">Replace Tenant</button>
+                        <button type="button" class="download-btn" style="background:#EF4444; margin-left:8px;" onclick="removeTenant(${ownershipId})">Remove Tenant</button>
+                    `;
+                } else {
+                    currentEl.textContent = 'No tenant currently mapped.';
+                    renderTenantForm(ownershipId);
+                }
+            } catch (err) {
+                currentEl.textContent = 'Could not load tenant information.';
+            }
+        }
+
+        function renderTenantForm(ownershipId) {
+            const formEl = document.getElementById(`tenant-form-${ownershipId}`);
+            formEl.innerHTML = `
+                <div class="form-group">
+                    <label for="tenant-email-${ownershipId}">Tenant Email</label>
+                    <input type="email" id="tenant-email-${ownershipId}" placeholder="tenant@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="tenant-expiry-${ownershipId}">Agreement Expiry</label>
+                    <input type="date" id="tenant-expiry-${ownershipId}">
+                </div>
+                <div class="form-group">
+                    <label for="tenant-agreement-${ownershipId}">Rental Agreement</label>
+                    <input type="file" id="tenant-agreement-${ownershipId}" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required>
+                </div>
+                <button type="button" class="download-btn" id="tenant-submit-${ownershipId}" onclick="submitTenant(${ownershipId})">Save Tenant</button>
+            `;
+        }
+
+        async function submitTenant(ownershipId) {
+            const email = document.getElementById(`tenant-email-${ownershipId}`).value.trim();
+            const expiresAt = document.getElementById(`tenant-expiry-${ownershipId}`).value;
+            const fileInput = document.getElementById(`tenant-agreement-${ownershipId}`);
+            const submitBtn = document.getElementById(`tenant-submit-${ownershipId}`);
+            const feedback = document.getElementById(`tenant-feedback-${ownershipId}`);
+
+            feedback.style.display = 'none';
+            if (!email || !email.includes('@')) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Enter a valid tenant email.';
+                return;
+            }
+            if (!expiresAt) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Enter an agreement expiry date.';
+                return;
+            }
+            const file = fileInput.files[0];
+            if (!file) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'A rental agreement is required.';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Uploading agreement...';
+
+            try {
+                let rentalAgreementDocumentId;
+                const urlRes = await fetch(`${API_BASE}/api/v1/documents/upload-url`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: `Rental Agreement: ${email}`,
+                        filename: file.name,
+                        content_type: file.type || 'application/octet-stream'
+                    })
+                });
+                if (!urlRes.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = `Agreement upload failed: ${await readErrorMessage(urlRes)}`;
+                    return;
+                }
+                const { document_id, upload_url } = await urlRes.json();
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                    body: file
+                });
+                if (!putRes.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = 'Agreement upload to storage failed.';
+                    return;
+                }
+                const confirmRes = await fetch(`${API_BASE}/api/v1/documents/confirm-upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_id })
+                });
+                if (!confirmRes.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = `Agreement confirmation failed: ${await readErrorMessage(confirmRes)}`;
+                    return;
+                }
+                rentalAgreementDocumentId = document_id;
+
+                submitBtn.textContent = 'Saving...';
+                const addRes = await fetch(`${API_BASE}/api/v1/tenants/add`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ownership_id: ownershipId,
+                        tenant_email: email,
+                        expires_at: expiresAt,
+                        rental_agreement_document_id: rentalAgreementDocumentId
+                    })
+                });
+                if (!addRes.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = await readErrorMessage(addRes);
+                    return;
+                }
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box success';
+                feedback.textContent = 'Tenant saved. An invite email has been sent.';
+                loadCurrentTenant(ownershipId);
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Network error while saving tenant.';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Save Tenant';
+            }
+        }
+
+        async function removeTenant(ownershipId) {
+            if (!confirm('Remove the current tenant from this flat?')) return;
+            const feedback = document.getElementById(`tenant-feedback-${ownershipId}`);
+            feedback.style.display = 'none';
+            try {
+                const resp = await fetch(`${API_BASE}/api/v1/tenants/remove`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ownership_id: ownershipId })
+                });
+                if (!resp.ok) {
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box error';
+                    feedback.textContent = await readErrorMessage(resp);
+                    return;
+                }
+                loadCurrentTenant(ownershipId);
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = 'Network error while removing tenant.';
             }
         }
 

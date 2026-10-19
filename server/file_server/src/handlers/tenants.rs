@@ -83,7 +83,7 @@ pub struct AddTenantRequest {
     pub ownership_id: i32,
     pub tenant_email: String,
     pub expires_at: chrono::NaiveDate,
-    pub rental_agreement_document_id: Option<uuid::Uuid>,
+    pub rental_agreement_document_id: uuid::Uuid,
 }
 
 #[derive(serde::Serialize)]
@@ -120,17 +120,15 @@ pub async fn add_tenant(
         ));
     }
 
-    if let Some(doc_id) = payload.rental_agreement_document_id {
-        let belongs = state
-            .document_manager
-            .document_belongs_to_flat(doc_id, flat_id)
-            .await
-            .internal_err()?;
-        if !belongs {
-            return Err(bad_request(
-                "Rental agreement document is not attached to this flat",
-            ));
-        }
+    let belongs = state
+        .document_manager
+        .document_belongs_to_flat(payload.rental_agreement_document_id, flat_id)
+        .await
+        .internal_err()?;
+    if !belongs {
+        return Err(bad_request(
+            "Rental agreement document is not attached to this flat",
+        ));
     }
 
     sqlx::query(
@@ -240,4 +238,29 @@ pub async fn get_tenant(
     .internal_err()?;
 
     Ok(Json(tenant))
+}
+
+#[derive(serde::Serialize, sqlx::FromRow)]
+pub struct MyFlat {
+    pub ownership_id: i32,
+    pub wing: String,
+    pub flat_number: String,
+}
+
+/// POST /api/v1/tenants/my-flats — the caller's own active flat ownerships.
+pub async fn my_flats(
+    SessionUser(user): SessionUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<MyFlat>>, ApiError> {
+    let mut conn = state.pg_pool.acquire().await.internal_err()?;
+    let flats: Vec<MyFlat> = sqlx::query_as(
+        "SELECT fo.ownership_id, f.wing, f.flat_number FROM flat_ownerships fo \
+         JOIN flats f ON f.flat_id = fo.flat_id \
+         WHERE fo.user_id = $1 AND fo.is_active = TRUE",
+    )
+    .bind(user.user_id)
+    .fetch_all(&mut *conn)
+    .await
+    .internal_err()?;
+    Ok(Json(flats))
 }

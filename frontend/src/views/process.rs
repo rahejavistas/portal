@@ -2606,18 +2606,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         function stepOwnerLabel(owner) {
             if (!owner || owner.kind === 'user') return null;
             if (owner.kind === 'admin') return 'Any Reviewer';
+            if (owner.kind === 'wing_representative') return 'Wing Representative';
+            if (owner.kind === 'tenant') return 'Tenant';
             return owner.label || owner.code;
         }
 
         function stepOwnerFromResponse(step) {
             const filledBy = step.filled_by || { kind: 'user' };
             return { kind: filledBy.kind, code: filledBy.code, label: step.filled_by_designation_label };
-        }
-
-        function canActOnStepOwner(owner) {
-            if (!owner || owner.kind === 'user') return !IS_ADMIN_PROCESS_PAGE;
-            if (owner.kind === 'admin') return canReviewProcess(user);
-            return !!(user && user.designations && user.designations.includes(owner.code));
         }
 
         function declarationBlankTokens(text) {
@@ -2674,10 +2670,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return `<div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); background-color: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; font-weight: 700;">&#8377;${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} due on this flat &mdash; this stage cannot be completed until dues are cleared</div>`;
         }
 
-        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }) {
+        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }, canCallerAct = false) {
             let html = '';
             const isCurrentAdmin = canReviewProcess(user);
-            const ownerCanAct = canActOnStepOwner(owner);
+            const ownerCanAct = canCallerAct;
             let hasEditableTextField = false;
             let anyRequiredEmpty = false;
 
@@ -3065,7 +3061,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
             if (selectedStep.fields && selectedStep.fields.length > 0 && stepStatus !== 'LOCKED') {
                 html += `<div class="fields-container" style="border-top: none; padding-top: 0; margin-bottom: 24px;">`;
-                html += renderFieldsList(selectedStep.fields, stepStatus, stepId, null, stepOwner);
+                html += renderFieldsList(selectedStep.fields, stepStatus, stepId, null, stepOwner, selectedStep.can_caller_act);
                 html += `</div>`;
             }
 
@@ -3129,7 +3125,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                     if (sub.fields && sub.fields.length > 0 && subStatus !== 'LOCKED') {
                         html += `<div class="fields-container" style="border-top: 1px solid var(--border); padding-top: 16px;">`;
-                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus, subOwner);
+                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus, subOwner, sub.can_caller_act);
                         html += `</div>`;
                     }
 
@@ -3140,7 +3136,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             }
 
 
-            const isCurrentAdmin = canReviewProcess(user) || (stepOwner.kind === 'designation' && canActOnStepOwner(stepOwner));
+            const isCurrentAdmin = canReviewProcess(user) || selectedStep.can_caller_review;
             if (isCurrentAdmin) {
                 const isCompleted = stepStatus === 'COMPLETED';
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
@@ -3624,7 +3620,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const fieldsPayload = [];
             const editableTextFieldIds = [];
             let hasError = false;
-            const isFieldEditable = canActOnStepOwner(stepOwnerFromResponse(step));
+            const isFieldEditable = !!step.can_caller_act;
 
             step.fields.forEach(f => {
                 const fieldId = f.template_field_id;
