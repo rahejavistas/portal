@@ -550,6 +550,7 @@
         }
         .reviewer-switch {
             display: inline-flex;
+            flex-wrap: wrap;
             align-items: center;
             gap: 2px;
             background: var(--muted);
@@ -1104,13 +1105,6 @@
             padding: 4px 10px; margin-left: 8px; color: var(--muted-foreground); font-size: 16px;
         }
         .step-nav-drag-handle:active { cursor: grabbing; }
-        .step-nav-move-btn {
-            flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border);
-            border-radius: var(--radius-md); background: var(--background); color: var(--muted-foreground);
-            font-size: 11px; cursor: pointer; line-height: 1;
-        }
-        .step-nav-move-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
-        .step-nav-move-btn:disabled { opacity: 0.35; cursor: default; }
         .step-nav-add {
             padding: 14px; text-align: center; border: 2px dashed var(--border);
             border-radius: var(--radius-lg); cursor: pointer; color: var(--muted-foreground); font-weight: 700;
@@ -1282,7 +1276,7 @@
                         </div>
 
                         <div class="card">
-                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload Residents</h3>
+                            <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 24px;">Bulk Upload Owner Residents</h3>
                             <form id="upload-csv-form">
                                 <div class="form-group">
                                     <input type="file" id="csv-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
@@ -1679,6 +1673,17 @@
                 </div>
                 </div>
                 <div class="subtab-panel" id="subtab-panel-society-flats">
+                <div class="card">
+                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Import from Users File</h3>
+                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Same file as Bulk Upload Owner Residents (UnitNo column) — reads every wing and flat from it and adds any that don't exist yet, without creating any residents.</p>
+                    <form id="import-flats-form">
+                        <div class="form-group">
+                            <input type="file" id="import-flats-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
+                        </div>
+                        <button type="submit" class="submit-btn">Import</button>
+                    </form>
+                    <div class="feedback-box" id="import-flats-feedback"></div>
+                </div>
                 <div class="card">
                     <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Flat Setup</h3>
                     <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Pick a wing, add floors, and add flats to each floor. Tap a flat to mark it a fire flat.</p>
@@ -3056,6 +3061,43 @@
             }
         });
 
+        const importFlatsForm = document.getElementById('import-flats-form');
+        const importFlatsFeedback = document.getElementById('import-flats-feedback');
+
+        importFlatsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            importFlatsFeedback.style.display = 'none';
+
+            const fileInput = document.getElementById('import-flats-file');
+            if (fileInput.files.length === 0) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/flats/import-from-file`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                const data = await response.json();
+                importFlatsFeedback.style.display = 'block';
+                if (response.ok) {
+                    importFlatsFeedback.className = 'feedback-box success';
+                    importFlatsFeedback.textContent = `Read ${data.rows_parsed} rows, added ${data.flats_created} new flats.`;
+                    fileInput.value = '';
+                    await loadFlatSetup();
+                } else {
+                    importFlatsFeedback.className = 'feedback-box error';
+                    importFlatsFeedback.textContent = data.message || 'Failed to process file';
+                }
+            } catch (err) {
+                importFlatsFeedback.style.display = 'block';
+                importFlatsFeedback.className = 'feedback-box error';
+                importFlatsFeedback.textContent = 'Failed to connect to backend server';
+            }
+        });
+
         let allUsers = [];
         async function loadUsers() {
             const tbody = document.getElementById('user-rows-target');
@@ -3318,15 +3360,6 @@
                     builderSelectedPath = [sel + 1];
                 }
             }
-        }
-
-        function moveBuilderStage(index, delta) {
-            const stages = builderState.substeps || [];
-            const target = index + delta;
-            if (target < 0 || target >= stages.length) return;
-            reorderBuilderStage(index, target);
-            renderBuilderStages();
-            renderBuilderStageDetail();
         }
 
         function builderStageDragEnd() {
@@ -3640,8 +3673,6 @@
                         <span class="step-nav-num">Stage ${i + 1}</span>
                         <span class="step-nav-name">${escapeHtml(stage.name || '(untitled stage)')}</span>
                     </div>
-                    <button type="button" class="step-nav-move-btn" title="Move stage up" aria-label="Move stage up" ${i === 0 ? 'disabled' : ''} onclick="event.stopPropagation(); moveBuilderStage(${i}, -1);">▲</button>
-                    <button type="button" class="step-nav-move-btn" title="Move stage down" aria-label="Move stage down" ${i === stages.length - 1 ? 'disabled' : ''} onclick="event.stopPropagation(); moveBuilderStage(${i}, 1);">▼</button>
                     <span class="step-nav-drag-handle" onpointerdown="builderStageDragStart(event, ${i});" onclick="event.stopPropagation();">⠿</span>
                 </div>`;
             }).join('');
@@ -3915,13 +3946,11 @@ function openDesignationPicker(field) {
             `).join('');
 
             const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin' && !d.code.startsWith('wing_rep_'));
-            const isDesignationPicker = owner.kind === 'admin' || owner.kind === 'designation' || owner.kind === 'wing_representative' || owner.kind === 'tenant';
+            const isDesignationPicker = owner.kind === 'admin' || owner.kind === 'designation' || owner.kind === 'wing_representative';
             const designationPickerLabel = owner.kind === 'admin'
                 ? 'Any Designation'
                 : owner.kind === 'wing_representative'
                 ? 'Wing Representative'
-                : owner.kind === 'tenant'
-                ? 'Tenant'
                 : owner.kind === 'designation'
                 ? ((nonSystemDesignations.find(d => d.code === owner.code) || {}).label || owner.code)
                 : 'Specific Designation';
@@ -3929,7 +3958,6 @@ function openDesignationPicker(field) {
                 <div class="reviewer-dropdown-menu" onclick="event.stopPropagation();">
                     <div class="reviewer-dropdown-item ${owner.kind === 'admin' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Any Designation</div>
                     <div class="reviewer-dropdown-item ${owner.kind === 'wing_representative' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'wing_representative' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Wing Representative</div>
-                    <div class="reviewer-dropdown-item ${owner.kind === 'tenant' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'tenant' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Tenant</div>
                     ${nonSystemDesignations.length === 0
                         ? ''
                         : nonSystemDesignations.map(d => `<div class="reviewer-dropdown-item ${owner.kind === 'designation' && owner.code === d.code ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'designation', code: '${jsAttrEscape(d.code)}' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">${escapeHtml(d.label)}</div>`).join('')}
@@ -3938,7 +3966,8 @@ function openDesignationPicker(field) {
             const ownerPickerHtml = `
                 <div style="font-size:12px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:8px;">Who fills this stage</div>
                 <div class="reviewer-switch" style="margin-bottom:8px;">
-                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident</button>
+                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'user' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'user' }; renderBuilderStageDetail();">Resident (Owner)</button>
+                    <button type="button" class="reviewer-switch-btn ${owner.kind === 'tenant' ? 'active' : ''}" onclick="${pathExpr}.filled_by = { kind: 'tenant' }; renderBuilderStageDetail();">Resident (Tenant)</button>
                     <div style="position:relative;">
                         <button type="button" class="reviewer-switch-btn reviewer-switch-caret ${isDesignationPicker ? 'active' : ''}" onclick="toggleReviewerDropdown(event)">${escapeHtml(designationPickerLabel)}</button>
                         ${reviewerDropdownHtml}
