@@ -100,11 +100,18 @@ pub async fn save_process_step(
         &actor.designation_codes,
     )
     .await?;
-    if let Some(oid) = info.ownership_id {
-        actor.is_active_tenant_for_this_flat =
-            process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
+    actor.is_process_owner = info.user_id == user.user_id;
+    match info.ownership_id {
+        Some(oid) => {
+            actor.is_active_tenant_for_this_flat =
+                process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
+                    .await
+                    .internal_err()?;
+            actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(&mut tx, oid)
                 .await
                 .internal_err()?;
+        }
+        None => actor.tenant_missing_for_this_flat = true,
     }
 
     // Validate document ownership and upload confirmation
@@ -201,9 +208,11 @@ pub async fn save_process_step(
         }
     }
     notify_newly_opened_designation_steps(
+        &state.pg_pool,
         &state.permissions_manager,
         &template,
         payload.process_id,
+        info.ownership_id,
         &save_outcome.newly_opened_step_ids,
     )
     .await;
@@ -263,9 +272,11 @@ pub async fn admin_review_step(
 
     tx.commit().await.internal_err()?;
     notify_newly_opened_designation_steps(
+        &state.pg_pool,
         &state.permissions_manager,
         &template,
         payload.process_id,
+        info.ownership_id,
         &review_outcome.newly_opened_step_ids,
     )
     .await;
@@ -347,9 +358,11 @@ pub async fn admin_revoke_step(
     .map_err(|e| (StatusCode::BAD_REQUEST, Json(e)))?;
     tx.commit().await.internal_err()?;
     notify_newly_opened_designation_steps(
+        &state.pg_pool,
         &state.permissions_manager,
         &template,
         payload.process_id,
+        info.ownership_id,
         &newly_opened_step_ids,
     )
     .await;

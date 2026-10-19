@@ -141,35 +141,46 @@ pub(super) async fn build_actor_context(
         designation_codes,
         wing_representative_codes,
         is_active_tenant_for_this_flat: false,
+        tenant_missing_for_this_flat: false,
+        is_process_owner: false,
     })
 }
 
-/// Emails a designation's holders once per batch, even if a Stage and its own inherited
-/// Substep both newly opened together — that's one turn, not two.
+/// Emails a designation's holders (or the flat's current tenant) once per batch, even
+/// if a Stage and its own inherited Substep both newly opened together — that's one
+/// turn, not two.
 pub(super) async fn notify_newly_opened_designation_steps(
+    pool: &sqlx::PgPool,
     permissions_manager: &authentication::PermissionsManager,
     template: &process::ProcessTemplate,
     process_id: uuid::Uuid,
+    ownership_id: Option<i32>,
     newly_opened_step_ids: &[i32],
 ) {
     let info_map = process::state_machine::build_step_info_map(template);
 
     let mut by_designation: std::collections::HashMap<&str, &process::state_machine::StepInfo> =
         std::collections::HashMap::new();
+    let mut tenant_step: Option<&process::state_machine::StepInfo> = None;
     for &step_id in newly_opened_step_ids {
         let Some(info) = info_map.get(&step_id) else {
             continue;
         };
-        let process::StepOwner::Designation { code } = &info.filled_by else {
-            continue;
-        };
         let is_top_level = info.parent_id == Some(template.step_id);
-        let should_replace = match by_designation.get(code.as_str()) {
-            None => true,
-            Some(_) => is_top_level,
-        };
-        if should_replace {
-            by_designation.insert(code, info);
+        match &info.filled_by {
+            process::StepOwner::Designation { code } => {
+                let should_replace = match by_designation.get(code.as_str()) {
+                    None => true,
+                    Some(_) => is_top_level,
+                };
+                if should_replace {
+                    by_designation.insert(code, info);
+                }
+            }
+            process::StepOwner::Tenant if tenant_step.is_none() || is_top_level => {
+                tenant_step = Some(info);
+            }
+            _ => {}
         }
     }
 
@@ -195,6 +206,20 @@ pub(super) async fn notify_newly_opened_designation_steps(
             &emails,
         )
         .await;
+    }
+
+    if let (Some(info), Some(oid)) = (tenant_step, ownership_id) {
+        if let Ok(mut conn) = pool.acquire().await {
+            if let Ok(Some(email)) = process::db::get_active_tenant_email(&mut conn, oid).await {
+                process::notification::notify_tenant_turn(
+                    process_id,
+                    &template.name,
+                    &info.name,
+                    &email,
+                )
+                .await;
+            }
+        }
     }
 }
 

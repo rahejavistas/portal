@@ -11,6 +11,7 @@ use quality::setup_db_test_env;
 fn actor(is_admin: bool) -> ActorContext {
     ActorContext {
         is_admin,
+        is_process_owner: true,
         ..Default::default()
     }
 }

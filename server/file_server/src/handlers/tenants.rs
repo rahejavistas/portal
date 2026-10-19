@@ -20,6 +20,26 @@ async fn owned_flat_id(
         .ok_or_else(|| forbidden("Access Denied: you do not own this flat"))
 }
 
+/// Whether `email` belongs to a user who already owns a flat or holds a designation —
+/// mapping such an account as a tenant would silently cross-link a real resident's or
+/// admin's identity with zero consent, even though they'd inherit nothing from it.
+async fn email_belongs_to_a_privileged_account(
+    conn: &mut sqlx::PgConnection,
+    email: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM users u WHERE u.email = $1 AND ( \
+                EXISTS (SELECT 1 FROM flat_ownerships fo WHERE fo.user_id = u.user_id AND fo.is_active = TRUE) \
+                OR EXISTS (SELECT 1 FROM user_designations ud WHERE ud.user_id = u.user_id AND ud.is_active = TRUE) \
+            ) \
+         )",
+    )
+    .bind(email)
+    .fetch_one(conn)
+    .await
+}
+
 /// Same "set your password" link as `forgot_password`, framed as a tenant invite.
 async fn send_tenant_invite(state: &AppState, email: &str) {
     let token: String = thread_rng()
@@ -84,9 +104,21 @@ pub async fn add_tenant(
     if !email.contains('@') || !email.contains('.') {
         return Err(bad_request("Invalid email format."));
     }
+    if email == user.email.trim().to_lowercase() {
+        return Err(bad_request("You cannot add yourself as a tenant."));
+    }
 
     let mut tx = state.pg_pool.begin().await.internal_err()?;
     let flat_id = owned_flat_id(&mut tx, user.user_id, payload.ownership_id).await?;
+
+    if email_belongs_to_a_privileged_account(&mut tx, &email)
+        .await
+        .internal_err()?
+    {
+        return Err(bad_request(
+            "This email belongs to an existing resident or admin account and can't be mapped as a tenant.",
+        ));
+    }
 
     if let Some(doc_id) = payload.rental_agreement_document_id {
         let belongs = state
@@ -196,8 +228,11 @@ pub async fn get_tenant(
 
     let tenant: Option<CurrentTenant> = sqlx::query_as(
         "SELECT t.tenant_ownership_id, u.email AS tenant_email, t.expires_at \
-         FROM tenant_ownerships t JOIN users u ON u.user_id = t.tenant_user_id \
-         WHERE t.ownership_id = $1 AND t.is_active = TRUE",
+         FROM tenant_ownerships t \
+         JOIN users u ON u.user_id = t.tenant_user_id \
+         JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+         WHERE t.ownership_id = $1 AND t.is_active = TRUE \
+           AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE",
     )
     .bind(payload.ownership_id)
     .fetch_optional(&mut *conn)

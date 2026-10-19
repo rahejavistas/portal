@@ -575,8 +575,10 @@ pub async fn list_processes_for_tenant(
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
         "{} WHERE p.ownership_id IN ( \
-             SELECT ownership_id FROM tenant_ownerships \
-             WHERE tenant_user_id = $1 AND is_active = TRUE \
+             SELECT t.ownership_id FROM tenant_ownerships t \
+             JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+             WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
+               AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
          ) \
          {} \
          ORDER BY p.created_at DESC",
@@ -649,11 +651,49 @@ pub async fn is_active_tenant_of_ownership(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS ( \
-            SELECT 1 FROM tenant_ownerships \
-            WHERE tenant_user_id = $1 AND ownership_id = $2 AND is_active = TRUE \
+            SELECT 1 FROM tenant_ownerships t \
+            JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+            WHERE t.tenant_user_id = $1 AND t.ownership_id = $2 AND t.is_active = TRUE \
+              AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
          )",
     )
     .bind(user_id)
+    .bind(ownership_id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Email of `ownership_id`'s flat's current active tenant, if any.
+pub async fn get_active_tenant_email(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: i32,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT u.email FROM tenant_ownerships t \
+         JOIN users u ON u.user_id = t.tenant_user_id \
+         JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+         WHERE t.ownership_id = $1 AND t.is_active = TRUE \
+           AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE",
+    )
+    .bind(ownership_id)
+    .fetch_optional(conn)
+    .await
+}
+
+/// Whether `ownership_id`'s flat has any active, unexpired tenant at all, regardless
+/// of who, with the underlying flat ownership still active.
+pub async fn has_active_tenant(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: i32,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM tenant_ownerships t \
+            JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+            WHERE t.ownership_id = $1 AND t.is_active = TRUE \
+              AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
+         )",
+    )
     .bind(ownership_id)
     .fetch_one(conn)
     .await

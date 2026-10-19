@@ -441,3 +441,146 @@ async fn test_owners_designation_never_translates_to_the_tenant() {
         "the tenant must not see a global reviewer-style list just because the owner holds a designation"
     );
 }
+
+/// A `Tenant`-owned step on a flat with no tenant mapped yet would otherwise stall
+/// forever — nobody, not even the owner, has standing on it. An admin may fill it as
+/// an emergency override in that case, but the override disappears the moment a real
+/// tenant is mapped.
+#[tokio::test]
+async fn test_admin_can_fill_tenant_step_only_when_no_tenant_is_mapped_yet() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner8@dtest.test", "A", "508");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner8@dtest.test", "password123");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let ownership_id = state["ownership_id"].as_i64().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let result = save_step(&url, &admin_jwt, &process_id, step_id, field_id)
+        .expect("an admin must be able to fill a Tenant-owned step when no tenant is mapped yet");
+    assert_eq!(result["status"], "success");
+
+    add_tenant(&url, &owner_jwt, ownership_id, "override8@dtest.test").unwrap();
+    let tenant_jwt = quick_onboard_user(&env, "override8@dtest.test", "password123");
+
+    let state2 = start_process(&url, &owner_jwt, template_id);
+    let process_id2 = state2["process_id"].as_str().unwrap().to_string();
+    let (step_id2, field_id2) = field_and_step_ids(&state2);
+
+    let err = save_step(&url, &admin_jwt, &process_id2, step_id2, field_id2).unwrap_err();
+    assert_eq!(
+        err, 400,
+        "once a real tenant is mapped, the admin override must disappear"
+    );
+
+    let tenant_result = save_step(&url, &tenant_jwt, &process_id2, step_id2, field_id2)
+        .expect("the real tenant must still be able to act");
+    assert_eq!(tenant_result["status"], "success");
+}
+
+/// Mapping an existing resident's or admin's email as a tenant would silently
+/// cross-link their account with zero consent — rejected outright, even though
+/// nothing would actually be inherited.
+#[tokio::test]
+async fn test_cannot_map_an_existing_privileged_account_as_a_tenant() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner9@dtest.test", "A", "509");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner9@dtest.test", "password123");
+    let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
+
+    quick_create_user(&env, &admin_jwt, "other_owner9@dtest.test", "B", "509");
+    quick_onboard_user(&env, "other_owner9@dtest.test", "password123");
+
+    let err = add_tenant(&url, &owner_jwt, ownership_id, "other_owner9@dtest.test").unwrap_err();
+    assert_eq!(
+        err, 400,
+        "an existing resident's account must not be silently cross-linked as a tenant"
+    );
+
+    quick_create_designation(&env, &admin_jwt, "committee9", "Committee");
+    let staff_id = quick_create_user(&env, &admin_jwt, "staff_rep9@dtest.test", "C", "509");
+    quick_onboard_user(&env, "staff_rep9@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, staff_id, "committee9");
+
+    let err2 = add_tenant(&url, &owner_jwt, ownership_id, "staff_rep9@dtest.test").unwrap_err();
+    assert_eq!(
+        err2, 400,
+        "an account holding a designation must not be silently cross-linked as a tenant either"
+    );
+
+    let ok = add_tenant(
+        &url,
+        &owner_jwt,
+        ownership_id,
+        "brand_new_tenant9@dtest.test",
+    );
+    assert!(
+        ok.is_ok(),
+        "a brand-new email with no existing account must still work"
+    );
+}
+
+/// A tenant's scoped access to a process (via its own `Tenant`-owned step) must not
+/// let them fill the owner's own `User`-owned steps in that same process.
+#[tokio::test]
+async fn test_tenant_cannot_fill_the_owners_user_owned_step() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner10@dtest.test", "A", "510");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner10@dtest.test", "password123");
+
+    let draft = serde_json::json!({
+        "template_id": null,
+        "name": "Mixed Owner Test Process",
+        "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Owner Stage",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            }
+        ]
+    });
+    let template_id = create_and_activate_template(&url, &admin_jwt, &draft);
+
+    let state = start_process(&url, &owner_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let ownership_id = state["ownership_id"].as_i64().unwrap();
+    let owner_step_id = state["steps"][0]["template_step_id"].as_i64().unwrap();
+    let owner_field_id = state["steps"][0]["fields"][0]["template_field_id"]
+        .as_i64()
+        .unwrap();
+
+    add_tenant(&url, &owner_jwt, ownership_id, "scopedtenant10@dtest.test").unwrap();
+    let tenant_jwt = quick_onboard_user(&env, "scopedtenant10@dtest.test", "password123");
+
+    let err = save_step(
+        &url,
+        &tenant_jwt,
+        &process_id,
+        owner_step_id,
+        owner_field_id,
+    )
+    .unwrap_err();
+    assert_eq!(
+        err, 400,
+        "a tenant's scoped access to this process must not let them fill the owner's own User-owned step"
+    );
+}

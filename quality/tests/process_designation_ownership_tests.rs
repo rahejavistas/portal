@@ -659,6 +659,7 @@ async fn test_review_step_reports_cascaded_designation_stage_as_newly_opened() {
     let actor = process::state_machine::ActorContext {
         is_admin: false,
         designation_codes: Default::default(),
+        is_process_owner: true,
         ..Default::default()
     };
     process::db::save_step(

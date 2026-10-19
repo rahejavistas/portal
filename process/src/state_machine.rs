@@ -43,6 +43,10 @@ pub struct ActorContext {
     pub wing_representative_codes: HashSet<String>,
     /// Whether the caller is the active tenant of this process's own flat.
     pub is_active_tenant_for_this_flat: bool,
+    /// No active tenant mapped at all — lets an admin fill `Tenant` steps instead.
+    pub tenant_missing_for_this_flat: bool,
+    /// Whether the caller owns this process (`processes.user_id`).
+    pub is_process_owner: bool,
 }
 
 impl ActorContext {
@@ -54,16 +58,20 @@ impl ActorContext {
             .map(|s| s.as_str())
     }
 
-    /// `Designation`-owned steps are exclusive to that designation, even over `is_admin`.
+    /// `Designation`-owned steps are exclusive to that designation. `User`-owned
+    /// steps are exclusive to the process's own owner (or an admin).
     pub fn may_act_on(&self, owner: &crate::StepOwner) -> bool {
         match owner {
-            crate::StepOwner::User => true,
+            crate::StepOwner::User => self.is_process_owner || self.is_admin,
             crate::StepOwner::Admin => self.is_admin,
             crate::StepOwner::Designation { code } => self.designation_codes.contains(code),
             crate::StepOwner::WingRepresentative => {
                 self.matching_wing_representative_code().is_some()
             }
-            crate::StepOwner::Tenant => self.is_active_tenant_for_this_flat,
+            crate::StepOwner::Tenant => {
+                self.is_active_tenant_for_this_flat
+                    || (self.is_admin && self.tenant_missing_for_this_flat)
+            }
         }
     }
 
@@ -414,10 +422,7 @@ pub fn determine_turn(template: &crate::ProcessTemplate, state: &ProcessStateInp
     for (&step_id, &status) in &statuses {
         if status == StepStatus::Open {
             if let Some(info) = info_map.get(&step_id) {
-                if matches!(
-                    info.filled_by,
-                    crate::StepOwner::Admin | crate::StepOwner::Designation { .. }
-                ) {
+                if info.filled_by.turn() == ProcessTurn::Admin {
                     return ProcessTurn::Admin;
                 }
             }
@@ -491,7 +496,9 @@ pub fn validate_save(
 
     if !may_act {
         return Err(match &info.filled_by {
-            crate::StepOwner::User => unreachable!("User-owned steps always pass may_act_on"),
+            crate::StepOwner::User => {
+                "This stage can only be filled by the process's own owner".to_string()
+            }
             crate::StepOwner::Admin => "This stage can only be filled by an admin".to_string(),
             crate::StepOwner::Designation { code } => format!(
                 "This stage can only be filled by someone holding the '{}' designation",
@@ -501,7 +508,7 @@ pub fn validate_save(
                 "This stage can only be filled by a wing representative".to_string()
             }
             crate::StepOwner::Tenant => {
-                "This stage can only be filled by the flat's current tenant".to_string()
+                "This stage can only be filled by the flat's current tenant, or an admin if no tenant is mapped yet".to_string()
             }
         });
     }
@@ -836,6 +843,7 @@ mod tests {
     fn actor(is_admin: bool) -> ActorContext {
         ActorContext {
             is_admin,
+            is_process_owner: true,
             ..Default::default()
         }
     }
