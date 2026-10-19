@@ -537,7 +537,21 @@ impl PermissionsManager {
         created_by: Option<i32>,
     ) -> Result<User, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
-        let user_id = upsert_user_by_email(&mut tx, email, None, created_by).await?;
+        let existing: Option<(i32, bool)> =
+            sqlx::query_as("SELECT user_id, is_active FROM users WHERE email = $1")
+                .bind(email)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        let user_id = match existing {
+            Some((_, false)) => {
+                return Err(
+                    "This account is deactivated and cannot be added as a tenant".to_string(),
+                )
+            }
+            Some((id, true)) => id,
+            None => upsert_user_by_email(&mut tx, email, None, created_by).await?,
+        };
         tx.commit().await.map_err(|e| e.to_string())?;
 
         Ok(assemble_user(RawUser {

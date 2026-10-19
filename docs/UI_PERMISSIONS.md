@@ -132,10 +132,9 @@ Three things are **not** permissions but still gate UI:
   assigned per wing (Admin → Roles), but the stage itself is open to all of them.
   Every wing automatically gets its own representative designation the moment its
   first flat is created, so this needs no manual setup.
-- A stage can also be assigned to "Tenant" — only the flat's current active tenant
-  (mapped by the owner via `POST /api/v1/tenants/add`) can fill it; the owner has no
-  standing on it even though they own the flat. No admin builder UI for assigning a
-  tenant exists yet — mapping a tenant is API-only for now.
+- A stage can also be assigned to "Tenant". Only the flat's current tenant, added by
+  the flat's owner, can fill it. The owner cannot fill it.
+- There is no screen for adding a tenant yet.
 
 ## `process.templates.manage`
 *Create/edit process templates (the versioned builder) and activate versions.*

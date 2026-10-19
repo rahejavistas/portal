@@ -45,6 +45,19 @@ pub enum StepOwner {
     Tenant,
 }
 
+impl StepOwner {
+    /// Which side of the process an open step on this owner puts the turn on.
+    pub fn turn(&self) -> crate::state_machine::ProcessTurn {
+        use crate::state_machine::ProcessTurn;
+        match self {
+            StepOwner::User | StepOwner::Tenant => ProcessTurn::User,
+            StepOwner::Admin | StepOwner::Designation { .. } | StepOwner::WingRepresentative => {
+                ProcessTurn::Admin
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProcessFieldTemplate {
     pub field_id: i32,

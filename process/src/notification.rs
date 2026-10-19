@@ -227,6 +227,26 @@ pub async fn notify_designation_turn(
     }
 }
 
+/// Notify the flat's current tenant their `Tenant`-owned stage just opened.
+pub async fn notify_tenant_turn(
+    process_id: Uuid,
+    process_name: &str,
+    step_name: &str,
+    tenant_email: &str,
+) {
+    dispatch(
+        tenant_email,
+        "Your Turn on a Process",
+        vec![format!(
+            "Stage \"{}\" in process \"{}\" is now waiting on you.",
+            step_name, process_name
+        )],
+        portal_process_url(process_id),
+        process_id,
+    )
+    .await;
+}
+
 /// Notify the user that an admin has reopened a step.
 pub async fn notify_user_revoke(
     ctx: &NotificationContext,

@@ -993,9 +993,11 @@ pub async fn get_process_state(
 
     tx.commit().await.internal_err()?;
     super::notify_newly_opened_designation_steps(
+        &state.pg_pool,
         &state.permissions_manager,
         &template,
         process_id,
+        ownership_id,
         &newly_opened_step_ids,
     )
     .await;

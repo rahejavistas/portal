@@ -1110,6 +1110,10 @@ pub(crate) const ADMIN_HTML: &str = r#"
             border-radius: var(--radius-lg); cursor: pointer; color: var(--muted-foreground); font-weight: 700;
         }
         .step-nav-add:hover { border-color: var(--primary); color: var(--primary); }
+        .md-desc p, .md-desc ul, .md-desc h4, .md-desc h5, .md-desc h6 { margin: 0 0 8px 0; }
+        .md-desc p:last-child, .md-desc ul:last-child { margin-bottom: 0; }
+        .md-desc ul { padding-left: 20px; }
+        .md-desc code { background: var(--muted); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
         .step-card {
             border: 1px solid var(--border); border-radius: var(--radius-lg);
             background-color: var(--background); padding: 24px; margin-bottom: 20px;
@@ -2410,6 +2414,54 @@ pub(crate) const ADMIN_HTML: &str = r#"
                  .replace(/'/g, "&#039;");
         }
 
+        function handleDescriptionTab(event) {
+            if (event.key !== 'Tab') return;
+            event.preventDefault();
+            const el = event.target;
+            const start = el.selectionStart;
+            const end = el.selectionEnd;
+            el.value = el.value.slice(0, start) + '\t' + el.value.slice(end);
+            el.selectionStart = el.selectionEnd = start + 1;
+            el.dispatchEvent(new Event('input'));
+        }
+
+        function renderMarkdown(text) {
+            if (!text) return '';
+            const inline = (s) => s
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            let html = '';
+            let inList = false;
+            let paragraph = [];
+            const flushParagraph = () => {
+                if (paragraph.length) { html += `<p>${paragraph.join('<br>')}</p>`; paragraph = []; }
+            };
+            const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+            for (const rawLine of escapeHtml(text).split('\n')) {
+                const line = rawLine.replace(/\t/g, '    ');
+                const headerMatch = line.match(/^(#{1,3})\s+(.*)$/);
+                const listMatch = line.match(/^[-*]\s+(.*)$/);
+                if (headerMatch) {
+                    flushParagraph(); closeList();
+                    const level = headerMatch[1].length + 3;
+                    html += `<h${level}>${inline(headerMatch[2])}</h${level}>`;
+                } else if (listMatch) {
+                    flushParagraph();
+                    if (!inList) { html += '<ul>'; inList = true; }
+                    html += `<li>${inline(listMatch[1])}</li>`;
+                } else if (line.trim() === '') {
+                    flushParagraph(); closeList();
+                } else {
+                    closeList();
+                    paragraph.push(inline(line));
+                }
+            }
+            flushParagraph();
+            closeList();
+            return html;
+        }
+
         function jsAttrEscape(str) {
             return String(str)
                 .replace(/\\/g, '\\\\')
@@ -3222,13 +3274,16 @@ pub(crate) const ADMIN_HTML: &str = r#"
         let builderDragIndex = null;
         let builderDragOverIndex = null;
 
+        let builderDragOverEl = null;
+
         function builderStageDragStart(event, i) {
-            event.stopPropagation();
             builderDragIndex = i;
             builderDragOverIndex = i;
+            const row = event.target.closest('.step-nav-item');
+            if (row) row.classList.add('dragging');
             document.addEventListener('pointermove', builderStageDragMove);
             document.addEventListener('pointerup', builderStageDragEnd);
-            renderBuilderStages();
+            document.addEventListener('pointercancel', builderStageDragCancel);
         }
 
         function builderStageDragMove(event) {
@@ -3237,15 +3292,33 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const row = el && el.closest('[data-stage-index]');
             if (!row) return;
             const idx = parseInt(row.getAttribute('data-stage-index'), 10);
-            if (idx !== builderDragOverIndex) {
-                builderDragOverIndex = idx;
-                renderBuilderStages();
+            if (idx === builderDragOverIndex) return;
+            builderDragOverIndex = idx;
+            if (builderDragOverEl) builderDragOverEl.classList.remove('drag-over');
+            if (idx !== builderDragIndex) {
+                row.classList.add('drag-over');
+                builderDragOverEl = row;
+            } else {
+                builderDragOverEl = null;
             }
+        }
+
+        function builderStageDragCancel() {
+            builderDragOverIndex = builderDragIndex;
+            builderStageDragEnd();
         }
 
         function builderStageDragEnd() {
             document.removeEventListener('pointermove', builderStageDragMove);
             document.removeEventListener('pointerup', builderStageDragEnd);
+            document.removeEventListener('pointercancel', builderStageDragCancel);
+            if (builderDragOverEl) builderDragOverEl.classList.remove('drag-over');
+            builderDragOverEl = null;
+            if (!builderState) {
+                builderDragIndex = null;
+                builderDragOverIndex = null;
+                return;
+            }
             if (builderDragIndex !== null && builderDragOverIndex !== null && builderDragIndex !== builderDragOverIndex) {
                 const stages = builderState.substeps || [];
                 const [moved] = stages.splice(builderDragIndex, 1);
@@ -3822,7 +3895,7 @@ function openDesignationPicker(field) {
                         <input type="text" class="step-title-input" value="${escapeHtml(sub.name)}" placeholder="Substep name" oninput="${pathExpr}.substeps[${i}].name=this.value">
                         <button class="del-action-btn" style="padding:6px 12px; font-size:12px;" onclick="${pathExpr}.substeps.splice(${i},1); renderBuilderStageDetail();">Remove Substep</button>
                     </div>
-                    <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.substeps[${i}].description=this.value">${escapeHtml(sub.description || '')}</textarea>
+                    <textarea class="step-desc-input" placeholder="Description (optional, supports Markdown)" oninput="${pathExpr}.substeps[${i}].description=this.value" onkeydown="handleDescriptionTab(event)">${escapeHtml(sub.description || '')}</textarea>
                     <div class="fields-container">
                         ${(sub.fields || []).map((f, fi) => renderFieldRow(f, `${pathExpr}.substeps[${i}].fields[${fi}]`, owner)).join('')}
                         <button class="action-select" style="cursor:pointer;" onclick="${pathExpr}.substeps[${i}].fields.push(emptyField()); renderBuilderStageDetail();">+ Add Field</button>
@@ -3866,7 +3939,7 @@ function openDesignationPicker(field) {
                         <input type="text" class="step-title-input" value="${escapeHtml(stage.name)}" placeholder="Stage name" oninput="${pathExpr}.name=this.value; renderBuilderStages();">
                         <button class="del-action-btn" style="padding:8px 14px;" onclick="removeBuilderStage(${stageIndex})">Remove Stage</button>
                     </div>
-                    <textarea class="step-desc-input" placeholder="Description (optional)" oninput="${pathExpr}.description=this.value">${escapeHtml(stage.description || '')}</textarea>
+                    <textarea class="step-desc-input" placeholder="Description (optional, supports Markdown)" oninput="${pathExpr}.description=this.value" onkeydown="handleDescriptionTab(event)">${escapeHtml(stage.description || '')}</textarea>
                     ${ownerPickerHtml}
                     <h4 style="margin-bottom:12px;">Substeps</h4>
                     ${substepsHtml}
@@ -4006,7 +4079,7 @@ function openDesignationPicker(field) {
                     <div class="step-header">
                         <h4 class="step-title" style="margin:0;">${escapeHtml(sub.name)}</h4>
                     </div>
-                    ${sub.description ? `<p class="step-desc">${escapeHtml(sub.description)}</p>` : ''}
+                    ${sub.description ? `<div class="step-desc md-desc">${renderMarkdown(sub.description)}</div>` : ''}
                     <div class="fields-container">
                         ${(sub.fields || []).map(f => `
                             <div class="field-row">
@@ -4026,7 +4099,7 @@ function openDesignationPicker(field) {
                     <div class="step-header">
                         <h3 style="margin:0;">${escapeHtml(stage.name)}</h3>
                     </div>
-                    ${stage.description ? `<p class="step-desc">${escapeHtml(stage.description)}</p>` : ''}
+                    ${stage.description ? `<div class="step-desc md-desc">${renderMarkdown(stage.description)}</div>` : ''}
                     <p style="font-size:13px; color:var(--muted-foreground); margin-bottom:20px;">
                         Filled by ${escapeHtml(ownerLabel)}${owner.kind === 'user' ? ' - requires admin review to complete' : ''}
                     </p>
