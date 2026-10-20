@@ -318,7 +318,7 @@ async fn test_document_uploaded_by_tracking() {
 
     // Resident presigned-upload flow records the resident's own user_id.
     let (resident_doc, _upload_url, _key) = dm
-        .create_upload_intent(&resident, "Resident Presigned Doc", "application/pdf")
+        .create_upload_intent(&resident, "Resident Presigned Doc", "application/pdf", None)
         .await
         .unwrap();
     assert_eq!(resident_doc.document.uploaded_by, Some(resident.user_id));
