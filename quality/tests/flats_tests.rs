@@ -365,3 +365,58 @@ async fn test_delete_flat_rejects_when_financial_records_reference_it() {
         "flat with financial records must not be deleted"
     );
 }
+
+fn upload_members(url: &str, auth_header: &str, file: &[u8]) -> serde_json::Value {
+    let boundary = "----membersupload";
+    let mut body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"members.xlsx\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(file);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    ureq::post(&format!("{}/api/v1/admin/users/upload", url))
+        .set("Authorization", auth_header)
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
+        .send_bytes(&body)
+        .unwrap()
+        .into_json()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_bulk_user_upload_registers_wings_and_flats_and_is_idempotent() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let a = auth(&admin_jwt);
+    let fixture = include_bytes!("../fixtures/member_data_sample.xlsx");
+
+    let first = upload_members(&url, &a, fixture);
+    assert_eq!(first["successfully_onboarded"], 3);
+    assert_eq!(first["flats_created"], 3);
+
+    let second = upload_members(&url, &a, fixture);
+    assert_eq!(
+        second["flats_created"], 0,
+        "re-uploading the same file must not create duplicate flats"
+    );
+
+    let list: serde_json::Value = ureq::post(&format!("{}/api/v1/admin/flats/list", url))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({}))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let mut numbers: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["wing"] == "Z")
+        .map(|f| f["flat_number"].as_str().unwrap())
+        .collect();
+    numbers.sort_unstable();
+    assert_eq!(numbers, ["0001", "0002", "0003"]);
+}
