@@ -6359,9 +6359,15 @@ function openDesignationPicker(field) {
             const skipped = [];
             const flatFileCounts = new Map();
             const subcatFileCounts = new Map();
+            const subcatDisplayLabels = new Map();
 
             for (const file of files) {
                 const relPath = file.webkitRelativePath || file.name;
+                const fileError = validateDocFile(file);
+                if (fileError) {
+                    skipped.push({ name: relPath, reason: fileError });
+                    continue;
+                }
                 const segments = relPath.split('/');
                 if (segments.length !== 5) {
                     skipped.push({ name: relPath, reason: 'unexpected folder depth (expected Wing/Flat/Subcategory/file)' });
@@ -6397,14 +6403,18 @@ function openDesignationPicker(field) {
                 }
 
                 const flatKey = `${resolvedFlat.wing}|${resolvedFlat.flat_number}`;
+                const subcatKey = subcatCaptured.trim().toLowerCase();
                 flatFileCounts.set(flatKey, (flatFileCounts.get(flatKey) || 0) + 1);
-                subcatFileCounts.set(subcatCaptured, (subcatFileCounts.get(subcatCaptured) || 0) + 1);
+                subcatFileCounts.set(subcatKey, (subcatFileCounts.get(subcatKey) || 0) + 1);
+                if (!subcatDisplayLabels.has(subcatKey)) {
+                    subcatDisplayLabels.set(subcatKey, subcatCaptured.trim());
+                }
 
                 validFiles.push({
                     file,
                     wing: resolvedFlat.wing,
                     flat_number: resolvedFlat.flat_number,
-                    subcategoryRaw: subcatCaptured
+                    subcategoryRaw: subcatKey
                 });
             }
 
@@ -6426,13 +6436,13 @@ function openDesignationPicker(field) {
 
             const categorySubcats = selectedCat.subcategories || [];
             const subcatRows = [...subcatFileCounts.entries()]
-                .map(([raw, count]) => {
-                    const rawLower = raw.trim().toLowerCase();
+                .map(([key, count]) => {
+                    const label = subcatDisplayLabels.get(key) || key;
                     const match = categorySubcats.find(s =>
-                        s.label.trim().toLowerCase() === rawLower || s.code.trim().toLowerCase() === rawLower);
-                    return { raw, count, matchedCode: match ? match.code : null };
+                        s.label.trim().toLowerCase() === key || s.code.trim().toLowerCase() === key);
+                    return { raw: key, label, count, matchedCode: match ? match.code : null };
                 })
-                .sort((a, b) => a.raw.localeCompare(b.raw));
+                .sort((a, b) => a.label.localeCompare(b.label));
 
             bulkFolderImportState = { category, validFiles, skipped, missingFlats, subcatRows, categorySubcats };
             openBulkFolderImportModal();
@@ -6464,12 +6474,14 @@ function openDesignationPicker(field) {
                     const options = state.categorySubcats
                         .map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`)
                         .join('');
-                    const defaultCode = r.raw.toUpperCase().replace(/\s+/g, '_');
+                    const defaultCode = r.label.trim().toUpperCase()
+                        .replace(/[^A-Z0-9]+/g, '_')
+                        .replace(/^_+|_+$/g, '');
                     return `
                         <div class="form-group" style="margin-bottom:10px;">
-                            <label>"${escapeHtml(r.raw)}" (${r.count} file${r.count === 1 ? '' : 's'})</label>
-                            <select data-raw="${escapeHtml(r.raw)}" data-default-code="${escapeHtml(defaultCode)}" data-default-label="${escapeHtml(r.raw)}">
-                                <option value="__create__">Create new: "${escapeHtml(r.raw)}"</option>
+                            <label>"${escapeHtml(r.label)}" (${r.count} file${r.count === 1 ? '' : 's'})</label>
+                            <select data-raw="${escapeHtml(r.raw)}" data-default-code="${escapeHtml(defaultCode)}" data-default-label="${escapeHtml(r.label)}">
+                                <option value="__create__">Create new: "${escapeHtml(r.label)}"</option>
                                 ${options}
                             </select>
                         </div>`;
@@ -6536,10 +6548,13 @@ function openDesignationPicker(field) {
                         subcategoryCodeByRaw.set(row.raw, row.matchedCode);
                     }
                 }
+                state.createdSubcats = state.createdSubcats || new Map();
                 const unmappedSelects = document.querySelectorAll('#bulk-folder-subcats-rows select');
                 for (const select of unmappedSelects) {
                     const raw = select.dataset.raw;
-                    if (select.value === '__create__') {
+                    if (select.value === '__create__' && state.createdSubcats.has(raw)) {
+                        subcategoryCodeByRaw.set(raw, state.createdSubcats.get(raw));
+                    } else if (select.value === '__create__') {
                         feedback.style.display = 'block';
                         feedback.className = 'feedback-box';
                         feedback.textContent = `Creating subcategory "${raw}"...`;
@@ -6552,6 +6567,7 @@ function openDesignationPicker(field) {
                             throw new Error(`Failed to create subcategory "${raw}": ${await readErrorMessage(resp)}`);
                         }
                         const data = await resp.json();
+                        state.createdSubcats.set(raw, data.code);
                         subcategoryCodeByRaw.set(raw, data.code);
                     } else {
                         subcategoryCodeByRaw.set(raw, select.value);
@@ -6619,6 +6635,7 @@ function openDesignationPicker(field) {
                 feedback.className = 'feedback-box error';
                 feedback.textContent = err.message;
                 importBtn.disabled = false;
+                await loadUploadCategories();
             }
         }
 
