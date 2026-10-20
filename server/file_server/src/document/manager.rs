@@ -98,6 +98,21 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(owned_ids);
 
+        // 4. Documents the user uploaded as the current tenant of the flat.
+        let tenant_uploaded_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT d.document_id FROM documents d \
+             JOIN document_flats df ON df.document_id = d.document_id \
+             JOIN flat_ownerships fo ON fo.flat_id = df.flat_id AND fo.is_active = TRUE \
+             JOIN tenant_ownerships t ON t.ownership_id = fo.ownership_id \
+             WHERE d.uploaded_by = $1 AND t.tenant_user_id = $1 AND NOT d.is_deleted \
+               AND t.is_active = TRUE AND t.expires_at >= CURRENT_DATE",
+        )
+        .bind(user.user_id)
+        .fetch_all(&self.pg_pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        allowed_ids.extend(tenant_uploaded_ids);
+
         Ok(allowed_ids)
     }
 

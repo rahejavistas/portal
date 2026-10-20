@@ -27,7 +27,7 @@ A flat's owner can map a tenant to it (`POST /api/v1/tenants/add`) — a separat
 | Flat-scoped (`RESIDENT_SPECIFIC`) documents | Visible | Never visible, except the documents the tenant uploaded themselves for their current flat — they can attach those to their own stage; the flat's owner can see them |
 | Starting a process | Any template | Only templates that have a `Tenant`-owned stage. The process belongs to the flat's owner, not the tenant |
 | Process list | Every process on their own flat(s), including ones a tenant started | Only processes whose template has a `Tenant`-owned stage, and only for the flat they're the current active tenant of |
-| What a process shows them | Everything on their flat's processes, including the tenant's stages | Only their own (`Tenant`) stages: the owner's answers, documents, review notes and email are hidden, and they can't download the owner's documents |
+| What a process shows them | Everything on their flat's processes, including the tenant's stages | Everything the society and they themselves filled in or uploaded, but never the owner's own stages: the owner's answers, documents, review notes and email are hidden, and they can't download the owner's documents |
 | Reviewer-only upload actions on a process | No | No — reserved for reviewers |
 | Filling a `Tenant`-owned stage | Cannot — even the owner has no standing on it | Only the current active tenant can; reviewing/reopening it is admin-only |
 | Filling the owner's declaration stage | Only the flat's current owner — nobody else, not even an admin | Cannot |
