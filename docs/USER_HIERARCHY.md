@@ -24,9 +24,11 @@ A flat's owner can map a tenant to it (`POST /api/v1/tenants/add`) — a separat
 
 | What | Owner | Tenant |
 |---|---|---|
-| Flat-scoped (`RESIDENT_SPECIFIC`) documents | Visible | Never visible — a tenant has no `flat_ownerships` row, which is what document visibility is keyed on |
-| Process list | Every process on their own flat(s) | Only processes whose template has a `Tenant`-owned stage, and only for the flat they're the current active tenant of |
+| Flat-scoped (`RESIDENT_SPECIFIC`) documents | Visible | Never visible, except the documents the tenant uploaded themselves for their current flat — they can attach those to their own stage; the flat's owner can see them |
+| Starting a process | Any template | Only templates that have a `Tenant`-owned stage. The process belongs to the flat's owner, not the tenant |
+| Process list | Every process on their own flat(s), including ones a tenant started | Only processes whose template has a `Tenant`-owned stage, and only for the flat they're the current active tenant of |
 | Filling a `Tenant`-owned stage | Cannot — even the owner has no standing on it | Only the current active tenant can; reviewing/reopening it is admin-only |
+| Filling the owner's declaration stage | Only the flat's current owner — nobody else, not even an admin | Cannot |
 | Designations/permissions held by the owner | N/A | Never inherited — a tenant's session carries only their own designations (normally none) |
 | OTP/notification settings | Own profile | Own profile — same self-service endpoints as any user |
 

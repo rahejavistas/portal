@@ -663,13 +663,13 @@ pub async fn is_active_tenant_of_ownership(
     .await
 }
 
-/// Email of `ownership_id`'s flat's current active tenant, if any.
-pub async fn get_active_tenant_email(
+/// `ownership_id`'s flat's current active tenant as (user_id, email), if any.
+pub async fn get_active_tenant(
     conn: &mut sqlx::PgConnection,
     ownership_id: i32,
-) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT u.email FROM tenant_ownerships t \
+) -> Result<Option<(i32, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT t.tenant_user_id, u.email FROM tenant_ownerships t \
          JOIN users u ON u.user_id = t.tenant_user_id \
          JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
          WHERE t.ownership_id = $1 AND t.is_active = TRUE \
@@ -677,6 +677,59 @@ pub async fn get_active_tenant_email(
     )
     .bind(ownership_id)
     .fetch_optional(conn)
+    .await
+}
+
+/// `ownership_id`'s current active owner as (user_id, email), if any.
+pub async fn get_active_owner(
+    conn: &mut sqlx::PgConnection,
+    ownership_id: i32,
+) -> Result<Option<(i32, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT fo.user_id, u.email FROM flat_ownerships fo \
+         JOIN users u ON u.user_id = fo.user_id \
+         WHERE fo.ownership_id = $1 AND fo.is_active = TRUE",
+    )
+    .bind(ownership_id)
+    .fetch_optional(conn)
+    .await
+}
+
+/// Whether `user_id` is the current active owner of `ownership_id`'s flat.
+pub async fn is_active_owner_of_ownership(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+    ownership_id: i32,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM flat_ownerships \
+            WHERE ownership_id = $1 AND user_id = $2 AND is_active = TRUE \
+         )",
+    )
+    .bind(ownership_id)
+    .bind(user_id)
+    .fetch_one(conn)
+    .await
+}
+
+/// Whether `user_id` is an active tenant somewhere and owns no flat at all.
+pub async fn is_tenant_only(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS ( \
+            SELECT 1 FROM tenant_ownerships t \
+            JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+            WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
+              AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
+         ) AND NOT EXISTS ( \
+            SELECT 1 FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE \
+         )",
+    )
+    .bind(user_id)
+    .fetch_one(conn)
     .await
 }
 
@@ -797,6 +850,25 @@ pub async fn get_active_ownerships_for_user(
     .await
 }
 
+/// Flats `user_id` owns, plus flats where they're the current active tenant.
+pub async fn get_active_ownerships_and_tenancies_for_user(
+    conn: &mut sqlx::PgConnection,
+    user_id: i32,
+) -> Result<Vec<(i32, i32)>, sqlx::Error> {
+    // (ownership_id, flat_id)
+    sqlx::query_as(
+        "SELECT ownership_id, flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE \
+         UNION \
+         SELECT t.ownership_id, fo.flat_id FROM tenant_ownerships t \
+         JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+         WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
+           AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE",
+    )
+    .bind(user_id)
+    .fetch_all(conn)
+    .await
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct UserFlatInfo {
     pub flat_id: i32,
@@ -804,6 +876,7 @@ pub struct UserFlatInfo {
     pub flat_number: String,
 }
 
+/// Flats `user_id` owns, plus flats where they're the current active tenant.
 pub async fn get_user_active_flats(
     conn: &mut sqlx::PgConnection,
     user_id: i32,
@@ -812,7 +885,14 @@ pub async fn get_user_active_flats(
         "SELECT f.flat_id, f.wing, f.flat_number \
          FROM flat_ownerships fo \
          JOIN flats f ON fo.flat_id = f.flat_id \
-         WHERE fo.user_id = $1 AND fo.is_active = TRUE",
+         WHERE fo.user_id = $1 AND fo.is_active = TRUE \
+         UNION \
+         SELECT f.flat_id, f.wing, f.flat_number \
+         FROM tenant_ownerships t \
+         JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+         JOIN flats f ON f.flat_id = fo.flat_id \
+         WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
+           AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE",
     )
     .bind(user_id)
     .fetch_all(conn)

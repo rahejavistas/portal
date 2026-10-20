@@ -45,7 +45,8 @@ pub struct ActorContext {
     pub is_active_tenant_for_this_flat: bool,
     /// No active tenant mapped at all — lets an admin fill `Tenant` steps instead.
     pub tenant_missing_for_this_flat: bool,
-    /// Whether the caller owns this process (`processes.user_id`).
+    /// Whether the caller owns this process (`processes.user_id`) and is still the
+    /// flat's active owner.
     pub is_process_owner: bool,
 }
 
@@ -72,6 +73,22 @@ impl ActorContext {
                 self.is_active_tenant_for_this_flat
                     || (self.is_admin && self.tenant_missing_for_this_flat)
             }
+        }
+    }
+
+    /// Like `may_act_on`, but a `User` step holding a `Declaration` field is the
+    /// owner's alone — an admin can't declare on their behalf.
+    pub fn may_act_on_step(
+        &self,
+        owner: &crate::StepOwner,
+        fields: &[crate::ProcessFieldTemplate],
+    ) -> bool {
+        let has_declaration = fields
+            .iter()
+            .any(|f| f.r#type == crate::FieldType::Declaration);
+        match owner {
+            crate::StepOwner::User if has_declaration => self.is_process_owner,
+            _ => self.may_act_on(owner),
         }
     }
 
@@ -234,6 +251,34 @@ fn insert_step_info_recursive(
             insert_step_info_recursive(map, sub, Some(step.step_id));
         }
     }
+}
+
+/// A template with a `Tenant` stage must also require the owner's declaration: a
+/// required `User` step holding a `Declaration` field.
+pub fn tenant_stage_lacks_owner_declaration(template: &crate::ProcessTemplate) -> bool {
+    let map = build_step_info_map(template);
+    let is_required = |info: &StepInfo| {
+        let mut current = Some(info);
+        while let Some(step) = current {
+            if step.is_optional {
+                return false;
+            }
+            current = step.parent_id.and_then(|pid| map.get(&pid));
+        }
+        true
+    };
+    let has_tenant_stage = map
+        .values()
+        .any(|i| matches!(i.filled_by, crate::StepOwner::Tenant));
+    let has_owner_declaration = map.values().any(|i| {
+        i.parent_id.is_some()
+            && matches!(i.filled_by, crate::StepOwner::User)
+            && i.fields
+                .iter()
+                .any(|f| f.r#type == crate::FieldType::Declaration)
+            && is_required(i)
+    });
+    has_tenant_stage && !has_owner_declaration
 }
 
 // ==========================================
@@ -475,7 +520,7 @@ pub fn validate_save(
         .get(&step_id)
         .ok_or_else(|| format!("Step {} not in template", step_id))?;
 
-    let may_act = actor.may_act_on(&info.filled_by);
+    let may_act = actor.may_act_on_step(&info.filled_by, &info.fields);
 
     // Check step is editable
     let is_parent_open = info
@@ -850,6 +895,100 @@ mod tests {
             is_process_owner: true,
             ..Default::default()
         }
+    }
+
+    fn declaration_field(field_id: i32) -> crate::ProcessFieldTemplate {
+        crate::ProcessFieldTemplate {
+            field_id,
+            name: "Declaration".to_string(),
+            description: None,
+            r#type: crate::FieldType::Declaration,
+            is_optional: false,
+            requirements: None,
+            requires_signature: false,
+            required_signs_from_designations: Vec::new(),
+            options: None,
+            example_document_id: None,
+        }
+    }
+
+    fn step_with(
+        step_id: i32,
+        filled_by: crate::StepOwner,
+        is_optional: bool,
+        fields: Option<Vec<crate::ProcessFieldTemplate>>,
+    ) -> crate::ProcessStepTemplate {
+        crate::ProcessStepTemplate {
+            step_id,
+            name: format!("Step {step_id}"),
+            description: None,
+            is_optional,
+            filled_by,
+            fields,
+            substeps: None,
+        }
+    }
+
+    fn template_of(steps: Vec<crate::ProcessStepTemplate>) -> crate::ProcessTemplate {
+        crate::ProcessTemplate {
+            name: "T".to_string(),
+            description: None,
+            step_id: 1,
+            is_optional: false,
+            substeps: Some(steps),
+            fields: None,
+            tat_working_days: None,
+            filled_by: crate::StepOwner::User,
+        }
+    }
+
+    #[test]
+    fn declaration_on_a_user_step_is_owner_only_even_for_admin() {
+        let declaration = [declaration_field(10)];
+        let owner = ActorContext {
+            is_process_owner: true,
+            ..Default::default()
+        };
+        let admin = ActorContext {
+            is_admin: true,
+            ..Default::default()
+        };
+        assert!(owner.may_act_on_step(&crate::StepOwner::User, &declaration));
+        assert!(!admin.may_act_on_step(&crate::StepOwner::User, &declaration));
+        assert!(admin.may_act_on_step(&crate::StepOwner::User, &[]));
+    }
+
+    #[test]
+    fn tenant_stage_requires_a_required_owner_declaration() {
+        let tenant = || step_with(2, crate::StepOwner::Tenant, false, None);
+        let declaration = |optional| {
+            step_with(
+                3,
+                crate::StepOwner::User,
+                optional,
+                Some(vec![declaration_field(10)]),
+            )
+        };
+        let plain_owner = step_with(4, crate::StepOwner::User, false, None);
+
+        assert!(tenant_stage_lacks_owner_declaration(&template_of(vec![
+            tenant()
+        ])));
+        assert!(tenant_stage_lacks_owner_declaration(&template_of(vec![
+            tenant(),
+            plain_owner
+        ])));
+        assert!(tenant_stage_lacks_owner_declaration(&template_of(vec![
+            tenant(),
+            declaration(true)
+        ])));
+        assert!(!tenant_stage_lacks_owner_declaration(&template_of(vec![
+            tenant(),
+            declaration(false)
+        ])));
+        assert!(!tenant_stage_lacks_owner_declaration(&template_of(vec![
+            declaration(false)
+        ])));
     }
 
     #[test]

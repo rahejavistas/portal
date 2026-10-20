@@ -175,6 +175,27 @@ impl User {
         .fetch_all(executor)
         .await
     }
+
+    /// The flats the user owns, or — for a tenant owning none — the flats they rent.
+    /// Lets a tenant upload process documents for their own flat only.
+    pub async fn get_active_flat_ids_or_tenancies(
+        &self,
+        conn: &mut sqlx::PgConnection,
+    ) -> Result<Vec<i32>, sqlx::Error> {
+        let owned = self.get_active_flat_ids(&mut *conn).await?;
+        if !owned.is_empty() {
+            return Ok(owned);
+        }
+        sqlx::query_scalar(
+            "SELECT fo.flat_id FROM tenant_ownerships t \
+             JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
+             WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
+               AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE",
+        )
+        .bind(self.user_id)
+        .fetch_all(conn)
+        .await
+    }
 }
 
 /// Raw parts for building a `User` — the one place every capability flag gets derived.

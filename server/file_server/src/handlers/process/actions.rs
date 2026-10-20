@@ -100,19 +100,7 @@ pub async fn save_process_step(
         &actor.designation_codes,
     )
     .await?;
-    actor.is_process_owner = info.user_id == user.user_id;
-    match info.ownership_id {
-        Some(oid) => {
-            actor.is_active_tenant_for_this_flat =
-                process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
-                    .await
-                    .internal_err()?;
-            actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(&mut tx, oid)
-                .await
-                .internal_err()?;
-        }
-        None => actor.tenant_missing_for_this_flat = true,
-    }
+    super::resolve_flat_roles(&mut tx, &mut actor, &user, info.ownership_id, info.user_id).await?;
 
     // Validate document ownership and upload confirmation
     for f in &payload.fields {
@@ -213,6 +201,7 @@ pub async fn save_process_step(
         &template,
         payload.process_id,
         info.ownership_id,
+        user.user_id,
         &save_outcome.newly_opened_step_ids,
     )
     .await;
@@ -277,21 +266,30 @@ pub async fn admin_review_step(
         &template,
         payload.process_id,
         info.ownership_id,
+        user.user_id,
         &review_outcome.newly_opened_step_ids,
     )
     .await;
 
     let step_name = find_step_name(&template, payload.template_step_id);
+    let recipient_user_id = super::step_outcome_recipient(
+        &state.pg_pool,
+        &template,
+        payload.template_step_id,
+        info.ownership_id,
+        info.user_id,
+    )
+    .await;
     let wants_notification = state
         .permissions_manager
-        .get_notification_prefs(info.user_id)
+        .get_notification_prefs(recipient_user_id)
         .await
         .map(|p| p.notify_process_updates)
         .unwrap_or(true);
     if wants_notification {
         if let Some(ctx) = build_notification_ctx(
             &state.pg_pool,
-            info.user_id,
+            recipient_user_id,
             &state.super_admin_email,
             &template.name,
         )
@@ -363,21 +361,30 @@ pub async fn admin_revoke_step(
         &template,
         payload.process_id,
         info.ownership_id,
+        user.user_id,
         &newly_opened_step_ids,
     )
     .await;
 
     let step_name = find_step_name(&template, payload.template_step_id);
+    let recipient_user_id = super::step_outcome_recipient(
+        &state.pg_pool,
+        &template,
+        payload.template_step_id,
+        info.ownership_id,
+        info.user_id,
+    )
+    .await;
     let wants_notification = state
         .permissions_manager
-        .get_notification_prefs(info.user_id)
+        .get_notification_prefs(recipient_user_id)
         .await
         .map(|p| p.notify_process_updates)
         .unwrap_or(true);
     if wants_notification {
         if let Some(ctx) = build_notification_ctx(
             &state.pg_pool,
-            info.user_id,
+            recipient_user_id,
             &state.super_admin_email,
             &template.name,
         )

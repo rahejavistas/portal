@@ -146,15 +146,70 @@ pub(super) async fn build_actor_context(
     })
 }
 
-/// Emails a designation's holders (or the flat's current tenant) once per batch, even
-/// if a Stage and its own inherited Substep both newly opened together — that's one
-/// turn, not two.
+/// Sets the caller's flat-scoped roles on `actor`. `is_process_owner` also needs the
+/// caller to still be the flat's active owner, so a sold flat's former owner loses it.
+pub(super) async fn resolve_flat_roles(
+    conn: &mut sqlx::PgConnection,
+    actor: &mut process::state_machine::ActorContext,
+    user: &authentication::User,
+    ownership_id: Option<i32>,
+    process_owner_id: i32,
+) -> Result<(), ApiError> {
+    let is_starter = process_owner_id == user.user_id;
+    let Some(oid) = ownership_id else {
+        actor.tenant_missing_for_this_flat = true;
+        actor.is_process_owner = is_starter;
+        return Ok(());
+    };
+    actor.is_active_tenant_for_this_flat =
+        process::db::is_active_tenant_of_ownership(conn, user.user_id, oid)
+            .await
+            .internal_err()?;
+    actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(conn, oid)
+        .await
+        .internal_err()?;
+    actor.is_process_owner = is_starter
+        && process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
+            .await
+            .internal_err()?;
+    Ok(())
+}
+
+/// Who a review/reopen outcome on `step_id` is for: the flat's tenant on a
+/// `Tenant`-owned step, otherwise the process owner.
+pub(super) async fn step_outcome_recipient(
+    pool: &sqlx::PgPool,
+    template: &process::ProcessTemplate,
+    step_id: i32,
+    ownership_id: Option<i32>,
+    process_owner_id: i32,
+) -> i32 {
+    let is_tenant_step = process::state_machine::build_step_info_map(template)
+        .get(&step_id)
+        .is_some_and(|info| matches!(info.filled_by, process::StepOwner::Tenant));
+    let (true, Some(oid)) = (is_tenant_step, ownership_id) else {
+        return process_owner_id;
+    };
+    let Ok(mut conn) = pool.acquire().await else {
+        return process_owner_id;
+    };
+    match process::db::get_active_tenant(&mut conn, oid).await {
+        Ok(Some((tenant_id, _))) => tenant_id,
+        _ => process_owner_id,
+    }
+}
+
+/// Emails a designation's holders (or the flat's current tenant/owner) once per batch,
+/// even if a Stage and its own inherited Substep both newly opened together — that's
+/// one turn, not two. The owner isn't emailed about a turn they just opened themselves
+/// (`actor_user_id`).
 pub(super) async fn notify_newly_opened_designation_steps(
     pool: &sqlx::PgPool,
     permissions_manager: &authentication::PermissionsManager,
     template: &process::ProcessTemplate,
     process_id: uuid::Uuid,
     ownership_id: Option<i32>,
+    actor_user_id: i32,
     newly_opened_step_ids: &[i32],
 ) {
     let info_map = process::state_machine::build_step_info_map(template);
@@ -162,6 +217,7 @@ pub(super) async fn notify_newly_opened_designation_steps(
     let mut by_designation: std::collections::HashMap<&str, &process::state_machine::StepInfo> =
         std::collections::HashMap::new();
     let mut tenant_step: Option<&process::state_machine::StepInfo> = None;
+    let mut owner_step: Option<&process::state_machine::StepInfo> = None;
     for &step_id in newly_opened_step_ids {
         let Some(info) = info_map.get(&step_id) else {
             continue;
@@ -179,6 +235,9 @@ pub(super) async fn notify_newly_opened_designation_steps(
             }
             process::StepOwner::Tenant if tenant_step.is_none() || is_top_level => {
                 tenant_step = Some(info);
+            }
+            process::StepOwner::User if owner_step.is_none() || is_top_level => {
+                owner_step = Some(info);
             }
             _ => {}
         }
@@ -208,10 +267,25 @@ pub(super) async fn notify_newly_opened_designation_steps(
         .await;
     }
 
-    if let (Some(info), Some(oid)) = (tenant_step, ownership_id) {
-        if let Ok(mut conn) = pool.acquire().await {
-            if let Ok(Some(email)) = process::db::get_active_tenant_email(&mut conn, oid).await {
-                process::notification::notify_tenant_turn(
+    let Some(oid) = ownership_id else { return };
+    let Ok(mut conn) = pool.acquire().await else {
+        return;
+    };
+    if let Some(info) = tenant_step {
+        if let Ok(Some((_, email))) = process::db::get_active_tenant(&mut conn, oid).await {
+            process::notification::notify_tenant_turn(
+                process_id,
+                &template.name,
+                &info.name,
+                &email,
+            )
+            .await;
+        }
+    }
+    if let Some(info) = owner_step {
+        if let Ok(Some((owner_id, email))) = process::db::get_active_owner(&mut conn, oid).await {
+            if owner_id != actor_user_id {
+                process::notification::notify_owner_turn(
                     process_id,
                     &template.name,
                     &info.name,

@@ -12,6 +12,8 @@ pub enum TemplateStoreError {
     NotFound(String),
     /// A field references a document it isn't allowed to (e.g. a non-PUBLIC example document).
     InvalidReference(String),
+    /// The template breaks a structural rule — safe to show the caller.
+    InvalidTemplate(String),
     Db(sqlx::Error),
     Serialize(serde_json::Error),
 }
@@ -21,6 +23,7 @@ impl std::fmt::Display for TemplateStoreError {
         match self {
             TemplateStoreError::NotFound(msg) => write!(f, "{}", msg),
             TemplateStoreError::InvalidReference(msg) => write!(f, "{}", msg),
+            TemplateStoreError::InvalidTemplate(msg) => write!(f, "{}", msg),
             TemplateStoreError::Db(e) => write!(f, "{}", e),
             TemplateStoreError::Serialize(e) => write!(f, "{}", e),
         }
@@ -344,6 +347,13 @@ pub async fn save_template_version(
         tat_working_days,
         filled_by: crate::StepOwner::User,
     };
+
+    if crate::state_machine::tenant_stage_lacks_owner_declaration(&template) {
+        return Err(TemplateStoreError::InvalidTemplate(
+            "A template with a Tenant stage needs a required Resident (Owner) stage with a Declaration field"
+                .to_string(),
+        ));
+    }
 
     let mut example_doc_ids = Vec::new();
     collect_example_document_ids(&template.fields, &template.substeps, &mut example_doc_ids);

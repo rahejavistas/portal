@@ -124,6 +124,13 @@ impl DocumentManager {
                 SELECT 1 FROM document_flats df \
                 JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
                 WHERE df.document_id = $1 AND fo.user_id = $2 AND fo.is_active = TRUE \
+                UNION ALL \
+                SELECT 1 FROM documents d \
+                JOIN document_flats df ON df.document_id = d.document_id \
+                JOIN flat_ownerships fo ON fo.flat_id = df.flat_id AND fo.is_active = TRUE \
+                JOIN tenant_ownerships t ON t.ownership_id = fo.ownership_id \
+                WHERE d.document_id = $1 AND d.uploaded_by = $2 AND t.tenant_user_id = $2 \
+                  AND t.is_active = TRUE AND t.expires_at >= CURRENT_DATE \
              )",
         )
         .bind(document_id)
@@ -989,7 +996,7 @@ impl DocumentManager {
             .map_err(|e| e.to_string())?;
 
         let flat_ids = user
-            .get_active_flat_ids(&mut *tx)
+            .get_active_flat_ids_or_tenancies(&mut tx)
             .await
             .map_err(|e| e.to_string())?;
 

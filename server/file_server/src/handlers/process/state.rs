@@ -6,7 +6,7 @@ use crate::handlers::accounting::pdf_response;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use process::db::{
-    get_active_ownerships_for_user, get_admin_comments, get_field_history,
+    get_active_ownerships_and_tenancies_for_user, get_admin_comments, get_field_history,
     get_flat_info_for_ownership, get_process_reviews, get_user_active_flats,
     list_processes_for_user, AdminComment, ProcessReviewHistory as ReviewHistoryInfo, UserFlatInfo,
 };
@@ -278,7 +278,7 @@ async fn resolve_or_init_process(
     ),
     ApiError,
 > {
-    let active_ownerships = get_active_ownerships_for_user(conn, user.user_id)
+    let active_ownerships = get_active_ownerships_and_tenancies_for_user(conn, user.user_id)
         .await
         .internal_err()?;
 
@@ -328,9 +328,32 @@ async fn resolve_or_init_process(
                 Json(format!("Template error: {}", e)),
             )
         })?;
+    // A tenant starts it on the owner's behalf: the process belongs to the flat's owner.
+    let process_owner_id = match selected_ownership {
+        Some(oid) => {
+            let (owner_id, _) = process::db::get_active_owner(conn, oid)
+                .await
+                .internal_err()?
+                .ok_or_else(|| {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json("This flat has no active owner".to_string()),
+                    )
+                })?;
+            if owner_id != user.user_id && !super::template_has_tenant_step(&template) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json("This process has no stage for a tenant to act on".to_string()),
+                ));
+            }
+            owner_id
+        }
+        None => user.user_id,
+    };
+
     let init_outcome = process::db::init_process(
         conn,
-        user.user_id,
+        process_owner_id,
         version_id,
         &template,
         selected_ownership,
@@ -346,7 +369,7 @@ async fn resolve_or_init_process(
         init_outcome.process_id,
         version_id,
         selected_ownership,
-        user.user_id,
+        process_owner_id,
         template,
         init_outcome.newly_opened_step_ids,
     ))
@@ -480,7 +503,10 @@ fn map_step_template(
         status,
         filled_by: step_tpl.filled_by.clone(),
         filled_by_designation_label,
-        can_caller_act: ctx.actor.may_act_on(&step_tpl.filled_by),
+        can_caller_act: ctx.actor.may_act_on_step(
+            &step_tpl.filled_by,
+            step_tpl.fields.as_deref().unwrap_or_default(),
+        ),
         can_caller_review: ctx.actor.may_review(&step_tpl.filled_by),
         fields,
         substeps,
@@ -835,19 +861,7 @@ pub async fn get_process_state(
         &actor.designation_codes,
     )
     .await?;
-    actor.is_process_owner = owner_user_id == user.user_id;
-    match ownership_id {
-        Some(oid) => {
-            actor.is_active_tenant_for_this_flat =
-                process::db::is_active_tenant_of_ownership(&mut tx, user.user_id, oid)
-                    .await
-                    .internal_err()?;
-            actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(&mut tx, oid)
-                .await
-                .internal_err()?;
-        }
-        None => actor.tenant_missing_for_this_flat = true,
-    }
+    super::resolve_flat_roles(&mut tx, &mut actor, &user, ownership_id, owner_user_id).await?;
 
     process::db::sync_no_dues_step_completions(&mut tx, process_id, &template)
         .await
@@ -1047,6 +1061,7 @@ pub async fn get_process_state(
         &template,
         process_id,
         ownership_id,
+        user.user_id,
         &newly_opened_step_ids,
     )
     .await;
