@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 fn map_store_err(e: TemplateStoreError) -> ApiError {
     match e {
-        TemplateStoreError::NotFound(msg) | TemplateStoreError::InvalidReference(msg) => {
-            bad_request(msg)
-        }
+        TemplateStoreError::NotFound(msg)
+        | TemplateStoreError::InvalidReference(msg)
+        | TemplateStoreError::InvalidTemplate(msg) => bad_request(msg),
         TemplateStoreError::Db(_) | TemplateStoreError::Serialize(_) => internal_err(e),
     }
 }
@@ -118,20 +118,46 @@ pub async fn deactivate(
 
 /// POST /api/v1/process-templates/available
 /// Resident-facing: templates with an active version, for the "Start Process" picker.
+/// A tenant (owning no flat) only sees templates with a Tenant stage.
 pub async fn available(
     State(state): State<AppState>,
-    _user: SessionUser,
+    SessionUser(user): SessionUser,
 ) -> Result<Json<Vec<AvailableTemplate>>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let templates = process::template_store::list_startable_templates(&mut conn)
         .await
         .map_err(internal_err)?;
-    Ok(Json(
-        templates
-            .into_iter()
-            .map(|(template_id, name)| AvailableTemplate { template_id, name })
-            .collect(),
-    ))
+    if !process::db::is_tenant_only(&mut conn, user.user_id)
+        .await
+        .map_err(internal_err)?
+    {
+        return Ok(Json(
+            templates
+                .into_iter()
+                .map(|(template_id, name)| AvailableTemplate { template_id, name })
+                .collect(),
+        ));
+    }
+
+    let mut available = Vec::new();
+    for (template_id, name) in templates {
+        let Some(version_id) =
+            process::template_store::get_active_version_id(&mut conn, template_id)
+                .await
+                .map_err(internal_err)?
+        else {
+            continue;
+        };
+        let Ok(template) =
+            process::template_store::load_template_version(&mut conn, version_id).await
+        else {
+            continue;
+        };
+        if crate::handlers::process::template_has_tenant_step(&template) {
+            available.push(AvailableTemplate { template_id, name });
+        }
+    }
+    Ok(Json(available))
 }
 
 #[derive(Serialize)]

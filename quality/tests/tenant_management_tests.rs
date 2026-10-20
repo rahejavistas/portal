@@ -23,6 +23,11 @@ fn tenant_draft() -> serde_json::Value {
                 "fields": [
                     { "name": "Note", "type": "text" }
                 ]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
             }
         ]
     })
@@ -663,6 +668,11 @@ async fn test_tenant_cannot_fill_the_owners_user_owned_step() {
                 "name": "Tenant Stage",
                 "filled_by": { "kind": "tenant" },
                 "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
             }
         ]
     });
@@ -771,4 +781,501 @@ async fn test_admin_cannot_approve_an_unfilled_open_tenant_step() {
         err, 400,
         "an admin must not be able to approve an Open Tenant-owned step that was never filled"
     );
+}
+
+const DECLARATION_VALUE: &str = r#"{"agreed":true,"blanks":{}}"#;
+
+fn owner_first_draft(name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "template_id": null,
+        "name": name,
+        "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
+            },
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            }
+        ]
+    })
+}
+
+fn save_value(
+    url: &str,
+    jwt: &str,
+    process_id: &str,
+    step_id: i64,
+    field_id: i64,
+    text_value: Option<&str>,
+    document_id: Option<&str>,
+) -> Result<serde_json::Value, u16> {
+    let resp = ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "fields": [{
+                "template_field_id": field_id,
+                "text_value": text_value,
+                "document_id": document_id
+            }]
+        }));
+    match resp {
+        Ok(r) => Ok(r.into_json().unwrap()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn template_save_status(url: &str, admin_jwt: &str, draft: &serde_json::Value) -> u16 {
+    match ureq::post(&format!("{}/api/v1/admin/process-templates/save", url))
+        .set("Authorization", &auth(admin_jwt))
+        .send_json(draft.clone())
+    {
+        Ok(r) => r.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn onboard_owner_with_tenant(
+    env: &quality::TestEnv,
+    admin_jwt: &str,
+    owner_email: &str,
+    flat_number: &str,
+    tenant_email: &str,
+) -> (String, String) {
+    let url = env.server_url();
+    quick_create_user(env, admin_jwt, owner_email, "A", flat_number);
+    let owner_jwt = quick_onboard_user(env, owner_email, "password123");
+    let ownership_id = owned_ownership_id(&url, admin_jwt, &owner_jwt);
+    add_tenant(
+        env,
+        admin_jwt,
+        &owner_jwt,
+        ownership_id,
+        "A",
+        flat_number,
+        tenant_email,
+    )
+    .unwrap();
+    let tenant_jwt = quick_onboard_user(env, tenant_email, "password123");
+    (owner_jwt, tenant_jwt)
+}
+
+/// A tenant can start a process on a template with a Tenant stage; it belongs to the
+/// flat's owner, so it shows up in the owner's list.
+#[tokio::test]
+async fn test_tenant_started_process_belongs_to_the_flat_owner() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner20@dtest.test",
+        "520",
+        "starter20@dtest.test",
+    );
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+
+    let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &auth(&owner_jwt))
+        .send_json(serde_json::json!({ "personal_only": true }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let ids: Vec<&str> = listed["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["process_id"].as_str().unwrap())
+        .collect();
+    assert!(
+        ids.contains(&process_id.as_str()),
+        "a tenant-started process must appear in the owner's list"
+    );
+}
+
+/// The owner's declaration is the owner's alone: not the tenant who started the
+/// process, not an admin, not another flat's owner.
+#[tokio::test]
+async fn test_only_the_flat_owner_can_make_the_owner_declaration() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner21@dtest.test",
+        "521",
+        "starter21@dtest.test",
+    );
+    quick_create_user(&env, &admin_jwt, "tenant_owner21b@dtest.test", "B", "521");
+    let other_owner_jwt = quick_onboard_user(&env, "tenant_owner21b@dtest.test", "password123");
+
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &owner_first_draft("Declaration Gate"));
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let attempt = |jwt: &str| {
+        save_value(
+            &url,
+            jwt,
+            &process_id,
+            step_id,
+            field_id,
+            Some(DECLARATION_VALUE),
+            None,
+        )
+    };
+    assert_eq!(
+        attempt(&tenant_jwt).unwrap_err(),
+        400,
+        "tenant must not declare"
+    );
+    assert_eq!(
+        attempt(&admin_jwt).unwrap_err(),
+        400,
+        "admin must not declare"
+    );
+    assert_eq!(
+        attempt(&other_owner_jwt).unwrap_err(),
+        403,
+        "another flat's owner has no standing"
+    );
+    let done = attempt(&owner_jwt).expect("the flat's owner must be able to declare");
+    assert_eq!(done["status"], "success");
+}
+
+/// A template with a Tenant stage but no required owner declaration can't be saved.
+#[tokio::test]
+async fn test_template_with_tenant_stage_needs_an_owner_declaration() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let no_declaration = serde_json::json!({
+        "template_id": null, "name": "No Owner Declaration", "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Owner Note",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            }
+        ]
+    });
+    assert_eq!(template_save_status(&url, &admin_jwt, &no_declaration), 400);
+
+    let optional_declaration = serde_json::json!({
+        "template_id": null, "name": "Optional Owner Declaration", "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "is_optional": true,
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
+            }
+        ]
+    });
+    assert_eq!(
+        template_save_status(&url, &admin_jwt, &optional_declaration),
+        400
+    );
+
+    assert_eq!(template_save_status(&url, &admin_jwt, &tenant_draft()), 200);
+}
+
+/// A tenant can only start templates that have a Tenant stage, and only sees those in
+/// the picker; the owner sees every template.
+#[tokio::test]
+async fn test_tenant_start_and_picker_are_limited_to_tenant_templates() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner22@dtest.test",
+        "522",
+        "starter22@dtest.test",
+    );
+
+    let owner_only = serde_json::json!({
+        "template_id": null, "name": "Owner Only Picker", "description": null,
+        "is_optional": false,
+        "substeps": [{"name": "S", "fields": [{"name": "N", "type": "text"}]}]
+    });
+    let owner_only_id = create_and_activate_template(&url, &admin_jwt, &owner_only);
+    let tenant_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+
+    let start = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({ "template_id": owner_only_id }));
+    assert!(matches!(start, Err(ureq::Error::Status(403, _))));
+
+    let ids_for = |jwt: &str| -> Vec<i64> {
+        let templates: Vec<serde_json::Value> =
+            ureq::post(&format!("{}/api/v1/process-templates/available", url))
+                .set("Authorization", &auth(jwt))
+                .send_json(serde_json::json!({}))
+                .unwrap()
+                .into_json()
+                .unwrap();
+        templates
+            .iter()
+            .map(|t| t["template_id"].as_i64().unwrap())
+            .collect()
+    };
+    let tenant_ids = ids_for(&tenant_jwt);
+    assert!(tenant_ids.contains(&(tenant_id as i64)));
+    assert!(!tenant_ids.contains(&(owner_only_id as i64)));
+    let owner_ids = ids_for(&owner_jwt);
+    assert!(owner_ids.contains(&(tenant_id as i64)));
+    assert!(owner_ids.contains(&(owner_only_id as i64)));
+}
+
+/// A tenant attaches a document they uploaded to their Tenant stage; the flat's owner
+/// can download it, another flat's owner cannot.
+#[tokio::test]
+async fn test_tenant_can_attach_own_document_and_only_the_flat_owner_can_download_it() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner23@dtest.test",
+        "523",
+        "starter23@dtest.test",
+    );
+    quick_create_user(&env, &admin_jwt, "tenant_owner23b@dtest.test", "B", "523");
+    let other_owner_jwt = quick_onboard_user(&env, "tenant_owner23b@dtest.test", "password123");
+
+    let draft = serde_json::json!({
+        "template_id": null, "name": "Tenant KYC Upload", "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Tenant KYC",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "KYC", "type": "document" }]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
+            }
+        ]
+    });
+    let template_id = create_and_activate_template(&url, &admin_jwt, &draft);
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    let upload: serde_json::Value = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({
+            "title": "KYC.pdf", "filename": "KYC.pdf", "content_type": "application/pdf"
+        }))
+        .expect("a tenant must be able to request an upload for their own flat")
+        .into_json()
+        .unwrap();
+    let document_id = upload["document_id"].as_str().unwrap().to_string();
+    ureq::put(upload["upload_url"].as_str().unwrap())
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"Simulated PDF content bytes for testing")
+        .expect("S3 PUT upload failed");
+    ureq::post(&format!("{}/api/v1/documents/confirm-upload", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({ "document_id": document_id }))
+        .expect("a tenant must be able to confirm their own upload");
+
+    save_value(
+        &url,
+        &tenant_jwt,
+        &process_id,
+        step_id,
+        field_id,
+        None,
+        Some(&document_id),
+    )
+    .expect("a tenant must be able to attach their own document");
+
+    let download = |jwt: &str| -> u16 {
+        match ureq::post(&format!("{}/api/v1/process/download-url", url))
+            .set("Authorization", &auth(jwt))
+            .send_json(serde_json::json!({
+                "process_id": process_id,
+                "document_id": document_id
+            })) {
+            Ok(r) => r.status(),
+            Err(ureq::Error::Status(code, _)) => code,
+            Err(e) => panic!("transport error: {:?}", e),
+        }
+    };
+    assert_eq!(
+        download(&owner_jwt),
+        200,
+        "the flat's owner must be able to download"
+    );
+    assert_eq!(download(&other_owner_jwt), 403);
+}
+
+fn post_status(url: &str, path: &str, jwt: &str, body: serde_json::Value) -> u16 {
+    match ureq::post(&format!("{}{}", url, path))
+        .set("Authorization", &auth(jwt))
+        .send_json(body)
+    {
+        Ok(r) => r.status(),
+        Err(ureq::Error::Status(code, _)) => code,
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn listed_process_ids(url: &str, jwt: &str) -> Vec<String> {
+    let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({ "personal_only": true }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    listed["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["process_id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// One owner, two flats, a different tenant in each: the owner sees both flats'
+/// processes, while each tenant sees and can touch only their own flat's.
+#[tokio::test]
+async fn test_owner_of_two_flats_sees_both_but_each_tenant_sees_only_their_own() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "tenant_owner24@dtest.test", "A", "701");
+    quick_create_user(&env, &admin_jwt, "tenant_owner24@dtest.test", "A", "702");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner24@dtest.test", "password123");
+
+    let my_flats: Vec<serde_json::Value> = ureq::post(&format!("{}/api/v1/tenants/my-flats", url))
+        .set("Authorization", &auth(&owner_jwt))
+        .send_json(serde_json::json!({}))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let ownership_of = |flat_number: &str| -> i64 {
+        my_flats
+            .iter()
+            .find(|f| f["flat_number"].as_str().unwrap().ends_with(flat_number))
+            .and_then(|f| f["ownership_id"].as_i64())
+            .expect("ownership for flat")
+    };
+
+    for (flat_number, tenant_email) in [
+        ("701", "tenant24a@dtest.test"),
+        ("702", "tenant24b@dtest.test"),
+    ] {
+        add_tenant(
+            &env,
+            &admin_jwt,
+            &owner_jwt,
+            ownership_of(flat_number),
+            "A",
+            flat_number,
+            tenant_email,
+        )
+        .unwrap();
+    }
+    let tenant_a_jwt = quick_onboard_user(&env, "tenant24a@dtest.test", "password123");
+    let tenant_b_jwt = quick_onboard_user(&env, "tenant24b@dtest.test", "password123");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let state_a = start_process(&url, &tenant_a_jwt, template_id);
+    let state_b = start_process(&url, &tenant_b_jwt, template_id);
+    let process_a = state_a["process_id"].as_str().unwrap().to_string();
+    let process_b = state_b["process_id"].as_str().unwrap().to_string();
+    assert_eq!(state_a["ownership_id"].as_i64(), Some(ownership_of("701")));
+    assert_eq!(state_b["ownership_id"].as_i64(), Some(ownership_of("702")));
+    let (step_a, field_a) = field_and_step_ids(&state_a);
+    let (step_b, field_b) = field_and_step_ids(&state_b);
+
+    let owner_sees = listed_process_ids(&url, &owner_jwt);
+    assert!(owner_sees.contains(&process_a) && owner_sees.contains(&process_b));
+
+    let a_sees = listed_process_ids(&url, &tenant_a_jwt);
+    assert!(a_sees.contains(&process_a) && !a_sees.contains(&process_b));
+    let b_sees = listed_process_ids(&url, &tenant_b_jwt);
+    assert!(b_sees.contains(&process_b) && !b_sees.contains(&process_a));
+
+    let state_of = |jwt: &str, process_id: &str| {
+        post_status(
+            &url,
+            "/api/v1/process/state",
+            jwt,
+            serde_json::json!({ "process_id": process_id }),
+        )
+    };
+    assert_eq!(state_of(&tenant_a_jwt, &process_b), 403);
+    assert_eq!(state_of(&tenant_b_jwt, &process_a), 403);
+    assert_eq!(state_of(&owner_jwt, &process_a), 200);
+    assert_eq!(state_of(&owner_jwt, &process_b), 200);
+
+    assert_eq!(
+        save_step(&url, &tenant_a_jwt, &process_b, step_b, field_b).unwrap_err(),
+        403
+    );
+    assert_eq!(
+        save_step(&url, &tenant_b_jwt, &process_a, step_a, field_a).unwrap_err(),
+        403
+    );
+    assert!(save_step(&url, &tenant_a_jwt, &process_a, step_a, field_a).is_ok());
+    assert!(save_step(&url, &tenant_b_jwt, &process_b, step_b, field_b).is_ok());
+
+    let flats_of = |jwt: &str| -> Vec<String> {
+        let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
+            .set("Authorization", &auth(jwt))
+            .send_json(serde_json::json!({ "personal_only": true }))
+            .unwrap()
+            .into_json()
+            .unwrap();
+        listed["flats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["flat_number"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let a_flats = flats_of(&tenant_a_jwt);
+    assert_eq!(a_flats.len(), 1);
+    assert!(a_flats[0].ends_with("701"));
+    let b_flats = flats_of(&tenant_b_jwt);
+    assert_eq!(b_flats.len(), 1);
+    assert!(b_flats[0].ends_with("702"));
+    assert_eq!(flats_of(&owner_jwt).len(), 2);
 }

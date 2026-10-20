@@ -534,6 +534,15 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   template has no `Tenant`-owned stage is invisible to a tenant entirely, in both
   `/api/v1/process/list` and `/api/v1/process/state`.
 
+  A tenant can start a process via `/api/v1/process/state` only on a template with a
+  `Tenant`-owned stage (**403** otherwise), and the process is created under the flat's
+  current owner (`processes.user_id`), not the tenant. A saved template that has a
+  `Tenant`-owned stage must also contain a required `User`-owned step holding a
+  `declaration` field (**400** otherwise); that step is fillable only by the process's
+  owner while still the flat's active owner — `process.reviewer` does not bypass it.
+  Review and reopen emails for a `Tenant`-owned step go to the tenant, and the owner is
+  emailed when a `User`-owned step opens (unless they opened it themselves).
+
   A document field's `requires_signature` (default `false`) does not itself declare who
   must sign, or provision anything — signature requirements are still always attached
   ad hoc by a process reviewer via [`/admin/process/documents/add-signers`](#post-apiv1adminprocessdocumentsadd-signers).
