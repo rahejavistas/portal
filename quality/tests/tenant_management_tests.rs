@@ -1316,10 +1316,10 @@ fn self_upload(url: &str, jwt: &str, filename: &str) -> String {
     document_id
 }
 
-/// A tenant never sees the owner's stage data — field values, documents or review
-/// notes — and cannot download the owner's documents.
+/// A tenant sees the whole process on their flat — including the owner's answers and
+/// review notes — but never the documents on the owner's stages.
 #[tokio::test]
-async fn test_tenant_sees_and_downloads_only_tenant_stage_data() {
+async fn test_tenant_sees_the_owners_answers_but_not_the_owners_documents() {
     let env = quality::setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -1408,10 +1408,10 @@ async fn test_tenant_sees_and_downloads_only_tenant_stage_data() {
         .unwrap();
     let raw = tenant_view.to_string();
     assert!(
-        !raw.contains("OWNER-SECRET") && !raw.contains("OWNER-REVIEW-NOTE"),
-        "the tenant must never receive the owner's stage values or review notes"
+        raw.contains("OWNER-SECRET") && raw.contains("OWNER-REVIEW-NOTE"),
+        "the tenant sees the owner's stage values and review notes"
     );
-    assert!(!raw.contains(&owner_doc), "nor the owner's document id");
+    assert!(!raw.contains(&owner_doc), "but not the owner's document");
     assert_eq!(
         tenant_view["steps"][1]["status"], "OPEN",
         "the tenant's own stage still unlocks once the owner's is approved"
@@ -1600,97 +1600,6 @@ async fn test_reviewer_owned_stage_with_a_tenant_substep_goes_to_review() {
         .unwrap();
     assert_eq!(after["steps"][0]["status"], "PENDING_REVIEW");
     assert_eq!(after["steps"][1]["status"], "LOCKED");
-}
-
-/// A tenant holding an unrelated designation (owning no step here) still can't see the
-/// owner's stage data.
-#[tokio::test]
-async fn test_tenant_with_an_unrelated_designation_still_cannot_see_owner_stages() {
-    let env = quality::setup_api_test_env().await;
-    let url = env.server_url();
-    let admin_jwt = quick_setup_admin(&env);
-
-    quick_create_user(&env, &admin_jwt, "tenant_owner30@dtest.test", "A", "530");
-    let owner_jwt = quick_onboard_user(&env, "tenant_owner30@dtest.test", "password123");
-    let ownership_id = owned_ownership_id(&url, &admin_jwt, &owner_jwt);
-    let added = add_tenant(
-        &env,
-        &admin_jwt,
-        &owner_jwt,
-        ownership_id,
-        "A",
-        "530",
-        "starter30@dtest.test",
-    )
-    .unwrap();
-    let tenant_jwt = quick_onboard_user(&env, "starter30@dtest.test", "password123");
-    quick_create_designation(&env, &admin_jwt, "committee30", "Committee 30");
-    quick_assign_designation(
-        &env,
-        &admin_jwt,
-        added["tenant_user_id"].as_i64().unwrap() as i32,
-        "committee30",
-    );
-
-    let template_id = create_and_activate_template(
-        &url,
-        &admin_jwt,
-        &mixed_owner_and_tenant_draft_with_declaration(),
-    );
-    let state = start_process(&url, &tenant_jwt, template_id);
-    let process_id = state["process_id"].as_str().unwrap().to_string();
-    let owner_state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
-        .set("Authorization", &auth(&owner_jwt))
-        .send_json(serde_json::json!({ "process_id": process_id }))
-        .unwrap()
-        .into_json()
-        .unwrap();
-    let (step_id, field_id) = field_and_step_ids(&owner_state);
-    save_value(
-        &url,
-        &owner_jwt,
-        &process_id,
-        step_id,
-        field_id,
-        Some("OWNER-SECRET"),
-        None,
-    )
-    .expect("the owner fills their stage");
-
-    let raw = ureq::post(&format!("{}/api/v1/process/state", url))
-        .set("Authorization", &auth(&tenant_jwt))
-        .send_json(serde_json::json!({ "process_id": process_id }))
-        .unwrap()
-        .into_string()
-        .unwrap();
-    assert!(
-        !raw.contains("OWNER-SECRET"),
-        "an unrelated designation must not widen a tenant's view"
-    );
-}
-
-fn mixed_owner_and_tenant_draft_with_declaration() -> serde_json::Value {
-    serde_json::json!({
-        "template_id": null, "name": "Designation Redaction", "description": null,
-        "is_optional": false,
-        "substeps": [
-            {
-                "name": "Owner Stage",
-                "filled_by": { "kind": "user" },
-                "fields": [{ "name": "Note", "type": "text" }]
-            },
-            {
-                "name": "Tenant Stage",
-                "filled_by": { "kind": "tenant" },
-                "fields": [{ "name": "Note", "type": "text" }]
-            },
-            {
-                "name": "Owner Declaration",
-                "filled_by": { "kind": "user" },
-                "fields": [{ "name": "Declaration", "type": "declaration" }]
-            }
-        ]
-    })
 }
 
 /// Once the flat is no longer theirs, a former owner can't upload into it through a
@@ -2063,8 +1972,8 @@ async fn test_tenant_document_visibility_matrix() {
 
     let d_unattached = admin_upload_doc(&url, &admin_jwt, &p1, "Unattached");
 
-    // Tenant 1 through the process: society + own documents yes; owner's, unattached,
-    // flat-level no.
+    // Tenant 1 through the process: society + own documents yes; the owner's, unattached
+    // and flat-level no.
     assert_eq!(
         process_download_status(&url, &tenant1_jwt, &p1, &d_admin),
         200
@@ -2278,4 +2187,46 @@ async fn test_former_tenant_loses_access_to_documents() {
         403
     );
     assert_eq!(doc_status(&url, &owner_jwt, &tenant_doc), 200);
+}
+
+/// The tenant sees the owner's declaration as the owner filled it in, not as unagreed.
+#[tokio::test]
+async fn test_tenant_sees_the_owners_declaration_as_agreed() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner34@dtest.test",
+        "534",
+        "starter34@dtest.test",
+    );
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &owner_first_draft("Declaration Visible"));
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    save_value(
+        &url,
+        &owner_jwt,
+        &process_id,
+        step_id,
+        field_id,
+        Some(DECLARATION_VALUE),
+        None,
+    )
+    .expect("the owner declares");
+
+    let tenant_view: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    assert_eq!(
+        tenant_view["steps"][0]["fields"][0]["value"]["text_value"],
+        DECLARATION_VALUE
+    );
 }

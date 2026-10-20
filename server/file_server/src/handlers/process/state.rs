@@ -413,8 +413,8 @@ struct StepMapContext<'a> {
     signature_map: &'a HashMap<Uuid, Vec<FieldSignatureStatus>>,
     designation_label_map: &'a HashMap<String, String>,
     actor: &'a process::state_machine::ActorContext,
-    /// Hide field values, history and signatures of the owner's (`User`) stages.
-    hide_owner_data: bool,
+    /// Hide the documents (value, history, signatures) on the owner's (`User`) stages.
+    hide_owner_documents: bool,
 }
 
 /// Recursively map step templates to the response structure.
@@ -429,19 +429,18 @@ fn map_step_template(
         .copied()
         .unwrap_or(process::state_machine::StepStatus::Locked);
 
-    let hide_data = ctx.hide_owner_data && matches!(step_tpl.filled_by, process::StepOwner::User);
     let mut fields = Vec::new();
     if let Some(ref field_tpls) = step_tpl.fields {
         for f in field_tpls {
             let field_id = f.field_id;
-            let latest = ctx
-                .latest_field_states
-                .get(&field_id)
-                .filter(|_| !hide_data);
+            let hide = ctx.hide_owner_documents
+                && f.r#type == process::FieldType::File
+                && matches!(step_tpl.filled_by, process::StepOwner::User);
+            let latest = ctx.latest_field_states.get(&field_id).filter(|_| !hide);
             let history = ctx
                 .field_history_map
                 .get(&field_id)
-                .filter(|_| !hide_data)
+                .filter(|_| !hide)
                 .cloned()
                 .unwrap_or_default();
 
@@ -999,18 +998,8 @@ pub async fn get_process_state(
 
     let next_actions = compute_next_actions(&statuses, &step_info_map);
 
-    let hide_owner_data = !can_view_all
-        && actor
-            .hides_owner_stage_data(super::require_reviewer_standing(&template, &actor).is_ok());
-    let visible_reviews: Vec<ReviewHistoryInfo> = reviews
-        .into_iter()
-        .filter(|r| {
-            !hide_owner_data
-                || step_info_map
-                    .get(&r.template_step_id)
-                    .is_some_and(|i| !matches!(i.filled_by, process::StepOwner::User))
-        })
-        .collect();
+    let hide_owner_documents = !can_view_all
+        && actor.hides_owner_documents(super::require_reviewer_standing(&template, &actor).is_ok());
 
     let step_map_ctx = StepMapContext {
         statuses: &statuses,
@@ -1021,7 +1010,7 @@ pub async fn get_process_state(
         signature_map: &signature_map,
         designation_label_map: &designation_label_map,
         actor: &actor,
-        hide_owner_data,
+        hide_owner_documents,
     };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {
@@ -1097,7 +1086,7 @@ pub async fn get_process_state(
         flat_label,
         is_completed,
         next_actions,
-        reviews: visible_reviews,
+        reviews,
         admin_comments,
         audit_log,
         effective_due_date,
