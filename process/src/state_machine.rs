@@ -76,13 +76,15 @@ impl ActorContext {
         }
     }
 
-    /// A caller whose only standing on the process is being the flat's tenant: they see
-    /// the data of `Tenant` stages only, never the owner's or a reviewer's.
-    pub fn sees_only_tenant_stages(&self) -> bool {
+    /// A caller whose only standing on the process is being the flat's tenant: the
+    /// owner's own (`User`) stages are hidden from them; reviewer-side and tenant
+    /// stages stay visible. `has_reviewer_standing`: they hold a designation owning a
+    /// step of this process.
+    pub fn hides_owner_stage_data(&self, has_reviewer_standing: bool) -> bool {
         self.is_active_tenant_for_this_flat
             && !self.is_process_owner
             && !self.is_admin
-            && self.designation_codes.is_empty()
+            && !has_reviewer_standing
     }
 
     /// Like `may_act_on`, but a `User` step holding a `Declaration` field is the
@@ -186,15 +188,16 @@ pub struct StepInfo {
     pub filled_by: crate::StepOwner,
     pub fields: Vec<crate::ProcessFieldTemplate>,
     pub substep_ids: Vec<i32>,
+    /// Some step beneath this one is filled by the owner or the tenant.
+    pub has_resident_descendant: bool,
 }
 
 impl StepInfo {
-    /// Only a top-level, `User`- or `Tenant`-owned Stage ever reaches `PendingReview`.
+    /// Only a top-level Stage that the owner or tenant fills — itself, or through any
+    /// substep — ever reaches `PendingReview`.
     pub fn requires_review(&self, root_step_id: i32) -> bool {
-        matches!(
-            self.filled_by,
-            crate::StepOwner::User | crate::StepOwner::Tenant
-        ) && self.parent_id == Some(root_step_id)
+        self.parent_id == Some(root_step_id)
+            && (self.filled_by.is_resident() || self.has_resident_descendant)
     }
 }
 
@@ -222,6 +225,7 @@ pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, St
             filled_by: template.filled_by.clone(),
             fields: template.fields.clone().unwrap_or_default(),
             substep_ids: root_substep_ids,
+            has_resident_descendant: false,
         },
     );
 
@@ -255,6 +259,7 @@ fn insert_step_info_recursive(
             filled_by: step.filled_by.clone(),
             fields: step.fields.clone().unwrap_or_default(),
             substep_ids,
+            has_resident_descendant: step.has_resident_descendant(),
         },
     );
 

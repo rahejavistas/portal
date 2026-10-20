@@ -413,8 +413,8 @@ struct StepMapContext<'a> {
     signature_map: &'a HashMap<Uuid, Vec<FieldSignatureStatus>>,
     designation_label_map: &'a HashMap<String, String>,
     actor: &'a process::state_machine::ActorContext,
-    /// Hide field values, history and signatures of every non-`Tenant` stage.
-    tenant_only_view: bool,
+    /// Hide field values, history and signatures of the owner's (`User`) stages.
+    hide_owner_data: bool,
 }
 
 /// Recursively map step templates to the response structure.
@@ -429,8 +429,7 @@ fn map_step_template(
         .copied()
         .unwrap_or(process::state_machine::StepStatus::Locked);
 
-    let hide_data =
-        ctx.tenant_only_view && !matches!(step_tpl.filled_by, process::StepOwner::Tenant);
+    let hide_data = ctx.hide_owner_data && matches!(step_tpl.filled_by, process::StepOwner::User);
     let mut fields = Vec::new();
     if let Some(ref field_tpls) = step_tpl.fields {
         for f in field_tpls {
@@ -1000,14 +999,16 @@ pub async fn get_process_state(
 
     let next_actions = compute_next_actions(&statuses, &step_info_map);
 
-    let tenant_only_view = !can_view_all && actor.sees_only_tenant_stages();
+    let hide_owner_data = !can_view_all
+        && actor
+            .hides_owner_stage_data(super::require_reviewer_standing(&template, &actor).is_ok());
     let visible_reviews: Vec<ReviewHistoryInfo> = reviews
         .into_iter()
         .filter(|r| {
-            !tenant_only_view
+            !hide_owner_data
                 || step_info_map
                     .get(&r.template_step_id)
-                    .is_some_and(|i| matches!(i.filled_by, process::StepOwner::Tenant))
+                    .is_some_and(|i| !matches!(i.filled_by, process::StepOwner::User))
         })
         .collect();
 
@@ -1020,7 +1021,7 @@ pub async fn get_process_state(
         signature_map: &signature_map,
         designation_label_map: &designation_label_map,
         actor: &actor,
-        tenant_only_view,
+        hide_owner_data,
     };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {

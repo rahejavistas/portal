@@ -203,7 +203,7 @@ async fn process_flat_id(
     let actor =
         crate::handlers::process::build_actor_context(&mut conn, &state.permissions_manager, user)
             .await?;
-    let (info, _) = crate::handlers::process::load_authorized_process(
+    let (info, template) = crate::handlers::process::load_authorized_process(
         &mut conn,
         user,
         process_id,
@@ -213,6 +213,16 @@ async fn process_flat_id(
     .await?;
     let no_flat = || bad_request("This process has no associated flat");
     let ownership_id = info.ownership_id.ok_or_else(no_flat)?;
+    let is_current_resident =
+        process::db::is_active_owner_of_ownership(&mut conn, user.user_id, ownership_id)
+            .await
+            .map_err(internal_err)?
+            || process::db::is_active_tenant_of_ownership(&mut conn, user.user_id, ownership_id)
+                .await
+                .map_err(internal_err)?;
+    if !is_current_resident {
+        crate::handlers::process::require_reviewer_standing(&template, &actor)?;
+    }
     process::db::get_flat_info_for_ownership(&mut conn, ownership_id)
         .await
         .map_err(internal_err)?

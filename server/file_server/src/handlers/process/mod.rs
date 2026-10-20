@@ -307,7 +307,12 @@ pub(super) async fn notify_newly_opened_designation_steps(
     }
     if let Some(info) = owner_step {
         if let Ok(Some((owner_id, email))) = process::db::get_active_owner(&mut conn, oid).await {
-            if owner_id != actor_user_id {
+            let wants_notification = permissions_manager
+                .get_notification_prefs(owner_id)
+                .await
+                .map(|p| p.notify_process_updates)
+                .unwrap_or(true);
+            if owner_id != actor_user_id && wants_notification {
                 process::notification::notify_owner_turn(
                     process_id,
                     &template.name,

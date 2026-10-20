@@ -221,13 +221,16 @@ pub async fn process_download_url(
         .await?;
 
         // Non-owners (reviewers, tenants) may only fetch documents actually attached to
-        // this process; a tenant-only caller only those on `Tenant` stages.
+        // this process; a tenant-only caller never those on the owner's stages.
         if info.user_id != user.user_id {
-            let tenant_only = !can_view_all && actor.sees_only_tenant_stages();
-            let tenant_field_ids: std::collections::HashSet<i32> =
+            let hide_owner_data = !can_view_all
+                && actor.hides_owner_stage_data(
+                    super::require_reviewer_standing(&template, &actor).is_ok(),
+                );
+            let owner_field_ids: std::collections::HashSet<i32> =
                 process::state_machine::build_step_info_map(&template)
                     .values()
-                    .filter(|i| matches!(i.filled_by, process::StepOwner::Tenant))
+                    .filter(|i| matches!(i.filled_by, process::StepOwner::User))
                     .flat_map(|i| i.fields.iter().map(|f| f.field_id))
                     .collect();
             let history = get_field_history(&mut conn, payload.process_id)
@@ -235,7 +238,7 @@ pub async fn process_download_url(
                 .internal_err()?;
             let attached = history.iter().any(|row| {
                 row.document_id == Some(payload.document_id)
-                    && (!tenant_only || tenant_field_ids.contains(&row.template_field_id))
+                    && !(hide_owner_data && owner_field_ids.contains(&row.template_field_id))
             });
             if !attached {
                 return Err((

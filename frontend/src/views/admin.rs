@@ -4146,7 +4146,7 @@ function openDesignationPicker(field) {
                     </div>
                     ${stage.description ? `<div class="step-desc md-desc">${renderMarkdown(stage.description)}</div>` : ''}
                     <p style="font-size:13px; color:var(--muted-foreground); margin-bottom:20px;">
-                        Filled by ${escapeHtml(ownerLabel)}${owner.kind === 'user' ? ' - requires admin review to complete' : ''}
+                        Filled by ${escapeHtml(ownerLabel)}${(owner.kind === 'user' || owner.kind === 'tenant') ? ' - requires admin review to complete' : ''}
                     </p>
                     ${substepsHtml}
                 </div>

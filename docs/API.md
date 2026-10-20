@@ -501,9 +501,10 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   `{"kind":"designation","code":"secretary"}`, `{"kind":"wing_representative"}`, or
   `{"kind":"tenant"}`) and denormalized onto every substep beneath it at save time — a
   field no longer carries its own `filled_by`; every field in a stage shares that
-  stage's owner. `User` always requires a reviewer's approval to complete;
-  `Admin`/`Designation`/`WingRepresentative`/`Tenant` never do — filling the stage
-  completes it immediately. A `Designation`-owned stage is
+  stage's owner. A top-level Stage requires a reviewer's approval to complete when its
+  own owner is `User` or `Tenant`, or when any substep beneath it is; otherwise
+  (`Admin`/`Designation`/`WingRepresentative` with no resident substep) filling the
+  stage completes it immediately. A `Designation`-owned stage is
   exclusive to that designation's active holders and requires no permission grant at all:
   holding the designation is itself enough to load, fill, review, and reopen that stage
   on any resident's process, scoped to only the step(s) that designation owns — nothing

@@ -106,11 +106,10 @@ pub async fn save_process_step(
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
             // Check if document is valid AND the user has permission to access it
-            let doc_opt = state
-                .document_manager
-                .get_document(doc_id, &user)
-                .await
-                .internal_err()?;
+            let doc_opt = match state.document_manager.get_document(doc_id, &user).await {
+                Err(e) if e == "FORBIDDEN" => None,
+                other => other.internal_err()?,
+            };
 
             match doc_opt {
                 None => {
