@@ -182,12 +182,42 @@ pub struct UserUploadUrlRequest {
     pub title: String,
     pub filename: String,
     pub content_type: Option<String>,
+    /// A process-step upload: pins the document to that process's own flat.
+    #[serde(default)]
+    pub process_id: Option<Uuid>,
 }
 
 #[derive(serde::Serialize)]
 pub struct UserUploadUrlResponse {
     pub document_id: String,
     pub upload_url: String,
+}
+
+/// The flat a process belongs to, for a caller who may access that process.
+async fn process_flat_id(
+    state: &AppState,
+    user: &authentication::User,
+    process_id: Uuid,
+) -> Result<i32, ApiError> {
+    let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
+    let actor =
+        crate::handlers::process::build_actor_context(&mut conn, &state.permissions_manager, user)
+            .await?;
+    let (info, _) = crate::handlers::process::load_authorized_process(
+        &mut conn,
+        user,
+        process_id,
+        actor.is_admin,
+        &actor.designation_codes,
+    )
+    .await?;
+    let no_flat = || bad_request("This process has no associated flat");
+    let ownership_id = info.ownership_id.ok_or_else(no_flat)?;
+    process::db::get_flat_info_for_ownership(&mut conn, ownership_id)
+        .await
+        .map_err(internal_err)?
+        .map(|f| f.flat_id)
+        .ok_or_else(no_flat)
 }
 
 /// Returns a presigned S3 upload URL, creating an unconfirmed document record first.
@@ -203,9 +233,14 @@ pub async fn user_upload_url(
 
     let content_type = validate_upload_extension(&payload.filename)?;
 
+    let flat_id_override = match payload.process_id {
+        Some(process_id) => Some(process_flat_id(&state, &user, process_id).await?),
+        None => None,
+    };
+
     let (result, upload_url, _key) = state
         .document_manager
-        .create_upload_intent(&user, &title, &content_type)
+        .create_upload_intent(&user, &title, &content_type, flat_id_override)
         .await
         .map_err(|e| {
             if e == "User does not have an active flat ownership" {

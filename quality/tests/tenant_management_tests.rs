@@ -1515,3 +1515,34 @@ async fn test_tenant_process_list_does_not_expose_the_owners_email() {
     assert!(listed.contains("process_id"));
     assert!(!listed.contains("tenant_owner27@dtest.test"));
 }
+
+/// The admin process upload route enforces the same 200-character title cap as the
+/// resident upload path.
+#[tokio::test]
+async fn test_admin_process_upload_title_is_length_capped() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_user(&env, &admin_jwt, "tenant_owner28@dtest.test", "A", "528");
+    let owner_jwt = quick_onboard_user(&env, "tenant_owner28@dtest.test", "password123");
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let process_id = start_process(&url, &owner_jwt, template_id)["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let upload = |title: String| {
+        post_status(
+            &url,
+            "/api/v1/admin/process/upload-url",
+            &admin_jwt,
+            serde_json::json!({
+                "process_id": process_id, "title": title,
+                "filename": "x.pdf", "content_type": "application/pdf"
+            }),
+        )
+    };
+    assert_eq!(upload("a".repeat(201)), 400);
+    assert_eq!(upload("   ".to_string()), 400);
+    assert_eq!(upload("ok title".to_string()), 201);
+}

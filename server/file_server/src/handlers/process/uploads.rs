@@ -41,6 +41,14 @@ pub async fn process_admin_upload_url(
     State(state): State<AppState>,
     Json(payload): Json<ProcessAdminUploadUrlRequest>,
 ) -> Result<(StatusCode, Json<ProcessAdminUploadUrlResponse>), ApiError> {
+    let title = payload.title.trim();
+    if title.is_empty() || title.len() > 200 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("Title must be between 1 and 200 characters".to_string()),
+        ));
+    }
+
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
@@ -95,7 +103,7 @@ pub async fn process_admin_upload_url(
         .document_manager
         .admin_create_upload_intent_by_id(
             crate::document::AdminUploadIntentInput {
-                title: &payload.title,
+                title,
                 description: None,
                 category: crate::document::RESIDENT_SPECIFIC_CATEGORY,
                 metadata: None,

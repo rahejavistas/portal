@@ -324,3 +324,104 @@ async fn test_revoking_one_flat_hides_only_that_flats_process() {
         "process tied to the still-owned flat should remain listed"
     );
 }
+
+/// A process-step upload is pinned to that process's own flat: for an owner of two
+/// flats it must not also land on the other one. Revoking the process's flat therefore
+/// leaves the document invisible, unlike a plain self-upload (linked to both).
+#[tokio::test]
+async fn test_process_upload_is_linked_only_to_the_processs_flat() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let rid = quick_create_user(&env, &admin_jwt, "scoped@test.com", "B", "401");
+    quick_create_user(&env, &admin_jwt, "scoped@test.com", "B", "402");
+    let res_jwt = quick_onboard_user(&env, "scoped@test.com", "password123");
+    let res_auth = auth(&res_jwt);
+
+    let draft = serde_json::json!({
+        "template_id": null, "name": "Scoped Upload Process", "description": null,
+        "is_optional": false,
+        "substeps": [{"name": "S", "fields": [{"name": "Doc", "type": "document"}]}]
+    });
+    let save: serde_json::Value =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/save", url))
+            .set("Authorization", &auth(&admin_jwt))
+            .send_json(draft)
+            .unwrap()
+            .into_json()
+            .unwrap();
+    let version_id = save["version_id"].as_i64().unwrap();
+    let templates: Vec<serde_json::Value> =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/list", url))
+            .set("Authorization", &auth(&admin_jwt))
+            .send_json(serde_json::json!({}))
+            .unwrap()
+            .into_json()
+            .unwrap();
+    let template_id = templates
+        .iter()
+        .find(|t| {
+            t["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["version_id"].as_i64() == Some(version_id))
+        })
+        .and_then(|t| t["template_id"].as_i64())
+        .unwrap();
+    ureq::post(&format!("{}/api/v1/admin/process-templates/activate", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({ "template_id": template_id, "version_id": version_id }))
+        .unwrap();
+
+    let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({ "personal_only": true }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let flat_401 = listed["flats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["flat_number"].as_str().unwrap().ends_with("401"))
+        .and_then(|f| f["flat_id"].as_i64())
+        .unwrap();
+    let state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({ "template_id": template_id, "flat_id": flat_401 }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let process_id = state["process_id"].as_str().unwrap();
+
+    let upload: serde_json::Value = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id, "title": "Scoped.pdf",
+            "filename": "Scoped.pdf", "content_type": "application/pdf"
+        }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let doc_id = upload["document_id"].as_str().unwrap();
+
+    let visible = |expected: bool, msg: &str| {
+        let ok = ureq::post(&format!("{}/api/v1/documents/{}", url, doc_id))
+            .set("Authorization", &res_auth)
+            .send_json(serde_json::json!({}))
+            .is_ok();
+        assert_eq!(ok, expected, "{}", msg);
+    };
+    visible(true, "visible while the process's flat is still owned");
+
+    ureq::post(&format!("{}/api/v1/admin/users/revoke-flat", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({"user_id": rid, "wing": "B", "flat_number": "401"}))
+        .unwrap();
+    visible(
+        false,
+        "the document must not have been linked to the owner's other flat",
+    );
+}

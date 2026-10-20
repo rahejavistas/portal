@@ -984,21 +984,27 @@ impl DocumentManager {
     // ==========================================
 
     /// Creates an unconfirmed document linked to the user's flat, with a presigned PUT
-    /// URL for direct client-to-S3 upload.
+    /// URL for direct client-to-S3 upload. `flat_id_override` pins it to exactly that flat
+    /// instead of every flat the user owns (or rents) — a process-step upload must never
+    /// land on an unrelated flat.
     pub async fn create_upload_intent(
         &self,
         user: &authentication::User,
         title: &str,
         content_type: &str,
+        flat_id_override: Option<i32>,
     ) -> Result<(DocumentWithMetadata, String, String), String> {
         let mut tx = base::postgres::begin_transaction(&self.pg_pool)
             .await
             .map_err(|e| e.to_string())?;
 
-        let flat_ids = user
-            .get_active_flat_ids_or_tenancies(&mut tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        let flat_ids = match flat_id_override {
+            Some(flat_id) => vec![flat_id],
+            None => user
+                .get_active_flat_ids_or_tenancies(&mut tx)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
 
         if flat_ids.is_empty() {
             return Err("User does not have an active flat ownership".to_string());
