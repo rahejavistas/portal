@@ -187,16 +187,24 @@ async fn attach_replacement_and_recompute_gating(
             if let Ok(Some(info)) =
                 process::db::get_process_info(&mut conn, requirement.process_id).await
             {
+                let recipient_user_id = crate::handlers::process::step_outcome_recipient(
+                    &state.pg_pool,
+                    &template,
+                    requirement.template_step_id,
+                    info.ownership_id,
+                    info.user_id,
+                )
+                .await;
                 let wants_notification = state
                     .permissions_manager
-                    .get_notification_prefs(info.user_id)
+                    .get_notification_prefs(recipient_user_id)
                     .await
                     .map(|p| p.notify_signature_events)
                     .unwrap_or(true);
                 if wants_notification {
                     if let Some(ctx) = crate::handlers::process::build_notification_ctx(
                         &state.pg_pool,
-                        info.user_id,
+                        recipient_user_id,
                         &state.super_admin_email,
                         &template.name,
                     )
@@ -546,9 +554,17 @@ async fn reconcile_external_document_locked(
             == Some(&process::state_machine::StepStatus::Completed)
         {
             if let Ok(Some(info)) = process::db::get_process_info(conn, process_id).await {
+                let recipient_user_id = crate::handlers::process::step_outcome_recipient(
+                    &state.pg_pool,
+                    &template,
+                    template_step_id,
+                    info.ownership_id,
+                    info.user_id,
+                )
+                .await;
                 if let Some(ctx) = crate::handlers::process::build_notification_ctx(
                     &state.pg_pool,
-                    info.user_id,
+                    recipient_user_id,
                     &state.super_admin_email,
                     &template.name,
                 )

@@ -179,9 +179,17 @@ pub async fn save_process_step(
     // Only email on meaningful cross-role transitions (user→admin review needed)
     if step_status == process::state_machine::StepStatus::PendingReview {
         let step_name = find_step_name(&template, payload.template_step_id);
+        let submitter_user_id = super::step_outcome_recipient(
+            &state.pg_pool,
+            &template,
+            payload.template_step_id,
+            info.ownership_id,
+            info.user_id,
+        )
+        .await;
         if let Some(ctx) = build_notification_ctx(
             &state.pg_pool,
-            info.user_id,
+            submitter_user_id,
             &state.super_admin_email,
             &template.name,
         )

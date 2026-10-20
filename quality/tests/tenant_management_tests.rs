@@ -205,7 +205,22 @@ async fn test_tenant_can_act_on_own_flats_tenant_step_but_owner_cannot() {
     let tenant_result = save_step(&url, &tenant_jwt, &process_id, step_id, field_id)
         .expect("the current tenant must be able to fill their own step");
     assert_eq!(tenant_result["status"], "success");
-    assert_eq!(tenant_result["step"]["is_completed"], true);
+    assert_eq!(
+        tenant_result["step"]["is_completed"], false,
+        "a Tenant stage goes to review, not straight to completed"
+    );
+
+    let review = ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "is_approved": true
+        }))
+        .expect("an admin must be able to review a submitted Tenant stage")
+        .into_json::<serde_json::Value>()
+        .unwrap();
+    assert_eq!(review["is_completed"], true);
 }
 
 /// A different flat's tenant has zero standing on this flat's `Tenant`-owned step —
@@ -1278,4 +1293,225 @@ async fn test_owner_of_two_flats_sees_both_but_each_tenant_sees_only_their_own()
     assert_eq!(b_flats.len(), 1);
     assert!(b_flats[0].ends_with("702"));
     assert_eq!(flats_of(&owner_jwt).len(), 2);
+}
+
+fn self_upload(url: &str, jwt: &str, filename: &str) -> String {
+    let upload: serde_json::Value = ureq::post(&format!("{}/api/v1/documents/upload-url", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({
+            "title": filename, "filename": filename, "content_type": "application/pdf"
+        }))
+        .expect("upload-url request failed")
+        .into_json()
+        .unwrap();
+    let document_id = upload["document_id"].as_str().unwrap().to_string();
+    ureq::put(upload["upload_url"].as_str().unwrap())
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"Simulated PDF content bytes for testing")
+        .expect("S3 PUT upload failed");
+    ureq::post(&format!("{}/api/v1/documents/confirm-upload", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({ "document_id": document_id }))
+        .expect("confirm-upload request failed");
+    document_id
+}
+
+/// A tenant sees the data of their own stage only — never the owner's field values,
+/// documents, or review notes — and cannot download the owner's documents.
+#[tokio::test]
+async fn test_tenant_sees_and_downloads_only_tenant_stage_data() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner25@dtest.test",
+        "525",
+        "starter25@dtest.test",
+    );
+
+    let draft = serde_json::json!({
+        "template_id": null, "name": "Redaction Process", "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Owner Stage",
+                "filled_by": { "kind": "user" },
+                "fields": [
+                    { "name": "Secret", "type": "text" },
+                    { "name": "Owner Doc", "type": "document" }
+                ]
+            },
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
+            }
+        ]
+    });
+    let template_id = create_and_activate_template(&url, &admin_jwt, &draft);
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+
+    let owner_state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&owner_jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let owner_step = &owner_state["steps"][0];
+    let owner_step_id = owner_step["template_step_id"].as_i64().unwrap();
+    let secret_field = owner_step["fields"][0]["template_field_id"]
+        .as_i64()
+        .unwrap();
+    let doc_field = owner_step["fields"][1]["template_field_id"]
+        .as_i64()
+        .unwrap();
+
+    let owner_doc = self_upload(&url, &owner_jwt, "owner_id.pdf");
+    let saved = ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &auth(&owner_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": owner_step_id,
+            "fields": [
+                { "template_field_id": secret_field, "text_value": "OWNER-SECRET", "document_id": null },
+                { "template_field_id": doc_field, "text_value": null, "document_id": owner_doc }
+            ]
+        }));
+    assert!(
+        saved.is_ok(),
+        "the owner must be able to fill their own stage"
+    );
+
+    ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": owner_step_id,
+            "is_approved": true,
+            "notes": "OWNER-REVIEW-NOTE"
+        }))
+        .expect("admin review");
+
+    let tenant_view: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let raw = tenant_view.to_string();
+    assert!(
+        !raw.contains("OWNER-SECRET") && !raw.contains("OWNER-REVIEW-NOTE"),
+        "the tenant must never receive the owner's stage values or review notes"
+    );
+    assert!(!raw.contains(&owner_doc), "nor the owner's document id");
+    assert_eq!(
+        tenant_view["steps"][1]["status"], "OPEN",
+        "the tenant's own stage still unlocks once the owner's is approved"
+    );
+
+    let owner_raw = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&owner_jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert!(
+        owner_raw.contains("OWNER-SECRET"),
+        "the owner still sees their own data"
+    );
+
+    let download = |jwt: &str| {
+        post_status(
+            &url,
+            "/api/v1/process/download-url",
+            jwt,
+            serde_json::json!({ "process_id": process_id, "document_id": owner_doc }),
+        )
+    };
+    assert_eq!(download(&owner_jwt), 200);
+    assert_eq!(
+        download(&tenant_jwt),
+        403,
+        "a tenant must not download the owner's document"
+    );
+}
+
+/// The admin upload routes are for reviewers; neither the owner nor the tenant of the
+/// process may use them.
+#[tokio::test]
+async fn test_residents_cannot_use_the_admin_process_upload_routes() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner26@dtest.test",
+        "526",
+        "starter26@dtest.test",
+    );
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+
+    for jwt in [&owner_jwt, &tenant_jwt] {
+        assert_eq!(
+            post_status(
+                &url,
+                "/api/v1/admin/process/upload-url",
+                jwt,
+                serde_json::json!({
+                    "process_id": process_id, "title": "x",
+                    "filename": "x.pdf", "content_type": "application/pdf"
+                }),
+            ),
+            403
+        );
+        assert_eq!(
+            post_status(
+                &url,
+                "/api/v1/admin/process/confirm-upload",
+                jwt,
+                serde_json::json!({
+                    "process_id": process_id,
+                    "document_id": "00000000-0000-0000-0000-000000000000"
+                }),
+            ),
+            403
+        );
+    }
+}
+
+/// The tenant's process list never carries the owner's email.
+#[tokio::test]
+async fn test_tenant_process_list_does_not_expose_the_owners_email() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let (_owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_owner27@dtest.test",
+        "527",
+        "starter27@dtest.test",
+    );
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    start_process(&url, &tenant_jwt, template_id);
+
+    let listed = ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &auth(&tenant_jwt))
+        .send_json(serde_json::json!({ "personal_only": true }))
+        .unwrap()
+        .into_string()
+        .unwrap();
+    assert!(listed.contains("process_id"));
+    assert!(!listed.contains("tenant_owner27@dtest.test"));
 }

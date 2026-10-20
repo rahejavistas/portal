@@ -3973,7 +3973,7 @@ function openDesignationPicker(field) {
                         ${reviewerDropdownHtml}
                     </div>
                 </div>
-                <p style="font-size:12px; color:var(--muted-foreground); margin:0 0 20px; visibility:${owner.kind === 'user' ? 'visible' : 'hidden'};">It will be reviewed by a reviewer.</p>
+                <p style="font-size:12px; color:var(--muted-foreground); margin:0 0 20px; visibility:${owner.kind === 'user' || owner.kind === 'tenant' ? 'visible' : 'hidden'};">It will be reviewed by a reviewer.</p>
             `;
 
             container.innerHTML = `
