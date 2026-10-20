@@ -1675,17 +1675,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 </div>
                 <div class="subtab-panel" id="subtab-panel-society-flats">
                 <div class="card">
-                    <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Import from Users File</h3>
-                    <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Same file as Bulk Upload Owner Residents (UnitNo column) — reads every wing and flat from it and adds any that don't exist yet, without creating any residents.</p>
-                    <form id="import-flats-form">
-                        <div class="form-group">
-                            <input type="file" id="import-flats-file" accept=".xlsx" required style="border: 2px dashed var(--border); padding: 16px; border-radius: 8px; cursor: pointer;">
-                        </div>
-                        <button type="submit" class="submit-btn">Import</button>
-                    </form>
-                    <div class="feedback-box" id="import-flats-feedback"></div>
-                </div>
-                <div class="card">
                     <h3 style="margin-top:0; font-size:20px; font-weight:800; margin-bottom: 8px;">Flat Setup</h3>
                     <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px;">Pick a wing, add floors, and add flats to each floor. Tap a flat to mark it a fire flat.</p>
                     <div class="feedback-box" id="fp-feedback" style="margin-top:0; margin-bottom:16px;"></div>
@@ -3030,7 +3019,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 const data = await response.json();
 
                 if (response.ok) {
-                    uploadFeedback.textContent = `Processed ${data.total_rows} rows.`;
+                    uploadFeedback.textContent = `Processed ${data.total_rows} rows. ${data.flats_created} new flats added.`;
                     uploadFeedback.className = 'feedback-box success';
                     uploadFeedback.style.display = 'block';
 
@@ -3059,43 +3048,6 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 uploadFeedback.textContent = 'Failed to connect to backend server';
                 uploadFeedback.className = 'feedback-box error';
                 uploadFeedback.style.display = 'block';
-            }
-        });
-
-        const importFlatsForm = document.getElementById('import-flats-form');
-        const importFlatsFeedback = document.getElementById('import-flats-feedback');
-
-        importFlatsForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            importFlatsFeedback.style.display = 'none';
-
-            const fileInput = document.getElementById('import-flats-file');
-            if (fileInput.files.length === 0) return;
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-
-            try {
-                const response = await fetch(`${API_BASE}/api/v1/admin/flats/import-from-file`, {
-                    method: 'POST',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    body: formData
-                });
-                const data = await response.json();
-                importFlatsFeedback.style.display = 'block';
-                if (response.ok) {
-                    importFlatsFeedback.className = 'feedback-box success';
-                    importFlatsFeedback.textContent = `Read ${data.rows_parsed} rows, added ${data.flats_created} new flats.`;
-                    fileInput.value = '';
-                    await loadFlatSetup();
-                } else {
-                    importFlatsFeedback.className = 'feedback-box error';
-                    importFlatsFeedback.textContent = data.message || 'Failed to process file';
-                }
-            } catch (err) {
-                importFlatsFeedback.style.display = 'block';
-                importFlatsFeedback.className = 'feedback-box error';
-                importFlatsFeedback.textContent = 'Failed to connect to backend server';
             }
         });
 

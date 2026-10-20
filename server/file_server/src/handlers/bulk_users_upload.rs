@@ -3,6 +3,7 @@ use axum::extract::Multipart;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use base::flat::FlatIdentifier;
 use calamine::{open_workbook_from_rs, Data, Reader, Xlsx};
+use std::collections::BTreeSet;
 
 #[derive(serde::Serialize)]
 pub struct FailedUser {
@@ -14,12 +15,22 @@ pub struct FailedUser {
 pub struct UploadUsersResult {
     pub total_rows: usize,
     pub successfully_onboarded: usize,
+    pub flats_created: usize,
     pub failed_users: Vec<FailedUser>,
 }
 
 struct ParsedUser {
     email: String,
     flat: FlatIdentifier,
+}
+
+/// `flats` is every well-formed flat in the file, whether or not its row yielded a
+/// usable user, so the wing/flat catalog reflects the file even when some rows fail.
+struct ParsedFile {
+    users: Vec<ParsedUser>,
+    failed_users: Vec<FailedUser>,
+    total_rows: usize,
+    flats: Vec<FlatIdentifier>,
 }
 
 /// A flat claimed by more than one row is dropped from both parsers — the same
@@ -49,7 +60,7 @@ fn dedupe_ambiguous_flats(
     valid_users
 }
 
-fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize), String> {
+fn parse_csv(csv_data: &[u8]) -> Result<ParsedFile, String> {
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_reader(csv_data);
@@ -160,8 +171,34 @@ fn parse_csv(csv_data: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize
         parsed_users.push(ParsedUser { email, flat });
     }
 
-    let valid_users = dedupe_ambiguous_flats(parsed_users, &mut failed_users);
-    Ok((valid_users, failed_users, total_rows))
+    let flats = parsed_users.iter().map(|u| u.flat.clone()).collect();
+    let users = dedupe_ambiguous_flats(parsed_users, &mut failed_users);
+    Ok(ParsedFile {
+        users,
+        failed_users,
+        total_rows,
+        flats,
+    })
+}
+
+fn open_first_sheet(bytes: &[u8]) -> Result<calamine::Range<Data>, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let mut workbook: Xlsx<_> =
+        open_workbook_from_rs(cursor).map_err(|e| format!("Could not open file: {e}"))?;
+    let sheet_name = workbook
+        .sheet_names()
+        .first()
+        .cloned()
+        .ok_or_else(|| "Workbook has no sheets".to_string())?;
+    workbook
+        .worksheet_range(&sheet_name)
+        .map_err(|e| format!("Could not read sheet: {e}"))
+}
+
+fn column_index(header_row: &[Data], name: &str) -> Option<usize> {
+    header_row
+        .iter()
+        .position(|c| cell_text(c).eq_ignore_ascii_case(name))
 }
 
 fn cell_text(cell: &Data) -> String {
@@ -184,39 +221,22 @@ fn cell_text(cell: &Data) -> String {
 /// secondary contact, not a login) is intentionally not onboarded — this schema
 /// only allows one active owner per flat (`idx_active_flat_ownership`), so a second
 /// account on the same unit would just fail on conflict.
-fn parse_member_xlsx(bytes: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, usize), String> {
-    let cursor = std::io::Cursor::new(bytes);
-    let mut workbook: Xlsx<_> =
-        open_workbook_from_rs(cursor).map_err(|e| format!("Could not open file: {e}"))?;
-    let sheet_name = workbook
-        .sheet_names()
-        .first()
-        .cloned()
-        .ok_or_else(|| "Workbook has no sheets".to_string())?;
-    let range = workbook
-        .worksheet_range(&sheet_name)
-        .map_err(|e| format!("Could not read sheet: {e}"))?;
-
+fn parse_member_xlsx(bytes: &[u8]) -> Result<ParsedFile, String> {
+    let range = open_first_sheet(bytes)?;
     let mut rows_iter = range.rows();
     let header_row = rows_iter
         .by_ref()
-        .find(|row| {
-            row.iter()
-                .any(|c| cell_text(c).eq_ignore_ascii_case("unitno"))
-        })
+        .find(|row| column_index(row, "unitno").is_some())
         .ok_or_else(|| "Could not find a header row with a 'UnitNo' column".to_string())?;
 
-    let unit_idx = header_row
-        .iter()
-        .position(|c| cell_text(c).eq_ignore_ascii_case("unitno"))
-        .ok_or_else(|| "Header row is missing a 'UnitNo' column".to_string())?;
-    let email_idx = header_row
-        .iter()
-        .position(|c| cell_text(c).eq_ignore_ascii_case("emailid"))
+    let unit_idx =
+        column_index(header_row, "unitno").expect("header row was selected for having UnitNo");
+    let email_idx = column_index(header_row, "emailid")
         .ok_or_else(|| "Header row is missing an 'EmailID' column".to_string())?;
 
     let mut failed_users = Vec::new();
     let mut parsed_users = Vec::new();
+    let mut flats = Vec::new();
     let mut total_rows = 0;
 
     for row in rows_iter {
@@ -245,6 +265,7 @@ fn parse_member_xlsx(bytes: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, 
             }
         };
         total_rows += 1;
+        flats.push(flat.clone());
 
         if email.is_empty() {
             failed_users.push(FailedUser {
@@ -263,8 +284,43 @@ fn parse_member_xlsx(bytes: &[u8]) -> Result<(Vec<ParsedUser>, Vec<FailedUser>, 
         parsed_users.push(ParsedUser { email, flat });
     }
 
-    let valid_users = dedupe_ambiguous_flats(parsed_users, &mut failed_users);
-    Ok((valid_users, failed_users, total_rows))
+    let users = dedupe_ambiguous_flats(parsed_users, &mut failed_users);
+    Ok(ParsedFile {
+        users,
+        failed_users,
+        total_rows,
+        flats,
+    })
+}
+
+/// Registers every wing and flat in the file. Idempotent: existing wings and
+/// flats are left alone. Returns how many flats were newly created.
+async fn register_flats(
+    state: &AppState,
+    flats: &[FlatIdentifier],
+    created_by: i32,
+) -> Result<usize, String> {
+    let wings: BTreeSet<&str> = flats.iter().map(FlatIdentifier::wing).collect();
+    for wing in wings {
+        state
+            .permissions_manager
+            .ensure_wing_exists(wing, Some(created_by))
+            .await?;
+    }
+
+    let (wings, flat_numbers): (Vec<&str>, Vec<&str>) =
+        flats.iter().map(|f| (f.wing(), f.flat_number())).unzip();
+    let result = sqlx::query(
+        "INSERT INTO flats (wing, flat_number) \
+         SELECT * FROM UNNEST($1::text[], $2::text[]) \
+         ON CONFLICT (wing, flat_number) DO NOTHING",
+    )
+    .bind(&wings)
+    .bind(&flat_numbers)
+    .execute(&state.pg_pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(result.rows_affected() as usize)
 }
 
 pub async fn upload_users(
@@ -297,7 +353,12 @@ pub async fn upload_users(
         parse_csv(&file_bytes)
     };
 
-    let (valid_users, mut failed_users, total_rows) = match parsed {
+    let ParsedFile {
+        users: valid_users,
+        mut failed_users,
+        total_rows,
+        flats,
+    } = match parsed {
         Ok(res) => res,
         Err(e) => {
             return (
@@ -305,6 +366,22 @@ pub async fn upload_users(
                 Json(serde_json::json!({"status": "error", "message": e})),
             )
                 .into_response()
+        }
+    };
+
+    let flats_created = match register_flats(&state, &flats, caller.user_id).await {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!(
+                "Bulk upload: registering {} flats failed: {}",
+                flats.len(),
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"status": "error", "message": "Could not register wings and flats from the file"})),
+            )
+                .into_response();
         }
     };
 
@@ -338,6 +415,7 @@ pub async fn upload_users(
         Json(UploadUsersResult {
             total_rows,
             successfully_onboarded,
+            flats_created,
             failed_users,
         }),
     )
@@ -405,7 +483,12 @@ mod tests {
     #[test]
     fn parse_member_xlsx_reads_the_committed_sample_fixture() {
         let bytes = include_bytes!("../../../../quality/fixtures/member_data_sample.xlsx");
-        let (mut users, failed, total_rows) = parse_member_xlsx(bytes).expect("fixture must parse");
+        let ParsedFile {
+            mut users,
+            failed_users: failed,
+            total_rows,
+            flats,
+        } = parse_member_xlsx(bytes).expect("fixture must parse");
         users.sort_by_key(|a| a.flat.to_string());
 
         assert_eq!(
@@ -420,6 +503,11 @@ mod tests {
         assert_eq!(failed[0].email, "broken.unit@example.test");
         assert!(failed[0].reason.contains("Invalid UnitNo"));
         assert_eq!(users.len(), 3);
+        assert_eq!(
+            flats.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+            ["Z-0001", "Z-0002", "Z-0003"],
+            "every well-formed UnitNo registers a flat, but the broken '????' one does not"
+        );
 
         assert_eq!(users[0].flat.to_string(), "Z-0001");
         assert_eq!(users[0].email, "resident.one@example.test");

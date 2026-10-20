@@ -295,8 +295,8 @@ Requires `users.manage`.
 * **Response (200):** `{ "status": "success", "message": "Flat mapping revoked successfully." }`
 
 ### POST `/api/v1/admin/users/upload`
-Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; duplicate flat claims within the file are rejected.
-* **Response (200):** `{ "total_rows": 50, "successfully_onboarded": 48, "failed_users": [ { "email": "bad@x.com", "reason": "Invalid flat number" } ] }`
+Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; duplicate flat claims within the file are rejected. An XLSX member-data file (`UnitNo` / `EmailID` columns) is also accepted. Every wing and flat found in the file is added to the society's catalogue even if that row's resident can't be onboarded (e.g. missing email); flats that already exist are left alone.
+* **Response (200):** `{ "total_rows": 50, "successfully_onboarded": 48, "flats_created": 12, "failed_users": [ { "email": "bad@x.com", "reason": "Invalid flat number" } ] }`
 
 ---
 
