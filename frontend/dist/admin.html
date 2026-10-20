@@ -525,6 +525,7 @@
         }
         .doc-mode-switch {
             display: inline-flex;
+            flex-wrap: wrap;
             border: 2px solid var(--border);
             border-radius: var(--radius-md);
             overflow: hidden;
@@ -1389,10 +1390,11 @@
                             </div>
                             <div class="form-group">
                                 <label>Upload</label>
-                                <input type="checkbox" id="doc-folder-mode" style="display:none;">
+                                <input type="text" id="doc-upload-mode" value="file" style="display:none;">
                                 <div class="doc-mode-switch">
-                                    <button type="button" id="doc-mode-file-btn" class="doc-mode-btn active" onclick="setDocFolderMode(false)">File</button>
-                                    <button type="button" id="doc-mode-folder-btn" class="doc-mode-btn" onclick="setDocFolderMode(true)">Folder</button>
+                                    <button type="button" id="doc-mode-file-btn" class="doc-mode-btn active" onclick="setUploadMode('file')">File</button>
+                                    <button type="button" id="doc-mode-folder-btn" class="doc-mode-btn" onclick="setUploadMode('folder')">Folder</button>
+                                    <button type="button" id="doc-mode-bulk-btn" class="doc-mode-btn" onclick="setUploadMode('bulk')">Bulk Folder Import</button>
                                 </div>
                             </div>
                             <div class="form-group" id="doc-file-group">
@@ -1404,6 +1406,32 @@
                                 <input type="file" id="doc-folder" webkitdirectory directory multiple style="padding: 8px; width: 100%; background-color: var(--muted);">
                             </div>
                             <div id="doc-folder-hint" style="font-size:12.5px; color:var(--muted-foreground); min-height:1.2em; margin-bottom:24px; visibility:hidden;">Every file inside the selected folder will be added as its own document.</div>
+                            <div class="form-group" id="doc-bulk-folder-group" style="display: none;">
+                                <label for="doc-bulk-folder">Root Folder</label>
+                                <input type="file" id="doc-bulk-folder" webkitdirectory directory multiple style="padding: 8px; width: 100%; background-color: var(--muted);">
+                                <p style="font-size:12.5px; color:var(--muted-foreground); margin: 8px 0 16px 0; line-height:1.5;">Select the root folder containing a Wing &gt; Flat &gt; Subcategory structure (e.g. <code>A WING / A0504 / Loan Details / file.pdf</code>). Every file inside is mapped to its flat and subcategory automatically.</p>
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label for="doc-bulk-wing-template">Wing Folder Format</label>
+                                        <input type="text" id="doc-bulk-wing-template" value="{wing} WING" autocomplete="off">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="doc-bulk-flat-template">Flat Folder Format</label>
+                                        <input type="text" id="doc-bulk-flat-template" value="{flat}" autocomplete="off">
+                                    </div>
+                                </div>
+                                <div class="form-group" style="display:flex; align-items:center; gap:8px; margin-top:-8px;">
+                                    <input type="checkbox" id="doc-bulk-flat-combined" checked style="width:auto;">
+                                    <label for="doc-bulk-flat-combined" style="margin:0;">Flat folder name includes the wing letter (e.g. "A0504")</label>
+                                </div>
+                                <div class="form-group">
+                                    <label for="doc-bulk-subcat-template">Subcategory Folder Format</label>
+                                    <input type="text" id="doc-bulk-subcat-template" value="{subcategory}" autocomplete="off">
+                                </div>
+                                <p style="font-size:12px; color:var(--muted-foreground); margin:-8px 0 16px 0; line-height:1.5;">Use <code>{wing}</code>, <code>{flat}</code>, or <code>{subcategory}</code> as the placeholder for the part of the folder name that varies; the rest must match exactly (case-insensitive).</p>
+                                <button type="button" class="submit-btn" style="width:auto; padding:10px 20px;" onclick="scanBulkFolderImport()">Scan Folder</button>
+                                <div class="feedback-box" id="bulk-folder-scan-feedback" style="margin-top:12px; display:none;"></div>
+                            </div>
                             <div class="form-group">
                                 <label for="doc-category">Document Category</label>
                                 <select id="doc-category" required onchange="handleCategoryChange()">
@@ -1459,7 +1487,7 @@
                                 </div>
                             </div>
 
-                            <button type="submit" class="submit-btn">Add Document</button>
+                            <button type="submit" class="submit-btn" id="doc-form-submit-btn">Add Document</button>
                         </form>
                         <div class="feedback-box" id="doc-feedback"></div>
                     </div>
@@ -2082,6 +2110,45 @@
         </div>
     </div>
 
+    <div id="bulk-folder-import-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center; overflow-y:auto;" onclick="if (event.target === this) closeBulkFolderImportModal()">
+        <div style="background:var(--background); padding:24px; border-radius:12px; width:min(640px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin:32px 0; max-height:calc(100vh - 64px); overflow-y:auto;">
+            <h3 style="margin-top:0; margin-bottom:8px; color:var(--foreground); font-size:18px;">Review Folder Import</h3>
+            <p id="bulk-folder-import-summary" style="margin:0 0 16px 0; font-size:13px; color:var(--muted-foreground);"></p>
+
+            <div id="bulk-folder-missing-flats-section" style="display:none;">
+                <h4 style="margin:0 0 8px 0; font-size:13px; text-transform:uppercase; letter-spacing:0.03em; color:var(--foreground);">Missing Flats</h4>
+                <div style="max-height:160px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; margin-bottom:8px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                        <thead><tr style="text-align:left; background:var(--muted);"><th style="padding:6px 10px;">Wing</th><th style="padding:6px 10px;">Flat</th><th style="padding:6px 10px;">Files</th></tr></thead>
+                        <tbody id="bulk-folder-missing-flats-rows"></tbody>
+                    </table>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+                    <input type="checkbox" id="bulk-folder-create-flats" checked style="width:auto;">
+                    <label for="bulk-folder-create-flats" style="margin:0; font-size:13px;">Create these flats automatically</label>
+                </div>
+            </div>
+
+            <div id="bulk-folder-subcats-section" style="display:none;">
+                <h4 style="margin:0 0 8px 0; font-size:13px; text-transform:uppercase; letter-spacing:0.03em; color:var(--foreground);">Unmapped Subcategory Folders</h4>
+                <div id="bulk-folder-subcats-rows" style="margin-bottom:16px;"></div>
+            </div>
+
+            <div id="bulk-folder-skipped-section" style="display:none; margin-bottom:16px;">
+                <details>
+                    <summary style="cursor:pointer; font-size:13px; font-weight:700; color:var(--foreground);">Skipped Files (<span id="bulk-folder-skipped-count">0</span>)</summary>
+                    <ul id="bulk-folder-skipped-list" style="margin:8px 0 0 0; padding-left:18px; font-size:12.5px; color:var(--muted-foreground); max-height:160px; overflow-y:auto;"></ul>
+                </details>
+            </div>
+
+            <div class="feedback-box" id="bulk-folder-import-feedback" style="margin-top: 4px;"></div>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px;">
+                <button onclick="closeBulkFolderImportModal()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer;">Cancel</button>
+                <button id="bulk-folder-import-btn" onclick="submitBulkFolderImport()" style="box-sizing:border-box; height:40px; padding:0 16px; font-size:14px; line-height:1; background:var(--primary); border:1px solid var(--primary); color:var(--background); border-radius:6px; cursor:pointer; font-weight:700;">Import</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         function isAdminUser(user) {
             return !!(user && (
@@ -2673,21 +2740,24 @@
             select.blur();
         }
 
-        function toggleDocFolderMode() {
-            const folderMode = document.getElementById('doc-folder-mode').checked;
-            document.getElementById('doc-file-group').style.display = folderMode ? 'none' : '';
-            document.getElementById('doc-file').required = !folderMode;
-            document.getElementById('doc-folder-group').style.display = folderMode ? '' : 'none';
-            document.getElementById('doc-folder-hint').style.visibility = folderMode ? 'visible' : 'hidden';
-            document.getElementById('doc-title-group').style.display = folderMode ? 'none' : '';
-            document.getElementById('doc-title').required = !folderMode;
-        }
+        function setUploadMode(mode) {
+            document.getElementById('doc-upload-mode').value = mode;
+            document.getElementById('doc-mode-file-btn').classList.toggle('active', mode === 'file');
+            document.getElementById('doc-mode-folder-btn').classList.toggle('active', mode === 'folder');
+            document.getElementById('doc-mode-bulk-btn').classList.toggle('active', mode === 'bulk');
 
-        function setDocFolderMode(folderMode) {
-            document.getElementById('doc-folder-mode').checked = folderMode;
-            document.getElementById('doc-mode-file-btn').classList.toggle('active', !folderMode);
-            document.getElementById('doc-mode-folder-btn').classList.toggle('active', folderMode);
-            toggleDocFolderMode();
+            const isFile = mode === 'file';
+            const isFolder = mode === 'folder';
+            const isBulk = mode === 'bulk';
+
+            document.getElementById('doc-file-group').style.display = isFile ? '' : 'none';
+            document.getElementById('doc-file').required = isFile;
+            document.getElementById('doc-folder-group').style.display = isFolder ? '' : 'none';
+            document.getElementById('doc-folder-hint').style.visibility = isFolder ? 'visible' : 'hidden';
+            document.getElementById('doc-bulk-folder-group').style.display = isBulk ? '' : 'none';
+            document.getElementById('doc-title-group').style.display = isFile ? '' : 'none';
+            document.getElementById('doc-title').required = isFile;
+            document.getElementById('doc-form-submit-btn').style.display = isBulk ? 'none' : '';
         }
 
         let docFormFlatsCache = [];
@@ -6224,12 +6294,344 @@ function openDesignationPicker(field) {
             return dot > 0 ? base.slice(0, dot) : base;
         }
 
+        function matchTemplate(name, template, token) {
+            const placeholder = `{${token}}`;
+            const idx = template.indexOf(placeholder);
+            if (idx === -1) return null;
+            const prefix = template.slice(0, idx).trim();
+            const suffix = template.slice(idx + placeholder.length).trim();
+            const trimmedName = name.trim();
+            const nameLower = trimmedName.toLowerCase();
+            if (prefix && !nameLower.startsWith(prefix.toLowerCase())) return null;
+            if (suffix && !nameLower.endsWith(suffix.toLowerCase())) return null;
+            const start = prefix ? prefix.length : 0;
+            const end = suffix ? trimmedName.length - suffix.length : trimmedName.length;
+            if (start > end) return null;
+            return trimmedName.slice(start, end).trim();
+        }
+
+        function normalizeWingFlat(wingRaw, flatRaw) {
+            const wing = (wingRaw || '').trim().toUpperCase();
+            const flat_number = (flatRaw || '').trim();
+            if (!wing || !/^[A-Z]+$/.test(wing)) return null;
+            if (!flat_number || !/^[0-9]+$/.test(flat_number)) return null;
+            return { wing, flat_number: flat_number.padStart(4, '0') };
+        }
+
+        function parseCombinedFlatCode(code) {
+            const trimmed = (code || '').trim();
+            const idx = trimmed.search(/[0-9]/);
+            if (idx === -1) return null;
+            return normalizeWingFlat(trimmed.slice(0, idx), trimmed.slice(idx));
+        }
+
+        let bulkFolderImportState = null;
+
+        function scanBulkFolderImport() {
+            const feedback = document.getElementById('bulk-folder-scan-feedback');
+            feedback.style.display = 'none';
+
+            const category = document.getElementById('doc-category').value;
+            const selectedCat = uploadFormCategories.find(c => c.code === category);
+            if (!selectedCat || !selectedCat.is_flat_scoped) {
+                feedback.textContent = 'Select a flat-scoped document category (e.g. Resident Specific) before scanning.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            const folderInput = document.getElementById('doc-bulk-folder');
+            const files = Array.from(folderInput.files || []).filter(f => !f.name.startsWith('.'));
+            if (files.length === 0) {
+                feedback.textContent = 'Please select a root folder with at least one file.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            const wingTemplate = document.getElementById('doc-bulk-wing-template').value;
+            const flatTemplate = document.getElementById('doc-bulk-flat-template').value;
+            const subcatTemplate = document.getElementById('doc-bulk-subcat-template').value;
+            const flatIsCombined = document.getElementById('doc-bulk-flat-combined').checked;
+
+            const validFiles = [];
+            const skipped = [];
+            const flatFileCounts = new Map();
+            const subcatFileCounts = new Map();
+
+            for (const file of files) {
+                const relPath = file.webkitRelativePath || file.name;
+                const segments = relPath.split('/');
+                if (segments.length !== 5) {
+                    skipped.push({ name: relPath, reason: 'unexpected folder depth (expected Wing/Flat/Subcategory/file)' });
+                    continue;
+                }
+                const wingFolder = segments[1];
+                const flatFolder = segments[2];
+                const subcatFolder = segments[3];
+
+                const wingCaptured = matchTemplate(wingFolder, wingTemplate, 'wing');
+                if (wingCaptured === null) {
+                    skipped.push({ name: relPath, reason: `wing folder "${wingFolder}" doesn't match the configured format` });
+                    continue;
+                }
+
+                const flatCaptured = matchTemplate(flatFolder, flatTemplate, 'flat');
+                if (flatCaptured === null) {
+                    skipped.push({ name: relPath, reason: `flat folder "${flatFolder}" doesn't match the configured format` });
+                    continue;
+                }
+                const resolvedFlat = flatIsCombined
+                    ? parseCombinedFlatCode(flatCaptured)
+                    : normalizeWingFlat(wingCaptured, flatCaptured);
+                if (!resolvedFlat) {
+                    skipped.push({ name: relPath, reason: `could not determine wing/flat number from "${wingFolder}/${flatFolder}"` });
+                    continue;
+                }
+
+                const subcatCaptured = matchTemplate(subcatFolder, subcatTemplate, 'subcategory');
+                if (subcatCaptured === null) {
+                    skipped.push({ name: relPath, reason: `subcategory folder "${subcatFolder}" doesn't match the configured format` });
+                    continue;
+                }
+
+                const flatKey = `${resolvedFlat.wing}|${resolvedFlat.flat_number}`;
+                flatFileCounts.set(flatKey, (flatFileCounts.get(flatKey) || 0) + 1);
+                subcatFileCounts.set(subcatCaptured, (subcatFileCounts.get(subcatCaptured) || 0) + 1);
+
+                validFiles.push({
+                    file,
+                    wing: resolvedFlat.wing,
+                    flat_number: resolvedFlat.flat_number,
+                    subcategoryRaw: subcatCaptured
+                });
+            }
+
+            if (validFiles.length === 0) {
+                feedback.textContent = 'No files matched the configured folder structure. Check the format fields and try again.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+
+            const existingFlatKeys = new Set(docFormFlatsCache.map(f => `${f.wing}|${f.flat_number}`));
+            const missingFlats = [...flatFileCounts.entries()]
+                .filter(([key]) => !existingFlatKeys.has(key))
+                .map(([key, count]) => {
+                    const [wing, flat_number] = key.split('|');
+                    return { wing, flat_number, count };
+                })
+                .sort((a, b) => a.wing.localeCompare(b.wing) || a.flat_number.localeCompare(b.flat_number));
+
+            const categorySubcats = selectedCat.subcategories || [];
+            const subcatRows = [...subcatFileCounts.entries()]
+                .map(([raw, count]) => {
+                    const rawLower = raw.trim().toLowerCase();
+                    const match = categorySubcats.find(s =>
+                        s.label.trim().toLowerCase() === rawLower || s.code.trim().toLowerCase() === rawLower);
+                    return { raw, count, matchedCode: match ? match.code : null };
+                })
+                .sort((a, b) => a.raw.localeCompare(b.raw));
+
+            bulkFolderImportState = { category, validFiles, skipped, missingFlats, subcatRows, categorySubcats };
+            openBulkFolderImportModal();
+        }
+
+        function openBulkFolderImportModal() {
+            const state = bulkFolderImportState;
+            const totalFiles = state.validFiles.length;
+            const flatCount = new Set(state.validFiles.map(f => `${f.wing}|${f.flat_number}`)).size;
+            document.getElementById('bulk-folder-import-summary').textContent =
+                `${totalFiles} file${totalFiles === 1 ? '' : 's'} ready across ${flatCount} flat${flatCount === 1 ? '' : 's'}.` +
+                (state.skipped.length ? ` ${state.skipped.length} file${state.skipped.length === 1 ? '' : 's'} skipped.` : '');
+
+            const missingSection = document.getElementById('bulk-folder-missing-flats-section');
+            if (state.missingFlats.length > 0) {
+                missingSection.style.display = 'block';
+                document.getElementById('bulk-folder-missing-flats-rows').innerHTML = state.missingFlats
+                    .map(m => `<tr><td style="padding:6px 10px;">${escapeHtml(m.wing)}</td><td style="padding:6px 10px;">${escapeHtml(m.flat_number)}</td><td style="padding:6px 10px;">${m.count}</td></tr>`)
+                    .join('');
+            } else {
+                missingSection.style.display = 'none';
+            }
+
+            const subcatSection = document.getElementById('bulk-folder-subcats-section');
+            const unmapped = state.subcatRows.filter(r => !r.matchedCode);
+            if (unmapped.length > 0) {
+                subcatSection.style.display = 'block';
+                document.getElementById('bulk-folder-subcats-rows').innerHTML = unmapped.map(r => {
+                    const options = state.categorySubcats
+                        .map(s => `<option value="${escapeHtml(s.code)}">${escapeHtml(s.label)}</option>`)
+                        .join('');
+                    const defaultCode = r.raw.toUpperCase().replace(/\s+/g, '_');
+                    return `
+                        <div class="form-group" style="margin-bottom:10px;">
+                            <label>"${escapeHtml(r.raw)}" (${r.count} file${r.count === 1 ? '' : 's'})</label>
+                            <select data-raw="${escapeHtml(r.raw)}" data-default-code="${escapeHtml(defaultCode)}" data-default-label="${escapeHtml(r.raw)}">
+                                <option value="__create__">Create new: "${escapeHtml(r.raw)}"</option>
+                                ${options}
+                            </select>
+                        </div>`;
+                }).join('');
+            } else {
+                subcatSection.style.display = 'none';
+            }
+
+            const skippedSection = document.getElementById('bulk-folder-skipped-section');
+            if (state.skipped.length > 0) {
+                skippedSection.style.display = 'block';
+                document.getElementById('bulk-folder-skipped-count').textContent = state.skipped.length;
+                document.getElementById('bulk-folder-skipped-list').innerHTML = state.skipped
+                    .map(s => `<li>${escapeHtml(s.name)} — ${escapeHtml(s.reason)}</li>`)
+                    .join('');
+            } else {
+                skippedSection.style.display = 'none';
+            }
+
+            document.getElementById('bulk-folder-import-feedback').style.display = 'none';
+            const importBtn = document.getElementById('bulk-folder-import-btn');
+            importBtn.disabled = false;
+            importBtn.textContent = `Import ${totalFiles} Document${totalFiles === 1 ? '' : 's'}`;
+            document.getElementById('bulk-folder-import-modal').style.display = 'flex';
+        }
+
+        function closeBulkFolderImportModal() {
+            document.getElementById('bulk-folder-import-modal').style.display = 'none';
+        }
+
+        async function submitBulkFolderImport() {
+            const state = bulkFolderImportState;
+            if (!state) return;
+            const feedback = document.getElementById('bulk-folder-import-feedback');
+            const importBtn = document.getElementById('bulk-folder-import-btn');
+            feedback.style.display = 'none';
+            importBtn.disabled = true;
+
+            try {
+                if (document.getElementById('bulk-folder-create-flats').checked && state.missingFlats.length > 0) {
+                    const byWing = new Map();
+                    for (const m of state.missingFlats) {
+                        if (!byWing.has(m.wing)) byWing.set(m.wing, []);
+                        byWing.get(m.wing).push(m.flat_number);
+                    }
+                    for (const [wing, flat_numbers] of byWing) {
+                        feedback.style.display = 'block';
+                        feedback.className = 'feedback-box';
+                        feedback.textContent = `Creating flats in wing ${wing}...`;
+                        const resp = await fetch(`${API_BASE}/api/v1/admin/flats/bulk-create`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ wing, flat_numbers })
+                        });
+                        if (!resp.ok) {
+                            throw new Error(`Failed to create flats for wing ${wing}: ${await readErrorMessage(resp)}`);
+                        }
+                    }
+                }
+
+                const subcategoryCodeByRaw = new Map();
+                for (const row of state.subcatRows) {
+                    if (row.matchedCode) {
+                        subcategoryCodeByRaw.set(row.raw, row.matchedCode);
+                    }
+                }
+                const unmappedSelects = document.querySelectorAll('#bulk-folder-subcats-rows select');
+                for (const select of unmappedSelects) {
+                    const raw = select.dataset.raw;
+                    if (select.value === '__create__') {
+                        feedback.style.display = 'block';
+                        feedback.className = 'feedback-box';
+                        feedback.textContent = `Creating subcategory "${raw}"...`;
+                        const resp = await fetch(`${API_BASE}/api/v1/admin/roles/document-subcategories/create`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ category: state.category, code: select.dataset.defaultCode, label: select.dataset.defaultLabel })
+                        });
+                        if (!resp.ok) {
+                            throw new Error(`Failed to create subcategory "${raw}": ${await readErrorMessage(resp)}`);
+                        }
+                        const data = await resp.json();
+                        subcategoryCodeByRaw.set(raw, data.code);
+                    } else {
+                        subcategoryCodeByRaw.set(raw, select.value);
+                    }
+                }
+
+                const description = document.getElementById('doc-desc').value.trim() || null;
+                const tagsInput = document.getElementById('doc-tags').value.trim();
+                const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()) : [];
+                const document_date = document.getElementById('doc-date').value || null;
+                const valid_from = document.getElementById('doc-valid-from').value || null;
+                const valid_until = document.getElementById('doc-valid-until').value || null;
+                const today = new Date().toISOString().slice(0, 10);
+
+                let succeeded = 0;
+                const failures = [];
+                const total = state.validFiles.length;
+                for (let i = 0; i < total; i++) {
+                    const entry = state.validFiles[i];
+                    feedback.style.display = 'block';
+                    feedback.className = 'feedback-box';
+                    feedback.textContent = `Uploading ${i + 1} of ${total}: ${entry.file.name}...`;
+                    const metadata = {
+                        subcategory_code: subcategoryCodeByRaw.get(entry.subcategoryRaw) || null,
+                        tags,
+                        document_date: document_date || today,
+                        valid_from,
+                        valid_until
+                    };
+                    try {
+                        await uploadOneDocument(
+                            titleFromFileName(entry.file.name),
+                            description,
+                            state.category,
+                            { wing: entry.wing, flat_number: entry.flat_number },
+                            metadata,
+                            entry.file
+                        );
+                        succeeded++;
+                    } catch (err) {
+                        failures.push(`${entry.file.name}: ${err.message}`);
+                    }
+                }
+
+                if (failures.length === 0) {
+                    docFeedback.textContent = `✓ ${succeeded} document${succeeded === 1 ? '' : 's'} added!`;
+                    docFeedback.className = 'feedback-box success';
+                } else {
+                    docFeedback.textContent = `${succeeded} of ${total} uploaded. Failed: ${failures.join('; ')}`;
+                    docFeedback.className = 'feedback-box error';
+                }
+                docFeedback.style.display = 'block';
+
+                closeBulkFolderImportModal();
+                bulkFolderImportState = null;
+                regDocForm.reset();
+                setUploadMode('file');
+                handleCategoryChange();
+                onDocFormWingChange();
+                loadAdminDocuments();
+                await loadDocFormFlats();
+                await loadUploadCategories();
+            } catch (err) {
+                feedback.style.display = 'block';
+                feedback.className = 'feedback-box error';
+                feedback.textContent = err.message;
+                importBtn.disabled = false;
+            }
+        }
+
         regDocForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             docFeedback.style.display = 'none';
 
+            const uploadMode = document.getElementById('doc-upload-mode').value;
+            if (uploadMode === 'bulk') {
+                return;
+            }
+
             const category = document.getElementById('doc-category').value;
-            const folderMode = document.getElementById('doc-folder-mode').checked;
+            const folderMode = uploadMode === 'folder';
 
             let flat = null;
             if (category === 'RESIDENT_SPECIFIC') {
@@ -6301,7 +6703,7 @@ function openDesignationPicker(field) {
                     docFeedback.className = 'feedback-box error';
                 }
                 regDocForm.reset();
-                setDocFolderMode(false);
+                setUploadMode('file');
                 handleCategoryChange();
                 onDocFormWingChange();
                 loadAdminDocuments();
@@ -6335,7 +6737,7 @@ function openDesignationPicker(field) {
                 docFeedback.textContent = '✓ Document added!';
                 docFeedback.className = 'feedback-box success';
                 regDocForm.reset();
-                setDocFolderMode(false);
+                setUploadMode('file');
                 handleCategoryChange();
                 onDocFormWingChange();
                 loadAdminDocuments();
