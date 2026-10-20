@@ -77,10 +77,10 @@ impl ActorContext {
     }
 
     /// A caller whose only standing on the process is being the flat's tenant: the
-    /// owner's own (`User`) stages are hidden from them; reviewer-side and tenant
-    /// stages stay visible. `has_reviewer_standing`: they hold a designation owning a
+    /// documents on the owner's (`User`) stages are hidden from them. The rest of the
+    /// process stays visible. `has_reviewer_standing`: they hold a designation owning a
     /// step of this process.
-    pub fn hides_owner_stage_data(&self, has_reviewer_standing: bool) -> bool {
+    pub fn hides_owner_documents(&self, has_reviewer_standing: bool) -> bool {
         self.is_active_tenant_for_this_flat
             && !self.is_process_owner
             && !self.is_admin
