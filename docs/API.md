@@ -529,7 +529,9 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
 
   `Tenant` (`{"kind":"tenant"}`) is owned by the flat's current active tenant
   (`tenant_ownerships`, see [Tenants](#tenants) below) — never the flat's owner, and
-  never any other flat's tenant. Only an admin can review or reopen a `Tenant`-owned
+  never any other flat's tenant. A top-level `Tenant`-owned stage goes to review when the
+  tenant saves it, like a `User`-owned one — the next stage stays locked until a reviewer
+  approves it. Only an admin can review or reopen a `Tenant`-owned
   stage; there is no designation a tenant could hold to self-review. A process whose
   template has no `Tenant`-owned stage is invisible to a tenant entirely, in both
   `/api/v1/process/list` and `/api/v1/process/state`.

@@ -133,7 +133,8 @@ Three things are **not** permissions but still gate UI:
   Every wing automatically gets its own representative designation the moment its
   first flat is created, so this needs no manual setup.
 - A stage can also be assigned to "Tenant". Only the flat's current tenant, added by
-  the flat's owner, can fill it. The owner cannot fill it. A tenant can start a process
+  the flat's owner, can fill it. The owner cannot fill it. Once the tenant submits it, a
+  reviewer must approve it before the process moves on. A tenant can start a process
   whose template has a Tenant stage; it then belongs to the flat's owner, who is
   emailed when a stage opens for them.
 - A template with a Tenant stage must also include a required "Resident (Owner)" stage

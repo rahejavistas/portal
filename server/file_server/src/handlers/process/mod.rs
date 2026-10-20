@@ -26,6 +26,29 @@ pub(super) fn designation_owns_a_step(
         })
 }
 
+/// The `/admin/process/*` upload routes are for reviewers: a global reviewer, or a
+/// designation holder owning a step here — never a resident (owner or tenant) whose
+/// only standing is the process being theirs.
+pub(super) fn require_reviewer_standing(
+    template: &process::ProcessTemplate,
+    actor: &process::state_machine::ActorContext,
+) -> Result<(), ApiError> {
+    if actor.is_admin
+        || designation_owns_a_step(template, &actor.designation_codes)
+        || wing_representative_owns_a_step(
+            template,
+            &actor.designation_codes,
+            &actor.wing_representative_codes,
+        )
+    {
+        return Ok(());
+    }
+    Err((
+        StatusCode::FORBIDDEN,
+        Json("Access Denied: reviewer access required".to_string()),
+    ))
+}
+
 /// Whether any step in `template` is `Tenant`-owned.
 pub(super) fn template_has_tenant_step(template: &process::ProcessTemplate) -> bool {
     process::state_machine::build_step_info_map(template)

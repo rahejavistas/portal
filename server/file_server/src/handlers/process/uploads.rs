@@ -44,7 +44,7 @@ pub async fn process_admin_upload_url(
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
 
     let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
-    let (info, _) = load_authorized_process(
+    let (info, template) = load_authorized_process(
         &mut conn,
         &user,
         payload.process_id,
@@ -52,6 +52,7 @@ pub async fn process_admin_upload_url(
         &actor.designation_codes,
     )
     .await?;
+    super::require_reviewer_standing(&template, &actor)?;
 
     let Some(oid) = info.ownership_id else {
         return Err((
@@ -136,7 +137,7 @@ pub async fn process_admin_confirm_upload(
 ) -> Result<Json<ProcessAdminConfirmUploadResponse>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
     let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
-    let (info, _) = load_authorized_process(
+    let (info, template) = load_authorized_process(
         &mut conn,
         &user,
         payload.process_id,
@@ -144,6 +145,7 @@ pub async fn process_admin_confirm_upload(
         &actor.designation_codes,
     )
     .await?;
+    super::require_reviewer_standing(&template, &actor)?;
 
     let flat_id = match info.ownership_id {
         Some(oid) => get_flat_info_for_ownership(&mut conn, oid)
@@ -189,11 +191,11 @@ pub async fn process_download_url(
     // same as a reviewer — this handler never writes anything.
     let can_view_all = super::can_view_all_processes(&user);
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-    let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
+    let mut actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
 
     // Auth check: is the caller allowed to view this process at all?
     let owner_id = {
-        let (info, _) = load_authorized_process(
+        let (info, template) = load_authorized_process(
             &mut conn,
             &user,
             payload.process_id,
@@ -201,15 +203,32 @@ pub async fn process_download_url(
             &actor.designation_codes,
         )
         .await?;
+        super::resolve_flat_roles(
+            &mut conn,
+            &mut actor,
+            &user,
+            info.ownership_id,
+            info.user_id,
+        )
+        .await?;
 
-        // Non-owners (reviewers) may only fetch documents actually attached to this process.
+        // Non-owners (reviewers, tenants) may only fetch documents actually attached to
+        // this process; a tenant-only caller only those on `Tenant` stages.
         if info.user_id != user.user_id {
+            let tenant_only = !can_view_all && actor.sees_only_tenant_stages();
+            let tenant_field_ids: std::collections::HashSet<i32> =
+                process::state_machine::build_step_info_map(&template)
+                    .values()
+                    .filter(|i| matches!(i.filled_by, process::StepOwner::Tenant))
+                    .flat_map(|i| i.fields.iter().map(|f| f.field_id))
+                    .collect();
             let history = get_field_history(&mut conn, payload.process_id)
                 .await
                 .internal_err()?;
-            let attached = history
-                .iter()
-                .any(|row| row.document_id == Some(payload.document_id));
+            let attached = history.iter().any(|row| {
+                row.document_id == Some(payload.document_id)
+                    && (!tenant_only || tenant_field_ids.contains(&row.template_field_id))
+            });
             if !attached {
                 return Err((
                     StatusCode::FORBIDDEN,

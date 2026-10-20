@@ -76,6 +76,15 @@ impl ActorContext {
         }
     }
 
+    /// A caller whose only standing on the process is being the flat's tenant: they see
+    /// the data of `Tenant` stages only, never the owner's or a reviewer's.
+    pub fn sees_only_tenant_stages(&self) -> bool {
+        self.is_active_tenant_for_this_flat
+            && !self.is_process_owner
+            && !self.is_admin
+            && self.designation_codes.is_empty()
+    }
+
     /// Like `may_act_on`, but a `User` step holding a `Declaration` field is the
     /// owner's alone — an admin can't declare on their behalf.
     pub fn may_act_on_step(
@@ -180,9 +189,12 @@ pub struct StepInfo {
 }
 
 impl StepInfo {
-    /// Only a top-level, `User`-owned Stage ever reaches `PendingReview`.
+    /// Only a top-level, `User`- or `Tenant`-owned Stage ever reaches `PendingReview`.
     pub fn requires_review(&self, root_step_id: i32) -> bool {
-        matches!(self.filled_by, crate::StepOwner::User) && self.parent_id == Some(root_step_id)
+        matches!(
+            self.filled_by,
+            crate::StepOwner::User | crate::StepOwner::Tenant
+        ) && self.parent_id == Some(root_step_id)
     }
 }
 
