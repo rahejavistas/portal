@@ -389,8 +389,6 @@ impl PermissionsManager {
             failed_login_attempts: failed_attempts,
         }) = row
         else {
-            // Burns the same time a real verify would, to avoid timing enumeration.
-            verify_password(password, dummy_password_hash());
             return Ok(AuthResult::InvalidCredentials);
         };
 
@@ -1015,16 +1013,6 @@ pub fn hash_password(password: &str) -> Result<String, String> {
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())
         .map_err(|e| e.to_string())
-}
-
-/// Fixed dummy hash, for the timing guard in `check_authenticated`.
-fn dummy_password_hash() -> &'static str {
-    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    HASH.get_or_init(|| {
-        hash_password("not-a-real-account-password-placeholder")
-            .expect("hashing a fixed, valid password never fails")
-    })
-    .as_str()
 }
 
 /// Verifies a password against an Argon2id hash.
