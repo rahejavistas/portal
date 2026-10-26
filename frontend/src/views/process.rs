@@ -1469,6 +1469,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return !!(user && (user.can_view_all_processes || (user.designations && user.designations.length > 0)));
         }
 
+        // Routing choice only — the server enforces the real authorization.
+        function canUploadAsReviewer(user) {
+            return IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user);
+        }
+
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
         let token = localStorage.getItem('vfs_token');
         let user = JSON.parse(localStorage.getItem('vfs_user') || 'null');
@@ -2670,9 +2675,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return `<div class="field-value-display" style="padding: 10px 16px; border-radius: var(--radius-lg); background-color: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; font-weight: 700;">&#8377;${amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} due on this flat &mdash; this stage cannot be completed until dues are cleared</div>`;
         }
 
-        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }, canCallerAct = false) {
+        function renderFieldsList(fields, stepStatus, stepId, parentStatus = null, owner = { kind: 'user' }, canCallerAct = false, canCallerReview = false) {
             let html = '';
-            const isCurrentAdmin = canReviewProcess(user);
+            const isCurrentAdmin = canReviewProcess(user) || canCallerReview;
             const ownerCanAct = canCallerAct;
             let hasEditableTextField = false;
             let anyRequiredEmpty = false;
@@ -3061,14 +3066,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
             if (selectedStep.fields && selectedStep.fields.length > 0 && stepStatus !== 'LOCKED') {
                 html += `<div class="fields-container" style="border-top: none; padding-top: 0; margin-bottom: 24px;">`;
-                html += renderFieldsList(selectedStep.fields, stepStatus, stepId, null, stepOwner, selectedStep.can_caller_act);
+                html += renderFieldsList(selectedStep.fields, stepStatus, stepId, null, stepOwner, selectedStep.can_caller_act, selectedStep.can_caller_review);
                 html += `</div>`;
             }
 
             if (selectedStep.substeps && selectedStep.substeps.length > 0) {
                 html += `<div style="display: flex; flex-direction: column; gap: 24px; margin-top: 16px;">`;
 
-                const isAdminForSubsteps = canReviewProcess(user);
+                const isAdminForSubsteps = canReviewProcess(user) || selectedStep.can_caller_review;
                 const latestRevForCards = (p.reviews || []).reduce((latest, r) => {
                     if (!latest) return r;
                     return (new Date(r.created_at) > new Date(latest.created_at)) ? r : latest;
@@ -3125,7 +3130,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                     if (sub.fields && sub.fields.length > 0 && subStatus !== 'LOCKED') {
                         html += `<div class="fields-container" style="border-top: 1px solid var(--border); padding-top: 16px;">`;
-                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus, subOwner, sub.can_caller_act);
+                        html += renderFieldsList(sub.fields, subStatus, subId, stepStatus, subOwner, sub.can_caller_act, sub.can_caller_review);
                         html += `</div>`;
                     }
 
@@ -3498,12 +3503,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const processId = currentProcessDetails.process_id;
 
             try {
-                const isCurrentAdmin = canReviewProcess(user);
-                const uploadEndpoint = isCurrentAdmin 
+                const isCurrentAdmin = canUploadAsReviewer(user);
+                const uploadEndpoint = isCurrentAdmin
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
-                
-                const uploadBody = isCurrentAdmin 
+
+                const uploadBody = isCurrentAdmin
                     ? {
                         process_id: processId,
                         title: file.name,
@@ -3848,7 +3853,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             document.getElementById('docPickerModal').style.display = 'flex';
             document.getElementById('picker-new-upload').value = '';
             
-            const isCurrentAdmin = canReviewProcess(user);
+            const isCurrentAdmin = canUploadAsReviewer(user);
             const libraryHeading = document.getElementById('picker-library-heading');
             const libraryContainer = document.getElementById('picker-existing-docs');
             
@@ -3979,12 +3984,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if(progressEl) { progressEl.style.color = 'var(--primary)'; progressEl.textContent = 'Requesting upload URL...'; }
 
             try {
-                const isCurrentAdmin = canReviewProcess(user);
-                const uploadEndpoint = isCurrentAdmin 
+                const isCurrentAdmin = canUploadAsReviewer(user);
+                const uploadEndpoint = isCurrentAdmin
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
-                
-                const uploadBody = isCurrentAdmin 
+
+                const uploadBody = isCurrentAdmin
                     ? {
                         process_id: currentProcessDetails.process_id,
                         title: file.name,

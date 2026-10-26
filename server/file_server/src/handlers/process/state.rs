@@ -323,9 +323,10 @@ async fn resolve_or_init_process(
     let template = process::template_store::load_template_version(conn, version_id)
         .await
         .map_err(|e| {
+            eprintln!("Process handler template load error: {}", e);
             (
-                StatusCode::BAD_REQUEST,
-                Json(format!("Template error: {}", e)),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json("An internal error occurred. Please try again.".to_string()),
             )
         })?;
     // A tenant starts it on the owner's behalf: the process belongs to the flat's owner.
@@ -360,9 +361,10 @@ async fn resolve_or_init_process(
     )
     .await
     .map_err(|e| {
+        eprintln!("Process handler init_process error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(format!("Failed to initialize process: {}", e)),
+            Json("An internal error occurred. Please try again.".to_string()),
         )
     })?;
     Ok((
@@ -433,16 +435,25 @@ fn map_step_template(
     if let Some(ref field_tpls) = step_tpl.fields {
         for f in field_tpls {
             let field_id = f.field_id;
-            let hide = ctx.hide_owner_documents
-                && f.r#type == process::FieldType::File
-                && matches!(step_tpl.filled_by, process::StepOwner::User);
-            let latest = ctx.latest_field_states.get(&field_id).filter(|_| !hide);
-            let history = ctx
+            let is_owner_stage = matches!(step_tpl.filled_by, process::StepOwner::User);
+            let hide_document =
+                ctx.hide_owner_documents && f.r#type == process::FieldType::File && is_owner_stage;
+            let latest = ctx
+                .latest_field_states
+                .get(&field_id)
+                .filter(|_| !hide_document);
+            let mut history = ctx
                 .field_history_map
                 .get(&field_id)
-                .filter(|_| !hide)
+                .filter(|_| !hide_document)
                 .cloned()
                 .unwrap_or_default();
+            // Not just documents — the owner's email must never reach the tenant.
+            if ctx.hide_owner_documents && is_owner_stage {
+                for entry in &mut history {
+                    entry.actor_email = None;
+                }
+            }
 
             let value = latest.map(|l| {
                 let (title, content_type) = l
@@ -998,8 +1009,22 @@ pub async fn get_process_state(
 
     let next_actions = compute_next_actions(&statuses, &step_info_map);
 
-    let hide_owner_documents = !can_view_all
-        && actor.hides_owner_documents(super::require_reviewer_standing(&template, &actor).is_ok());
+    let has_reviewer_standing = super::require_reviewer_standing(&template, &actor).is_ok();
+    let hide_owner_documents = !can_view_all && actor.hides_owner_documents(has_reviewer_standing);
+    // A plain resident must never see staff/reviewer email addresses.
+    let redact_staff_email = !can_view_all && !has_reviewer_standing;
+
+    let reviews: Vec<ReviewHistoryInfo> = if redact_staff_email {
+        reviews
+            .into_iter()
+            .map(|mut r| {
+                r.admin_email = None;
+                r
+            })
+            .collect()
+    } else {
+        reviews
+    };
 
     let step_map_ctx = StepMapContext {
         statuses: &statuses,

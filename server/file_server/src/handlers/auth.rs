@@ -170,7 +170,10 @@ pub async fn login(
                         status: "error".to_string(),
                         user: None,
                         token: None,
-                        message: Some(format!("Token generation failed: {}", e)),
+                        message: Some({
+                            eprintln!("Auth handler token generation error: {}", e);
+                            "An internal error occurred. Please try again.".to_string()
+                        }),
                         mfa_required: false,
                         pending_token: None,
                         accounting_enabled: false,
@@ -179,29 +182,15 @@ pub async fn login(
                     .into_response(),
             }
         }
-        Ok(authentication::AuthResult::InvalidCredentials) => (
+        // Same status/message for both, so locked-vs-wrong-password isn't distinguishable.
+        Ok(authentication::AuthResult::InvalidCredentials)
+        | Ok(authentication::AuthResult::AccountLocked) => (
             StatusCode::UNAUTHORIZED,
             Json(LoginResponse {
                 status: "error".to_string(),
                 user: None,
                 token: None,
                 message: Some("Invalid email or password".to_string()),
-                mfa_required: false,
-                pending_token: None,
-                accounting_enabled: false,
-            }),
-        )
-            .into_response(),
-        Ok(authentication::AuthResult::AccountLocked) => (
-            StatusCode::FORBIDDEN,
-            Json(LoginResponse {
-                status: "error".to_string(),
-                user: None,
-                token: None,
-                message: Some(
-                    "Account locked due to too many failed attempts. Please reset your password."
-                        .to_string(),
-                ),
                 mfa_required: false,
                 pending_token: None,
                 accounting_enabled: false,
@@ -263,7 +252,10 @@ pub async fn mfa_verify(
                         status: "error".to_string(),
                         user: None,
                         token: None,
-                        message: Some(format!("Token generation failed: {}", e)),
+                        message: Some({
+                            eprintln!("Auth handler token generation error: {}", e);
+                            "An internal error occurred. Please try again.".to_string()
+                        }),
                         mfa_required: false,
                         pending_token: None,
                         accounting_enabled: false,
@@ -451,13 +443,30 @@ pub async fn forgot_password(
     State(state): State<AppState>,
     Json(payload): Json<ForgotPasswordPayload>,
 ) -> Response {
+    let email = payload.email.trim().to_lowercase();
+
+    // Checked before email_exists, so it can't become an enumeration side channel.
+    if state
+        .rate_limiters
+        .email_recipient_limiter
+        .check_key(&email)
+        .is_err()
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Too many requests for this email recently. Please try again later."
+            })),
+        )
+            .into_response();
+    }
+
     let token: String = thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(32)
         .map(char::from)
         .collect();
-
-    let email = payload.email.trim().to_lowercase();
 
     match state.permissions_manager.email_exists(&email).await {
         Ok(true) => {
@@ -470,11 +479,12 @@ pub async fn forgot_password(
                 )
                 .await
             {
+                eprintln!("Auth handler reset-token error: {}", e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({
                         "status": "error",
-                        "message": format!("Failed to set reset token: {}", e)
+                        "message": "An internal error occurred. Please try again."
                     })),
                 )
                     .into_response();
@@ -573,14 +583,17 @@ pub async fn reset_password(
             })),
         )
             .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "status": "error",
-                "message": format!("Reset failed: {}", e)
-            })),
-        )
-            .into_response(),
+        Err(e) => {
+            eprintln!("Auth handler password reset error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "status": "error",
+                    "message": "An internal error occurred. Please try again."
+                })),
+            )
+                .into_response()
+        }
     }
 }
 

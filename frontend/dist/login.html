@@ -259,7 +259,9 @@
 
         function postLoginRedirectUrl() {
             const target = new URLSearchParams(window.location.search).get('redirect');
-            if (target && target.startsWith('/') && !target.startsWith('//')) {
+            // Browsers treat a leading backslash as a slash, so check both as "//".
+            const normalized = target ? target.replace(/\\/g, '/') : '';
+            if (target && normalized.startsWith('/') && !normalized.startsWith('//')) {
                 return target;
             }
             return '/dashboard';

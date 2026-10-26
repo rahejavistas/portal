@@ -3100,8 +3100,8 @@
                     for (const err of data.failed_users) {
                         const tr = document.createElement('tr');
                         tr.innerHTML = `
-                            <td style="padding: 8px;">${err.email}</td>
-                            <td style="padding: 8px; color: var(--destructive);">${err.reason}</td>
+                            <td style="padding: 8px;">${escapeHtml(err.email)}</td>
+                            <td style="padding: 8px; color: var(--destructive);">${escapeHtml(err.reason)}</td>
                         `;
                         uploadErrorsTarget.appendChild(tr);
                     }
@@ -3873,6 +3873,7 @@ function openDesignationPicker(field) {
             const removeExpr = onchangePrefix.replace(/\.fields\[(\d+)\]$/, '.fields.splice($1,1)');
             const optionsCsv = (field.options || []).join(', ');
             const ownerIsUser = stageOwner.kind === 'user';
+            const ownerCanHaveExampleDoc = stageOwner.kind === 'user' || stageOwner.kind === 'tenant';
             const isFixedRequired = field.type === 'declaration' || field.type === 'no_dues';
             const declarationText = (field.requirements && field.requirements.declaration_text) || '';
             return `
@@ -3901,7 +3902,7 @@ function openDesignationPicker(field) {
                         <button class="del-action-btn" onclick="${removeExpr}; renderBuilderStageDetail();">Remove</button>
                     </div>
                     ${(field.type === 'document' && !ownerIsUser && field.requires_signature) ? renderFieldDesignationSummary(field, onchangePrefix) : ''}
-                    ${(field.type === 'document' && ownerIsUser) ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
+                    ${(field.type === 'document' && ownerCanHaveExampleDoc) ? renderFieldExampleDocumentSummary(field, onchangePrefix) : ''}
                 </div>
             `;
         }
@@ -5513,16 +5514,26 @@ function openDesignationPicker(field) {
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
             try {
-                await Promise.all(changes.map(c => fetch(`${API_BASE}/api/v1/admin/roles/designations/permissions/toggle`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ designation_code: c.designationCode, permission_code: c.permissionCode, enabled: c.enabled })
-                })));
+                const results = await Promise.all(changes.map(async c => {
+                    const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/permissions/toggle`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ designation_code: c.designationCode, permission_code: c.permissionCode, enabled: c.enabled })
+                    });
+                    return { c, ok: resp.ok, message: resp.ok ? null : await readErrorMessage(resp) };
+                }));
                 await loadNonSystemDesignations();
                 renderDesignationPermissionsMatrix();
+                const failures = results.filter(r => !r.ok);
                 feedback.style.display = 'block';
-                feedback.className = 'feedback-box success';
-                feedback.innerHTML = `<span class="icon">✓</span> Saved ${changes.length} change(s).`;
+                if (failures.length === 0) {
+                    feedback.className = 'feedback-box success';
+                    feedback.innerHTML = `<span class="icon">✓</span> Saved ${changes.length} change(s).`;
+                } else {
+                    feedback.className = 'feedback-box error';
+                    const detail = failures.map(f => `${f.c.designationCode}/${f.c.permissionCode}: ${escapeHtml(f.message)}`).join('; ');
+                    feedback.innerHTML = `<span class="icon">!</span> ${results.length - failures.length} of ${results.length} saved. Failed: ${detail}`;
+                }
             } catch (err) {
                 feedback.style.display = 'block';
                 feedback.className = 'feedback-box error';

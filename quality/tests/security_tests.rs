@@ -109,18 +109,62 @@ async fn test_account_lockout() {
         );
     }
 
-    // 6th attempt (even with correct password) should be FORBIDDEN (locked)
+    // Must be rejected identically to a wrong password, even with the right one.
     let locked_login = ureq::post(&format!("{}/api/v1/login", url)).send_json(serde_json::json!({
         "email": email,
         "password": "password123"
     }));
     assert!(locked_login.is_err());
     let locked_err = locked_login.unwrap_err().into_response().unwrap();
-    assert_eq!(locked_err.status(), 403);
+    assert_eq!(locked_err.status(), 401);
 
     let err_json: serde_json::Value = locked_err.into_json().unwrap();
-    assert!(err_json["message"]
-        .as_str()
-        .unwrap()
-        .contains("Account locked"));
+    assert_eq!(
+        err_json["message"].as_str().unwrap(),
+        "Invalid email or password"
+    );
+}
+
+/// Real vs. fake email get an identical response, and get rate-limited the same way.
+#[tokio::test]
+async fn test_forgot_password_is_rate_limited_per_email_without_leaking_existence() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+
+    let admin_jwt = quick_setup_admin(&env);
+    let real_email = "forgot_pw_real@vistas.com";
+    // Not quick_onboard_user — it calls forgot-password itself, spending the quota.
+    let _ = quick_create_user(&env, &admin_jwt, real_email, "C", "304");
+    let fake_email = "forgot_pw_never_registered@vistas.com";
+
+    let request = |email: &str| -> (u16, serde_json::Value) {
+        match ureq::post(&format!("{}/api/v1/forgot-password", url))
+            .send_json(serde_json::json!({ "email": email }))
+        {
+            Ok(r) => (r.status(), r.into_json().unwrap()),
+            Err(ureq::Error::Status(code, r)) => (code, r.into_json().unwrap_or_default()),
+            Err(e) => panic!("transport error: {:?}", e),
+        }
+    };
+
+    let (real_status, real_body) = request(real_email);
+    let (fake_status, fake_body) = request(fake_email);
+    assert_eq!(real_status, 200);
+    assert_eq!(fake_status, 200);
+    assert_eq!(
+        real_body, fake_body,
+        "a registered and an unregistered email must get an identical response"
+    );
+
+    // One request already made above; two more fit in the burst of 3, then blocked.
+    assert_eq!(request(real_email).0, 200);
+    assert_eq!(request(real_email).0, 200);
+    let (limited_status, _) = request(real_email);
+    assert_eq!(
+        limited_status, 429,
+        "repeated requests for the same address must eventually be rate-limited"
+    );
+
+    // A different address is unaffected.
+    assert_eq!(request("forgot_pw_unrelated@vistas.com").0, 200);
 }

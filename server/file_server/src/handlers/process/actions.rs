@@ -102,6 +102,15 @@ pub async fn save_process_step(
     .await?;
     super::resolve_flat_roles(&mut tx, &mut actor, &user, info.ownership_id, info.user_id).await?;
 
+    // A field's document must belong to this process's own flat, not just any owned one.
+    let process_flat_id = match info.ownership_id {
+        Some(oid) => process::db::get_flat_info_for_ownership(&mut tx, oid)
+            .await
+            .internal_err()?
+            .map(|f| f.flat_id),
+        None => None,
+    };
+
     // Validate document ownership and upload confirmation
     for f in &payload.fields {
         if let Some(doc_id) = f.document_id {
@@ -142,7 +151,25 @@ pub async fn save_process_step(
                         )),
                     ));
                 }
-                _ => {}
+                Some(_) => {
+                    let belongs_to_this_flat = match process_flat_id {
+                        Some(flat_id) => state
+                            .document_manager
+                            .document_belongs_to_flat(doc_id, flat_id)
+                            .await
+                            .internal_err()?,
+                        None => false,
+                    };
+                    if !belongs_to_this_flat {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(format!(
+                                "Document ID {} does not belong to this process's flat",
+                                doc_id
+                            )),
+                        ));
+                    }
+                }
             }
         }
     }

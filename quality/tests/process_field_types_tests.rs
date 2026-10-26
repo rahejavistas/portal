@@ -342,8 +342,9 @@ async fn no_dues_blocks_until_the_file_marks_it_paid() {
         .unwrap();
     assert_eq!(
         statuses_after.get(&2),
-        Some(&StepStatus::Completed),
-        "re-uploading the file with zero due must unblock the stage on the next load"
+        Some(&StepStatus::PendingReview),
+        "re-uploading the file with zero due must unblock the stage on the next load, \
+         pending the separate admin approval every stage now needs"
     );
 }
 
@@ -575,7 +576,8 @@ async fn re_uploading_the_file_overwrites_the_previous_snapshot_not_accumulates(
             .await
             .unwrap()
             .get(&2),
-        Some(&StepStatus::Completed)
+        Some(&StepStatus::PendingReview),
+        "unblocked, but still needs the separate admin approval every stage now needs"
     );
 }
 
@@ -609,8 +611,9 @@ async fn no_dues_is_unblocked_for_a_flat_with_no_snapshot_uploaded_yet() {
             .await
             .unwrap()
             .get(&2),
-        Some(&StepStatus::Completed),
-        "a flat with no dues snapshot uploaded yet owes nothing as far as this is concerned"
+        Some(&StepStatus::PendingReview),
+        "a flat with no dues snapshot uploaded yet owes nothing as far as this is concerned, \
+         but still needs the separate admin approval every stage now needs"
     );
 }
 

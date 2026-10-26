@@ -1293,8 +1293,8 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T3: Admin fills Step 2 (field 111, Admin-owned) → completes immediately, no separate
-    // review step — Step 3 (also Admin-owned) opens right away → still Admin turn
+    // T3: Admin fills Step 2 (field 111, Admin-owned) → PendingReview, still needs its own
+    // separate approval — Step 3 stays Locked until then — still Admin turn
     exec.save_step_fields(
         7,
         &[SaveFieldInput {
@@ -1306,6 +1306,24 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
+    assert_eq!(exec.status(7), StepStatus::PendingReview);
+    assert_eq!(exec.status(8), StepStatus::Locked);
+
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+    // T4: Admin approves Step 2 → Step 3 (also Admin-owned) opens → still Admin turn
+    exec.review_step(
+        7,
+        Some(user_id),
+        true,
+        Some("Meeting minutes verified"),
+        &[],
+    )
+    .await
+    .unwrap();
     assert_eq!(exec.status(7), StepStatus::Completed);
     assert_eq!(exec.status(8), StepStatus::Open);
 
@@ -1314,8 +1332,7 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T5: Admin fills Step 3 (Admin-owned) → completes immediately → Step 4 opens (user
-    // fields) → User turn
+    // T5: Admin fills Step 3 (Admin-owned) → PendingReview, needs its own approval too
     exec.save_step_fields(
         8,
         &[SaveFieldInput {
@@ -1327,6 +1344,18 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
+    assert_eq!(exec.status(8), StepStatus::PendingReview);
+    assert_eq!(exec.status(9), StepStatus::Locked);
+
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+    // T5b: Admin approves Step 3 → Step 4 opens (user fields) → User turn
+    exec.review_step(8, Some(user_id), true, Some("Verified"), &[])
+        .await
+        .unwrap();
     assert_eq!(exec.status(8), StepStatus::Completed);
     assert_eq!(exec.status(9), StepStatus::Open);
 
@@ -1371,7 +1400,7 @@ async fn test_turn_logic_full_lifecycle() {
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // T8: Admin fills Step 5 (Admin-owned) → completes immediately → all done → None
+    // T8: Admin fills Step 5 (Admin-owned) → PendingReview, needs its own approval
     exec.save_step_fields(
         10,
         &[SaveFieldInput {
@@ -1383,6 +1412,17 @@ async fn test_turn_logic_full_lifecycle() {
     )
     .await
     .unwrap();
+    assert_eq!(exec.status(10), StepStatus::PendingReview);
+
+    let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
+
+    // T9: Admin approves Step 5 → all done → None
+    exec.review_step(10, Some(user_id), true, Some("Verified"), &[])
+        .await
+        .unwrap();
     assert_eq!(exec.status(10), StepStatus::Completed);
 
     let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
@@ -1749,8 +1789,8 @@ async fn test_comprehensive_failure_cases() {
         .await;
     assert!(result.is_err(), "Field 101 does not belong to step 7");
 
-    // 6. Admin CAN fill admin field → completes immediately (Admin-owned skips review) →
-    // Step 8 (also Admin-owned) opens → still Admin turn
+    // 6. Admin CAN fill admin field → PendingReview, still needs its own separate
+    // approval before Step 8 (also Admin-owned) unlocks → still Admin turn
     exec.save_step_fields(
         7,
         &[SaveFieldInput {
@@ -1763,14 +1803,21 @@ async fn test_comprehensive_failure_cases() {
     .await
     .unwrap();
 
-    assert_eq!(exec.status(7), StepStatus::Completed);
-    assert_eq!(exec.status(8), StepStatus::Open);
+    assert_eq!(exec.status(7), StepStatus::PendingReview);
+    assert_eq!(exec.status(8), StepStatus::Locked);
     let state = process::db::load_state(&mut *exec.conn, exec.process_id, &template)
         .await
         .unwrap();
     assert_eq!(determine_turn(&template, &state), ProcessTurn::Admin);
 
-    // 7. Cannot reopen a step that's already Open
+    // 7. Admin approves Step 7 → Step 8 opens
+    exec.review_step(7, Some(user_id), true, Some("Verified"), &[])
+        .await
+        .unwrap();
+    assert_eq!(exec.status(7), StepStatus::Completed);
+    assert_eq!(exec.status(8), StepStatus::Open);
+
+    // 8. Cannot reopen a step that's already Open
     let result = exec.reopen_step(8, Some("Bad reopen")).await;
     assert!(
         result.is_err(),

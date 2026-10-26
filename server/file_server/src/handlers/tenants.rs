@@ -1,7 +1,7 @@
 //! Owner-managed tenant mapping for a flat — see `process::StepOwner::Tenant`.
 
 use crate::extractors::SessionUser;
-use crate::handlers::error::{bad_request, forbidden, ApiError, ResultExt};
+use crate::handlers::error::{bad_request, forbidden, too_many_requests, ApiError, ResultExt};
 use crate::state::AppState;
 use axum::{extract::State, Json};
 use rand::{thread_rng, Rng};
@@ -106,6 +106,17 @@ pub async fn add_tenant(
     }
     if email == user.email.trim().to_lowercase() {
         return Err(bad_request("You cannot add yourself as a tenant."));
+    }
+    // Cap per-recipient so this can't be used to bomb or phish an arbitrary inbox.
+    if state
+        .rate_limiters
+        .email_recipient_limiter
+        .check_key(&email)
+        .is_err()
+    {
+        return Err(too_many_requests(
+            "Too many invites sent to this email recently. Please try again later.",
+        ));
     }
 
     let mut tx = state.pg_pool.begin().await.internal_err()?;

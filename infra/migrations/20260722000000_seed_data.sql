@@ -2,7 +2,7 @@
 
 INSERT INTO designations (code, label, is_system) VALUES
     ('super_admin', 'Super Admin', TRUE),
-    ('staff', 'Staff', TRUE)
+    ('staff', 'Staff', FALSE)
 ON CONFLICT (code) DO NOTHING;
 
 INSERT INTO permissions (code, label) VALUES

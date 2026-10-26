@@ -1602,10 +1602,9 @@ async fn test_reviewer_owned_stage_with_a_tenant_substep_goes_to_review() {
     assert_eq!(after["steps"][1]["status"], "LOCKED");
 }
 
-/// Once the flat is no longer theirs, a former owner can't upload into it through a
-/// process they started.
+/// A former owner can't upload into, or read, a process they started on that flat.
 #[tokio::test]
-async fn test_former_owner_cannot_upload_into_the_flat_through_a_process() {
+async fn test_former_owner_cannot_read_or_upload_into_the_flats_process() {
     let env = quality::setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -1653,6 +1652,18 @@ async fn test_former_owner_cannot_upload_into_the_flat_through_a_process() {
         .send_json(serde_json::json!({"user_id": owner_id, "wing": "A", "flat_number": "531"}))
         .unwrap();
     assert_eq!(upload(&owner_jwt), 403);
+
+    // Read access must be revoked too, not just upload access.
+    assert_eq!(
+        post_status(
+            &url,
+            "/api/v1/process/state",
+            &owner_jwt,
+            serde_json::json!({ "process_id": process_id }),
+        ),
+        403,
+        "a former owner must lose read access to the flat's process, not just write access"
+    );
 }
 
 /// A tenant's own uploads show up in their document list.
@@ -1955,6 +1966,12 @@ async fn test_tenant_document_visibility_matrix() {
             ]
         }))
         .expect("the admin fills the society stage");
+    ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({
+            "process_id": p1, "template_step_id": step(0), "is_approved": true
+        }))
+        .expect("admin approves the society stage, unlocking the owner stage");
 
     let d_owner = self_upload(&url, &owner1_jwt, "owner_id.pdf");
     save_doc_field(&url, &owner1_jwt, &p1, step(1), field(1, 0), &d_owner)

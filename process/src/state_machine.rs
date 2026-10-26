@@ -188,16 +188,12 @@ pub struct StepInfo {
     pub filled_by: crate::StepOwner,
     pub fields: Vec<crate::ProcessFieldTemplate>,
     pub substep_ids: Vec<i32>,
-    /// Some step beneath this one is filled by the owner or the tenant.
-    pub has_resident_descendant: bool,
 }
 
 impl StepInfo {
-    /// Only a top-level Stage that the owner or tenant fills — itself, or through any
-    /// substep — ever reaches `PendingReview`.
+    /// Every top-level Stage needs a separate approval to reach `Completed`.
     pub fn requires_review(&self, root_step_id: i32) -> bool {
         self.parent_id == Some(root_step_id)
-            && (self.filled_by.is_resident() || self.has_resident_descendant)
     }
 }
 
@@ -225,7 +221,6 @@ pub fn build_step_info_map(template: &crate::ProcessTemplate) -> HashMap<i32, St
             filled_by: template.filled_by.clone(),
             fields: template.fields.clone().unwrap_or_default(),
             substep_ids: root_substep_ids,
-            has_resident_descendant: false,
         },
     );
 
@@ -259,7 +254,6 @@ fn insert_step_info_recursive(
             filled_by: step.filled_by.clone(),
             fields: step.fields.clone().unwrap_or_default(),
             substep_ids,
-            has_resident_descendant: step.has_resident_descendant(),
         },
     );
 
@@ -1415,7 +1409,7 @@ mod tests {
             &secretary,
         )
         .unwrap();
-        assert_eq!(result.new_status, StepStatus::Completed);
+        assert_eq!(result.new_status, StepStatus::PendingReview);
         assert_eq!(result.acted_as_designation, Some("secretary".to_string()));
     }
 
