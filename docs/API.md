@@ -47,7 +47,7 @@ No auth required.
 * **Request:** `{ "email": "user@example.com", "password": "..." }`
 * **Response (200), MFA off:** `{ "status": "success", "user": { ...User }, "token": "<jwt>", "message": null }`
 * **Response (200), MFA on for this account:** `{ "status": "mfa_required", "user": null, "token": null, "mfa_required": true, "pending_token": "<opaque>" }` — a 6-digit code has been emailed; no session token is issued yet. Finish via `/api/v1/mfa/verify` below.
-* **403** if the account is locked (too many failed attempts); **401** on invalid credentials.
+* **401** on invalid credentials, including an account locked from too many failed attempts — same status and message either way, so a locked account isn't distinguishable from a wrong password.
 
 ### Email OTP MFA
 MFA is fully **opt-in per account** (see [Account Settings](#account-settings-mfa--notification-preferences) below) — there is currently no forced-MFA rule for any designation, including `super_admin`. All three endpoints below are unauthenticated (no `Authorization` header) since the caller doesn't have a session token yet — they're keyed entirely off the opaque `pending_token` issued by `/login`.
@@ -67,8 +67,8 @@ No auth required.
 ### POST `/api/v1/forgot-password`
 No auth required.
 * **Request:** `{ "email": "user@example.com" }`
-* **Response (200):** `{ "status": "success", "message": "Password setup/reset link generated successfully" }`
-* **404** if the email isn't registered.
+* **Response (200):** `{ "status": "success", "message": "Password setup/reset link generated successfully" }` — same response whether or not the email is registered, so the endpoint never reveals which emails have accounts.
+* **400** on a malformed email; **429** if this address has already had several reset emails sent to it recently.
 
 ### POST `/api/v1/reset-password`
 No auth required.
@@ -229,7 +229,7 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
     "steps": [ { "template_step_id": 2, "name": "...", "description": "Optional stage description, or null", "status": "OPEN", "filled_by": { "kind": "designation", "code": "secretary" }, "filled_by_designation_label": "Secretary", "fields": [ { "template_field_id": 101, "name": "ID Proof", "type": "document", "is_optional": false, "requires_signature": false, "required_signs_from_designations": [], "value": { "text_value": null, "document_id": "uuid", "document_title": "Aadhaar.pdf", "document_content_type": "application/pdf" }, "history": [], "signature_status": [] } ], "substeps": [] } ]
   }
   ```
-  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` and `audit_log` are only populated for callers with `process.reviewer`/`process.view` — `audit_log` is the append-only status/verification/return trail (`event_type` is one of `STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`), and each entry carries `acted_as_designation` (non-null only when a `Designation`-owned stage produced it); a field's own edit history is on each field's `history` array instead, and now carries `actor_email` (who saved that value) and `acted_as_designation` alongside it. Each step's `filled_by` mirrors the template's (`{"kind":"user"|"admin"}` or `{"kind":"designation","code":...}`), with `filled_by_designation_label` resolved server-side for the `designation` case so the frontend never needs its own lookup. `next_actions[].assigned_to` is `"user"`, `"admin"`, or a designation code. `tat_actual_working_days` is `null` until the process has actually closed. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
+  `status` is one of `LOCKED`, `OPEN`, `PENDING_REVIEW`, `COMPLETED`. `admin_comments` and `audit_log` are only populated for callers with `process.reviewer`/`process.view` — `audit_log` is the append-only status/verification/return trail (`event_type` is one of `STEP_COMPLETED`, `STEP_APPROVED`, `STEP_RETURNED`, `STEP_FLAGGED`, `PROCESS_CLOSED`), and each entry carries `acted_as_designation` (non-null only when a `Designation`-owned stage produced it); a field's own edit history is on each field's `history` array instead, and now carries `actor_email` (who saved that value) and `acted_as_designation` alongside it — `actor_email` is stripped on the owner's stages when the caller is the flat's tenant, and staff emails in `reviews` are stripped for any caller without reviewer standing of their own. Each step's `filled_by` mirrors the template's (`{"kind":"user"|"admin"}` or `{"kind":"designation","code":...}`), with `filled_by_designation_label` resolved server-side for the `designation` case so the frontend never needs its own lookup. `next_actions[].assigned_to` is `"user"`, `"admin"`, or a designation code. `tat_actual_working_days` is `null` until the process has actually closed. `template_id` in the request identifies the process *type*, not a specific version — the resolved, permanently-pinned version is what comes back as `template_version_id`.
 * **400** if neither `process_id` nor `template_id` given, the given `template_id` has no active version yet, or the caller owns multiple flats and didn't disambiguate with `flat_id`; **403** if the caller doesn't own the process; **404** if not found.
 
 ### POST `/api/v1/process/save-step`
@@ -501,10 +501,9 @@ Requires `process.templates.manage`. The upsert: omitting `template_id` (or `nul
   `{"kind":"designation","code":"secretary"}`, `{"kind":"wing_representative"}`, or
   `{"kind":"tenant"}`) and denormalized onto every substep beneath it at save time — a
   field no longer carries its own `filled_by`; every field in a stage shares that
-  stage's owner. A top-level Stage requires a reviewer's approval to complete when its
-  own owner is `User` or `Tenant`, or when any substep beneath it is; otherwise
-  (`Admin`/`Designation`/`WingRepresentative` with no resident substep) filling the
-  stage completes it immediately. A `Designation`-owned stage is
+  stage's owner. Every top-level Stage requires a reviewer's approval to complete,
+  regardless of who fills it — filling the stage alone is never enough; it moves to
+  `PENDING_REVIEW` and waits for an explicit approval. A `Designation`-owned stage is
   exclusive to that designation's active holders and requires no permission grant at all:
   holding the designation is itself enough to load, fill, review, and reopen that stage
   on any resident's process, scoped to only the step(s) that designation owns — nothing
@@ -631,7 +630,7 @@ No router-level permission gate — each handler is self-scoped to the caller's 
 Maps a tenant to the caller's own flat, deactivating any existing active tenant for it first (at most one active tenant per flat) and emailing the new tenant a "set your password" link.
 * **Request:** `{ "ownership_id": 5, "tenant_email": "tenant@example.com", "expires_at": "2027-01-01", "rental_agreement_document_id": "uuid" }`
 * **Response (200):** `{ "tenant_ownership_id": 8, "tenant_user_id": 41 }`
-* **403** if the caller doesn't actively own `ownership_id`; **400** on an invalid email, or if `rental_agreement_document_id` isn't a `RESIDENT_SPECIFIC` document already attached to that flat. A rental agreement is mandatory — there is no way to map a tenant without one.
+* **403** if the caller doesn't actively own `ownership_id`; **400** on an invalid email, or if `rental_agreement_document_id` isn't a `RESIDENT_SPECIFIC` document already attached to that flat; **429** if this email has already had several invites sent to it recently. A rental agreement is mandatory — there is no way to map a tenant without one.
 
 ### POST `/api/v1/tenants/remove`
 Deactivates the flat's current active tenant, if any, with no replacement.

@@ -756,10 +756,10 @@ async fn send_new_requirements_via_signyu(
         .s3_accessor
         .download_file(&key)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+        .internal_err()?
         .collect()
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))?
+        .internal_err()?
         .into_bytes()
         .to_vec();
 

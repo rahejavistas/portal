@@ -1469,7 +1469,6 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return !!(user && (user.can_view_all_processes || (user.designations && user.designations.length > 0)));
         }
 
-        // Routing choice only — the server enforces the real authorization.
         function canUploadAsReviewer(user) {
             return IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user);
         }

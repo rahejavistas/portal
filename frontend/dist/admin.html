@@ -1012,6 +1012,7 @@
             .topbar-brand { font-size: 1.0625rem; }
             .topbar-search { display: none; }
             .help-btn { margin-left: auto; }
+            #doc-mode-bulk-btn { display: none; }
             .sidebar {
                 transform: translateX(-100%);
                 width: min(280px, 85vw);
@@ -2124,7 +2125,7 @@
                     </table>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
-                    <input type="checkbox" id="bulk-folder-create-flats" checked style="width:auto;">
+                    <input type="checkbox" id="bulk-folder-create-flats" style="width:auto;">
                     <label for="bulk-folder-create-flats" style="margin:0; font-size:13px;">Create these flats automatically</label>
                 </div>
             </div>
@@ -6355,6 +6356,13 @@ function openDesignationPicker(field) {
             const files = Array.from(folderInput.files || []).filter(f => !f.name.startsWith('.'));
             if (files.length === 0) {
                 feedback.textContent = 'Please select a root folder with at least one file.';
+                feedback.className = 'feedback-box error';
+                feedback.style.display = 'block';
+                return;
+            }
+            const BULK_IMPORT_MAX_FILES = 2000;
+            if (files.length > BULK_IMPORT_MAX_FILES) {
+                feedback.textContent = `This folder has ${files.length} files, over the ${BULK_IMPORT_MAX_FILES} limit per import. Split it into smaller batches.`;
                 feedback.className = 'feedback-box error';
                 feedback.style.display = 'block';
                 return;

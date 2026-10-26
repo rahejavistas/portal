@@ -1,4 +1,5 @@
 use crate::extractors::SessionUser;
+use crate::handlers::error::internal_err;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::collections::HashSet;
@@ -72,12 +73,7 @@ async fn guard_designation_change(
         .permissions_manager
         .is_system_designation(designation_code)
         .await
-        .map_err(|e| {
-            Box::new(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                e.to_string(),
-            ))
-        })?
+        .map_err(|e| Box::new(internal_err(e).into_response()))?
         .ok_or_else(|| {
             Box::new(error_response(
                 StatusCode::BAD_REQUEST,
@@ -99,12 +95,7 @@ async fn guard_designation_change(
         .permissions_manager
         .get_designation_permissions(designation_code)
         .await
-        .map_err(|e| {
-            Box::new(error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                e.to_string(),
-            ))
-        })?;
+        .map_err(|e| Box::new(internal_err(e).into_response()))?;
     let caller_permissions: HashSet<&str> = caller.permissions.iter().map(String::as_str).collect();
     let missing: Vec<&str> = designation_permissions
         .iter()
@@ -137,7 +128,7 @@ pub async fn list_designations(
 ) -> impl IntoResponse {
     match state.permissions_manager.list_designations().await {
         Ok(designations) => (StatusCode::OK, Json(designations)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -244,7 +235,7 @@ pub async fn list_permissions(
 ) -> impl IntoResponse {
     match state.permissions_manager.list_permissions().await {
         Ok(permissions) => (StatusCode::OK, Json(permissions)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -378,7 +369,7 @@ pub async fn toggle_designation_permission(
             )
         }
         Ok(Some(false)) => {}
-        Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => return internal_err(e).into_response(),
     }
 
     // Self-escalation guard: can't grant/revoke permissions on a designation you hold.
@@ -422,7 +413,7 @@ pub async fn toggle_designation_permission(
             Json(serde_json::json!({ "status": "success", "message": "Permission updated." })),
         )
             .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -434,7 +425,7 @@ pub async fn list_document_category_designations(
 ) -> impl IntoResponse {
     match state.document_manager.list_category_designations().await {
         Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -467,7 +458,7 @@ pub async fn toggle_document_category_designation(
             match state.document_manager.manageable_categories(&caller).await {
                 Ok(None) => true,
                 Ok(Some(categories)) => categories.contains(&payload.category),
-                Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+                Err(e) => return internal_err(e).into_response(),
             };
         if !caller_manages_category {
             return error_response(
@@ -496,7 +487,7 @@ pub async fn toggle_document_category_designation(
             Json(serde_json::json!({ "status": "success", "message": "Mapping updated." })),
         )
             .into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -508,7 +499,7 @@ pub async fn list_document_categories(
 ) -> impl IntoResponse {
     match state.document_manager.list_document_categories().await {
         Ok(categories) => (StatusCode::OK, Json(categories)).into_response(),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 
@@ -547,7 +538,7 @@ pub async fn create_document_category(
             StatusCode::CONFLICT,
             format!("Category code '{}' is already in use.", code),
         ),
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => internal_err(e).into_response(),
     }
 }
 

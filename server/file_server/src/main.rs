@@ -52,6 +52,16 @@ async fn main() {
         config.rate_limit.user_per_min,
         config.rate_limit.admin_per_min,
     ));
+    {
+        let rate_limiters = rate_limiters.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                rate_limiters.shrink_idle_entries();
+            }
+        });
+    }
 
     let signyu_client = config.signyu.api_key.clone().map(|api_key| {
         std::sync::Arc::new(file_server::signature_providers::signyu::SignYuClient::new(

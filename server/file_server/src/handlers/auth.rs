@@ -444,11 +444,21 @@ pub async fn forgot_password(
     Json(payload): Json<ForgotPasswordPayload>,
 ) -> Response {
     let email = payload.email.trim().to_lowercase();
+    if email.is_empty() || email.len() > 254 || !email.contains('@') {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": "Invalid email format."
+            })),
+        )
+            .into_response();
+    }
 
     // Checked before email_exists, so it can't become an enumeration side channel.
     if state
         .rate_limiters
-        .email_recipient_limiter
+        .email_reset_limiter
         .check_key(&email)
         .is_err()
     {

@@ -101,22 +101,11 @@ pub async fn add_tenant(
     Json(payload): Json<AddTenantRequest>,
 ) -> Result<Json<AddTenantResponse>, ApiError> {
     let email = payload.tenant_email.trim().to_lowercase();
-    if !email.contains('@') || !email.contains('.') {
+    if email.is_empty() || email.len() > 254 || !email.contains('@') || !email.contains('.') {
         return Err(bad_request("Invalid email format."));
     }
     if email == user.email.trim().to_lowercase() {
         return Err(bad_request("You cannot add yourself as a tenant."));
-    }
-    // Cap per-recipient so this can't be used to bomb or phish an arbitrary inbox.
-    if state
-        .rate_limiters
-        .email_recipient_limiter
-        .check_key(&email)
-        .is_err()
-    {
-        return Err(too_many_requests(
-            "Too many invites sent to this email recently. Please try again later.",
-        ));
     }
 
     let mut tx = state.pg_pool.begin().await.internal_err()?;
@@ -128,6 +117,19 @@ pub async fn add_tenant(
     {
         return Err(bad_request(
             "This email belongs to an existing resident or admin account and can't be mapped as a tenant.",
+        ));
+    }
+
+    // Checked only once the caller is confirmed to actually own this flat — cap
+    // per-recipient so this can't be used to bomb or phish an arbitrary inbox.
+    if state
+        .rate_limiters
+        .email_invite_limiter
+        .check_key(&email)
+        .is_err()
+    {
+        return Err(too_many_requests(
+            "Too many invites sent to this email recently. Please try again later.",
         ));
     }
 

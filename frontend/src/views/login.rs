@@ -260,7 +260,6 @@ pub(crate) const LOGIN_HTML: &str = r#"
 
         function postLoginRedirectUrl() {
             const target = new URLSearchParams(window.location.search).get('redirect');
-            // Browsers treat a leading backslash as a slash, so check both as "//".
             const normalized = target ? target.replace(/\\/g, '/') : '';
             if (target && normalized.startsWith('/') && !normalized.startsWith('//')) {
                 return target;

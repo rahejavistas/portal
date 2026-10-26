@@ -22,8 +22,12 @@ pub struct RateLimiters {
     pub ip_limiter: RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>,
     pub user_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
     pub admin_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
-    /// Per-recipient-email cap for tenant invites and password resets, always on.
-    pub email_recipient_limiter: RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>,
+    /// Per-recipient-email cap for tenant invites, always on. Separate from
+    /// `email_reset_limiter` so the two routes can't be used to exhaust each other's
+    /// quota against the same victim address.
+    pub email_invite_limiter: RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>,
+    /// Per-recipient-email cap for password resets, always on.
+    pub email_reset_limiter: RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>,
 }
 
 impl RateLimiters {
@@ -38,8 +42,18 @@ impl RateLimiters {
             ip_limiter: RateLimiter::keyed(ip_quota),
             user_limiter: RateLimiter::keyed(user_quota),
             admin_limiter: RateLimiter::keyed(admin_quota),
-            email_recipient_limiter: RateLimiter::keyed(email_quota),
+            email_invite_limiter: RateLimiter::keyed(email_quota),
+            email_reset_limiter: RateLimiter::keyed(email_quota),
         }
+    }
+
+    /// Drops stale keyed-limiter entries so an attacker feeding in arbitrary emails
+    /// can't grow these maps without bound. Call this periodically, not per-request.
+    pub fn shrink_idle_entries(&self) {
+        self.email_invite_limiter.retain_recent();
+        self.email_invite_limiter.shrink_to_fit();
+        self.email_reset_limiter.retain_recent();
+        self.email_reset_limiter.shrink_to_fit();
     }
 }
 
