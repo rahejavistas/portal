@@ -12,7 +12,7 @@ A user can hold zero or more active designations at once. Only two designations 
 | Code | Label | Notes |
 |---|---|---|
 | `super_admin` | Super Admin | Seed-only (`is_system = TRUE`), granted at startup to `SUPER_ADMIN_EMAIL`, never assignable/revocable/deletable through the API. Seeded with every current permission. |
-| `staff` | Staff | Seed-only (`is_system = TRUE`). Seeded with `users.manage`, `process.view`, `process.reviewer`. |
+| `staff` | Staff | Seed-only, seeded with `users.manage`, `process.view`, `process.reviewer`, but its permissions can be changed afterward (not `is_system`) — it just can't be deleted, since new staff accounts are always created with it. |
 
 Any other designation (e.g. "committee", "treasurer") is entirely admin-defined: its code/label, which permissions it holds, and which document categories it can read/manage are all configured through the admin Roles UI — nothing else is hardcoded to a specific designation name in code.
 

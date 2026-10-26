@@ -688,6 +688,33 @@ async fn test_cannot_toggle_permissions_for_system_designation() {
     assert_forbidden(resp, "toggling a permission on super_admin");
 }
 
+/// Unlike `super_admin`, `staff` is not `is_system` — an admin can customize its
+/// permissions, but `staff` itself can never be deleted since `create_staff_user`
+/// hardcodes assigning it.
+#[tokio::test]
+async fn test_staff_designation_permissions_are_editable_but_it_cannot_be_deleted() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+
+    let toggle_resp = ureq::post(&format!(
+        "{}/api/v1/admin/roles/designations/permissions/toggle",
+        url
+    ))
+    .set("Authorization", &admin_auth)
+    .send_json(serde_json::json!({"designation_code": "staff", "permission_code": "documents.all.manage", "enabled": true}));
+    assert!(
+        toggle_resp.is_ok(),
+        "staff's permissions must be editable, unlike a true system designation"
+    );
+
+    let delete_resp = ureq::post(&format!("{}/api/v1/admin/roles/designations/delete", url))
+        .set("Authorization", &admin_auth)
+        .send_json(serde_json::json!({"code": "staff"}));
+    assert_error(delete_resp, "deleting the staff designation");
+}
+
 /// A holder of `designations.manage` can never toggle permissions on a designation they
 /// themselves currently hold, and can never grant a permission they don't hold
 /// themselves to any designation — both are two-hop self-escalation paths, separate

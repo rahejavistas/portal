@@ -2,7 +2,7 @@ use crate::document::SignatureRequirement;
 use crate::extractors::SessionUser;
 use crate::handlers::error::{bad_request, forbidden, internal_err, ApiError};
 use crate::state::AppState;
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use hmac::Mac;
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ async fn load_template(
     let info = process::db::get_process_info(&mut *conn, process_id)
         .await
         .map_err(internal_err)?
-        .ok_or_else(|| internal_err("Process not found"))?;
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json("Process not found".to_string())))?;
     process::template_store::load_template_version(&mut *conn, info.template_version_id)
         .await
         .map_err(internal_err)
@@ -467,10 +467,12 @@ async fn reconcile_external_document_locked(
     external_document_id: &str,
     conn: &mut sqlx::PgConnection,
 ) -> Result<(), ApiError> {
-    let signyu = state
-        .signyu_client
-        .as_ref()
-        .ok_or_else(|| internal_err("SignYu is not configured on this server"))?;
+    let signyu = state.signyu_client.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json("SignYu is not configured on this server".to_string()),
+        )
+    })?;
 
     let status = signyu
         .get_document(external_document_id, None)

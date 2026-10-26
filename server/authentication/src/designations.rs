@@ -58,6 +58,12 @@ impl PermissionsManager {
         code: &str,
         deleted_by: Option<i32>,
     ) -> Result<(), String> {
+        // Not `is_system` (its permissions are meant to be editable), but
+        // `create_staff_user` hardcodes this code — deleting it would break staff
+        // account creation.
+        if code == "staff" {
+            return Err("'staff' cannot be deleted.".to_string());
+        }
         self.require_editable_designation(code).await?;
 
         let still_assigned: bool = sqlx::query_scalar(
