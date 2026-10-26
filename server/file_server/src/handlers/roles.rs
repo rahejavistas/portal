@@ -452,6 +452,34 @@ pub async fn toggle_document_category_designation(
     SessionUser(caller): SessionUser,
     Json(payload): Json<SetCategoryDesignationPayload>,
 ) -> impl IntoResponse {
+    // Self-escalation guard, same reasoning as `guard_designation_change`.
+    if caller.has_designation(&payload.designation_code) {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "You cannot change the document-category access of a designation you hold \
+             yourself. Another admin must make this change.",
+        );
+    }
+
+    // Same guard as `toggle_designation_permission`, scoped to this category.
+    if payload.can_read || payload.can_manage {
+        let caller_manages_category =
+            match state.document_manager.manageable_categories(&caller).await {
+                Ok(None) => true,
+                Ok(Some(categories)) => categories.contains(&payload.category),
+                Err(e) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+            };
+        if !caller_manages_category {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                format!(
+                    "You cannot grant access to the '{}' category as you don't manage it yourself.",
+                    payload.category
+                ),
+            );
+        }
+    }
+
     match state
         .document_manager
         .set_category_designation(

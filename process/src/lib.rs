@@ -46,11 +46,6 @@ pub enum StepOwner {
 }
 
 impl StepOwner {
-    /// Filled by the flat's owner or tenant rather than a reviewer side.
-    pub fn is_resident(&self) -> bool {
-        matches!(self, StepOwner::User | StepOwner::Tenant)
-    }
-
     /// Which side of the process an open step on this owner puts the turn on.
     pub fn turn(&self) -> crate::state_machine::ProcessTurn {
         use crate::state_machine::ProcessTurn;
@@ -99,16 +94,6 @@ pub struct ProcessStepTemplate {
     pub filled_by: StepOwner,
     pub fields: Option<Vec<ProcessFieldTemplate>>,
     pub substeps: Option<Vec<ProcessStepTemplate>>,
-}
-
-impl ProcessStepTemplate {
-    /// Whether any step beneath this one is filled by the owner or the tenant.
-    pub fn has_resident_descendant(&self) -> bool {
-        self.substeps
-            .iter()
-            .flatten()
-            .any(|s| s.filled_by.is_resident() || s.has_resident_descendant())
-    }
 }
 
 /// Carries no identity of its own — the version is tracked by the wrapping DB row.

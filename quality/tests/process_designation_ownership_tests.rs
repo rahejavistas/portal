@@ -161,9 +161,7 @@ async fn test_global_admin_without_designation_is_rejected_via_real_api() {
     );
 }
 
-/// The actual designation holder can complete the step immediately (no PendingReview —
-/// `Admin`/`Designation` owners never need a separate review step), and
-/// `acted_as_designation` is readable back from a real database round-trip.
+/// Filling the step needs a separate admin review before it reaches `COMPLETED`.
 #[tokio::test]
 async fn test_designation_holder_completes_step_and_acted_as_designation_persists() {
     let env = setup_api_test_env().await;
@@ -196,8 +194,8 @@ async fn test_designation_holder_completes_step_and_acted_as_designation_persist
 
     let step = &refetched["steps"][0];
     assert_eq!(
-        step["status"], "COMPLETED",
-        "a Designation-owned step completes immediately, no separate review needed"
+        step["status"], "PENDING_REVIEW",
+        "filling a Designation-owned stage must not skip its separate approval step"
     );
     let field = &step["fields"][0];
     let history_entry = &field["history"][0];
@@ -205,6 +203,25 @@ async fn test_designation_holder_completes_step_and_acted_as_designation_persist
         history_entry["acted_as_designation"], "secretary",
         "acted_as_designation must round-trip through process_fields and back out of get_field_history"
     );
+
+    let review_resp = ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "is_approved": true,
+            "notes": "Verified"
+        }))
+        .expect("admin approves the designation holder's stage");
+    assert_eq!(review_resp.status(), 200);
+
+    let reapproved: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(&holder_jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    assert_eq!(reapproved["steps"][0]["status"], "COMPLETED");
 }
 
 /// The whole point of `StepOwner::Designation`: the designation's holder can act on a
@@ -241,7 +258,8 @@ async fn test_non_owner_designation_holder_can_act_on_someone_elses_process() {
     let result = save_step(&url, &holder_jwt, process_id, step_id, field_id)
         .expect("the designation's holder must be able to act on the owner's process");
     assert_eq!(result["status"], "success");
-    assert_eq!(result["step"]["is_completed"], true);
+    // Filling it isn't enough now; it still needs a separate approval.
+    assert_eq!(result["step"]["is_completed"], false);
 }
 
 fn wing_representative_draft() -> serde_json::Value {
@@ -291,7 +309,8 @@ async fn test_any_wing_representative_can_act_on_any_wings_process() {
     let result = save_step(&url, &b_rep_jwt, process_id, step_id, field_id)
         .expect("wing B's own representative must also be able to act on wing A's process");
     assert_eq!(result["status"], "success");
-    assert_eq!(result["step"]["is_completed"], true);
+    // Filling it isn't enough now; it still needs a separate approval.
+    assert_eq!(result["step"]["is_completed"], false);
 
     let second_owner_jwt = {
         quick_create_user(&env, &admin_jwt, "wing_a_owner2@dtest.test", "A", "213");

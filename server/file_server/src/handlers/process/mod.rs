@@ -105,13 +105,24 @@ pub(super) async fn load_authorized_process(
     let template = process::template_store::load_template_version(conn, info.template_version_id)
         .await
         .map_err(|e| {
+            eprintln!("Process handler template load error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(format!("Template error: {}", e)),
+                Json("An internal error occurred. Please try again.".to_string()),
             )
         })?;
 
-    let owns_process = info.user_id == user.user_id;
+    // A former owner must lose read access too, not just the write-side checks.
+    let is_starter = info.user_id == user.user_id;
+    let owns_process = match info.ownership_id {
+        Some(oid) => {
+            is_starter
+                && process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
+                    .await
+                    .internal_err()?
+        }
+        None => is_starter,
+    };
     let wing_representative_codes = process::db::get_all_wing_representative_codes(conn)
         .await
         .internal_err()?;

@@ -22,6 +22,8 @@ pub struct RateLimiters {
     pub ip_limiter: RateLimiter<IpAddr, DefaultKeyedStateStore<IpAddr>, DefaultClock>,
     pub user_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
     pub admin_limiter: RateLimiter<i32, DefaultKeyedStateStore<i32>, DefaultClock>,
+    /// Per-recipient-email cap for tenant invites and password resets, always on.
+    pub email_recipient_limiter: RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>,
 }
 
 impl RateLimiters {
@@ -29,12 +31,14 @@ impl RateLimiters {
         let ip_quota = Quota::per_minute(NonZeroU32::new(ip_per_min.max(1)).unwrap());
         let user_quota = Quota::per_minute(NonZeroU32::new(user_per_min.max(1)).unwrap());
         let admin_quota = Quota::per_minute(NonZeroU32::new(admin_per_min.max(1)).unwrap());
+        let email_quota = Quota::per_hour(NonZeroU32::new(3).unwrap());
 
         Self {
             enabled,
             ip_limiter: RateLimiter::keyed(ip_quota),
             user_limiter: RateLimiter::keyed(user_quota),
             admin_limiter: RateLimiter::keyed(admin_quota),
+            email_recipient_limiter: RateLimiter::keyed(email_quota),
         }
     }
 }

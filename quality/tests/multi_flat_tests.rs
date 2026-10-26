@@ -425,3 +425,109 @@ async fn test_process_upload_is_linked_only_to_the_processs_flat() {
         "the document must not have been linked to the owner's other flat",
     );
 }
+
+/// A process field's document must belong to this process's own flat, not just any
+/// flat the caller owns.
+#[tokio::test]
+async fn test_save_step_rejects_a_document_belonging_to_the_callers_other_flat() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "crossflat@test.com", "C", "501");
+    quick_create_user(&env, &admin_jwt, "crossflat@test.com", "C", "502");
+    let res_jwt = quick_onboard_user(&env, "crossflat@test.com", "password123");
+    let res_auth = auth(&res_jwt);
+
+    let draft = serde_json::json!({
+        "template_id": null, "name": "Cross Flat Doc Process", "description": null,
+        "is_optional": false,
+        "substeps": [{"name": "S", "fields": [{"name": "Doc", "type": "document"}]}]
+    });
+    let save: serde_json::Value =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/save", url))
+            .set("Authorization", &auth(&admin_jwt))
+            .send_json(draft)
+            .unwrap()
+            .into_json()
+            .unwrap();
+    let version_id = save["version_id"].as_i64().unwrap();
+    let templates: Vec<serde_json::Value> =
+        ureq::post(&format!("{}/api/v1/admin/process-templates/list", url))
+            .set("Authorization", &auth(&admin_jwt))
+            .send_json(serde_json::json!({}))
+            .unwrap()
+            .into_json()
+            .unwrap();
+    let template_id = templates
+        .iter()
+        .find(|t| {
+            t["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["version_id"].as_i64() == Some(version_id))
+        })
+        .and_then(|t| t["template_id"].as_i64())
+        .unwrap();
+    ureq::post(&format!("{}/api/v1/admin/process-templates/activate", url))
+        .set("Authorization", &auth(&admin_jwt))
+        .send_json(serde_json::json!({ "template_id": template_id, "version_id": version_id }))
+        .unwrap();
+
+    // A document genuinely scoped to the other flat (502).
+    let other_flat_doc_id = quick_create_document(
+        &env,
+        &admin_jwt,
+        "Flat 502's Own Document",
+        "RESIDENT_SPECIFIC",
+        Some(("C", "502")),
+    );
+
+    let listed: serde_json::Value = ureq::post(&format!("{}/api/v1/process/list", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({ "personal_only": true }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let flat_501 = listed["flats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["flat_number"].as_str().unwrap().ends_with("501"))
+        .and_then(|f| f["flat_id"].as_i64())
+        .unwrap();
+    let state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({ "template_id": template_id, "flat_id": flat_501 }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let process_id = state["process_id"].as_str().unwrap();
+    let step_id = state["steps"][0]["template_step_id"].as_i64().unwrap();
+    let field_id = state["steps"][0]["fields"][0]["template_field_id"]
+        .as_i64()
+        .unwrap();
+
+    let resp = ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "fields": [{
+                "template_field_id": field_id,
+                "text_value": null,
+                "document_id": other_flat_doc_id
+            }]
+        }));
+    match resp {
+        Err(ureq::Error::Status(code, _)) => assert_eq!(
+            code, 400,
+            "a document scoped to the caller's other flat must be rejected, not attached"
+        ),
+        other => panic!(
+            "expected the save to be rejected, got {:?}",
+            other.map(|r| r.status())
+        ),
+    }
+}
