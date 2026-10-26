@@ -417,6 +417,9 @@ struct StepMapContext<'a> {
     actor: &'a process::state_machine::ActorContext,
     /// Hide the documents (value, history, signatures) on the owner's (`User`) stages.
     hide_owner_documents: bool,
+    /// Strip `actor_email` from history — the owner's on owner stages, staff's on
+    /// everyone else's.
+    redact_staff_email: bool,
 }
 
 /// Recursively map step templates to the response structure.
@@ -448,8 +451,15 @@ fn map_step_template(
                 .filter(|_| !hide_document)
                 .cloned()
                 .unwrap_or_default();
-            // Not just documents — the owner's email must never reach the tenant.
-            if ctx.hide_owner_documents && is_owner_stage {
+            let is_staff_stage = !matches!(
+                step_tpl.filled_by,
+                process::StepOwner::User | process::StepOwner::Tenant
+            );
+            // Not just documents — the owner's email must never reach the tenant, and
+            // staff emails must never reach a plain resident.
+            if (ctx.hide_owner_documents && is_owner_stage)
+                || (ctx.redact_staff_email && is_staff_stage)
+            {
                 for entry in &mut history {
                     entry.actor_email = None;
                 }
@@ -1036,6 +1046,7 @@ pub async fn get_process_state(
         designation_label_map: &designation_label_map,
         actor: &actor,
         hide_owner_documents,
+        redact_staff_email,
     };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {
