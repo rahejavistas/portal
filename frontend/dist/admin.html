@@ -6413,6 +6413,10 @@ function openDesignationPicker(field) {
                     skipped.push({ name: relPath, reason: `could not determine wing/flat number from "${wingFolder}/${flatFolder}"` });
                     continue;
                 }
+                if (flatIsCombined && resolvedFlat.wing !== wingCaptured.trim().toUpperCase()) {
+                    skipped.push({ name: relPath, reason: `wing folder "${wingFolder}" does not match flat folder "${flatFolder}"` });
+                    continue;
+                }
 
                 const subcatCaptured = matchTemplate(subcatFolder, subcatTemplate, 'subcategory');
                 if (subcatCaptured === null) {

@@ -1469,8 +1469,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             return !!(user && (user.can_view_all_processes || (user.designations && user.designations.length > 0)));
         }
 
-        function canUploadAsReviewer(user) {
-            return IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user);
+        function canUploadAsReviewer(user, step) {
+            return IS_ADMIN_PROCESS_PAGE && (canReviewProcess(user) || !!(step && step.can_caller_review));
         }
 
         const API_BASE = window.location.port === "4000" ? `http://${window.location.hostname}:3000` : "";
@@ -3502,7 +3502,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const processId = currentProcessDetails.process_id;
 
             try {
-                const isCurrentAdmin = canUploadAsReviewer(user);
+                const step = findStepInTree(currentProcessDetails.steps, stepId);
+                const isCurrentAdmin = canUploadAsReviewer(user, step);
                 const uploadEndpoint = isCurrentAdmin
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;
@@ -3851,8 +3852,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             currentPickerFieldId = fieldId;
             document.getElementById('docPickerModal').style.display = 'flex';
             document.getElementById('picker-new-upload').value = '';
-            
-            const isCurrentAdmin = canUploadAsReviewer(user);
+
+            const pickerOpenStep = findStepInTree(currentProcessDetails.steps, stepId);
+            const isCurrentAdmin = canUploadAsReviewer(user, pickerOpenStep);
             const libraryHeading = document.getElementById('picker-library-heading');
             const libraryContainer = document.getElementById('picker-existing-docs');
             
@@ -3983,7 +3985,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if(progressEl) { progressEl.style.color = 'var(--primary)'; progressEl.textContent = 'Requesting upload URL...'; }
 
             try {
-                const isCurrentAdmin = canUploadAsReviewer(user);
+                const pickerStep = findStepInTree(currentProcessDetails.steps, currentPickerStepId);
+                const isCurrentAdmin = canUploadAsReviewer(user, pickerStep);
                 const uploadEndpoint = isCurrentAdmin
                     ? `${API_BASE}/api/v1/admin/process/upload-url`
                     : `${API_BASE}/api/v1/documents/upload-url`;

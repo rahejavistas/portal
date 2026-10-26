@@ -260,9 +260,13 @@ pub(crate) const LOGIN_HTML: &str = r#"
 
         function postLoginRedirectUrl() {
             const target = new URLSearchParams(window.location.search).get('redirect');
-            const normalized = target ? target.replace(/\\/g, '/') : '';
-            if (target && normalized.startsWith('/') && !normalized.startsWith('//')) {
-                return target;
+            if (target) {
+                try {
+                    const url = new URL(target, window.location.origin);
+                    if (url.origin === window.location.origin) {
+                        return url.pathname + url.search + url.hash;
+                    }
+                } catch (e) {}
             }
             return '/dashboard';
         }

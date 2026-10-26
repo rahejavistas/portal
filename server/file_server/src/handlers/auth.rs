@@ -572,6 +572,14 @@ pub async fn reset_password(
     State(state): State<AppState>,
     Json(payload): Json<ResetPasswordPayload>,
 ) -> impl IntoResponse {
+    if let Err(msg) = authentication::validate_password_strength(&payload.password) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": msg })),
+        )
+            .into_response();
+    }
+
     match state
         .permissions_manager
         .reset_password_with_token(&payload.token, &payload.password)
