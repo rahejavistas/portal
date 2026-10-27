@@ -2,7 +2,6 @@ use crate::extractors::SessionUser;
 use crate::handlers::error::internal_err;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use std::collections::HashSet;
 
 // ---------------------------------------------------------------------------
 // Utility
@@ -51,11 +50,9 @@ async fn notify_designation_change(user_email: &str, designation_code: &str, gra
     }
 }
 
-/// Blocks self-edits, touching system designations, and assigning/revoking a
-/// designation that carries a permission the caller doesn't already hold themselves —
-/// otherwise a UsersRolesManage holder could grant another account (e.g. a fresh staff
-/// account they also control) a designation with DesignationsManage/UsersManage/etc.
-/// that they don't have, escalating privilege in two hops.
+/// Blocks self-edits and touching system designations. The "caller must hold every
+/// permission the designation grants" rule is enforced atomically when assigning or
+/// revoking, not here.
 async fn guard_designation_change(
     state: &AppState,
     caller: &authentication::User,
@@ -91,29 +88,29 @@ async fn guard_designation_change(
         )));
     }
 
-    let designation_permissions = state
-        .permissions_manager
-        .get_designation_permissions(designation_code)
-        .await
-        .map_err(|e| Box::new(internal_err(e).into_response()))?;
-    let caller_permissions: HashSet<&str> = caller.permissions.iter().map(String::as_str).collect();
-    let missing: Vec<&str> = designation_permissions
-        .iter()
-        .map(String::as_str)
-        .filter(|p| !caller_permissions.contains(p))
-        .collect();
-    if !missing.is_empty() {
-        return Err(Box::new(error_response(
+    Ok(())
+}
+
+fn change_error_response(
+    error: authentication::DesignationChangeError,
+    designation_code: &str,
+) -> axum::response::Response {
+    use authentication::DesignationChangeError as E;
+    match error {
+        E::UnknownDesignation(code) => error_response(
+            StatusCode::BAD_REQUEST,
+            format!("Unknown designation: {}", code),
+        ),
+        E::MissingPermissions(missing) => error_response(
             StatusCode::FORBIDDEN,
             format!(
                 "You cannot assign or revoke '{}' - it grants permissions you don't hold yourself ({}).",
                 designation_code,
                 missing.join(", ")
             ),
-        )));
+        ),
+        E::Db(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -152,14 +149,15 @@ pub async fn assign_designation(
 
     match state
         .permissions_manager
-        .assign_designation(
+        .assign_designation_within(
             payload.user_id,
             &payload.designation_code,
-            Some(caller.user_id),
+            caller.user_id,
+            &caller.permissions,
         )
         .await
     {
-        Ok(_) => {
+        Ok(()) => {
             if let Ok(Some(user)) = state
                 .permissions_manager
                 .get_user_by_id(payload.user_id)
@@ -182,7 +180,7 @@ pub async fn assign_designation(
             )
                 .into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => change_error_response(e, &payload.designation_code),
     }
 }
 
@@ -200,10 +198,11 @@ pub async fn revoke_designation(
 
     match state
         .permissions_manager
-        .revoke_designation(
+        .revoke_designation_within(
             payload.user_id,
             &payload.designation_code,
-            Some(caller.user_id),
+            caller.user_id,
+            &caller.permissions,
         )
         .await
     {
@@ -223,7 +222,7 @@ pub async fn revoke_designation(
             )
                 .into_response()
         }
-        Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => change_error_response(e, &payload.designation_code),
     }
 }
 

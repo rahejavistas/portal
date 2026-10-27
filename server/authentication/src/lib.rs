@@ -992,7 +992,7 @@ impl PermissionsManager {
 }
 
 mod designations;
-pub use designations::{Designation, PermissionRow};
+pub use designations::{Designation, DesignationChangeError, PermissionRow};
 
 /// Validates that a password is strong enough (>= 8 characters, at least 1 number)
 pub fn validate_password_strength(password: &str) -> Result<(), &'static str> {

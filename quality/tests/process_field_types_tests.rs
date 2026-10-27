@@ -796,3 +796,97 @@ async fn completed_at_does_not_drift_on_repeated_unchanged_syncs() {
         "completed_at must not drift forward on an unchanged sync"
     );
 }
+
+async fn seed_cleared_no_dues_process(
+    pool: &sqlx::PgPool,
+    email: &str,
+    flat: &str,
+) -> (uuid::Uuid, ProcessTemplate) {
+    let mut conn = pool.acquire().await.unwrap();
+    let (user_id, ownership_id) = seed_user_with_flat(pool, email, flat).await;
+    seed_dues_snapshot(pool, flat, dec!(7500.00), dec!(0)).await;
+    let template = no_dues_template();
+    let version_id = seed_template_version(&mut conn, &template).await;
+    let process_id = process::db::init_process(
+        &mut conn,
+        user_id,
+        version_id,
+        &template,
+        Some(ownership_id),
+    )
+    .await
+    .unwrap()
+    .process_id;
+    (process_id, template)
+}
+
+async fn hold_process_lock(
+    pool: &sqlx::PgPool,
+    process_id: uuid::Uuid,
+) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let mut writer = pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM processes WHERE process_id = $1 FOR NO KEY UPDATE")
+        .bind(process_id)
+        .execute(&mut *writer)
+        .await
+        .unwrap();
+    writer
+}
+
+/// A sync with completions to write waits for an in-flight review/reopen to finish, then
+/// applies against the committed state.
+#[tokio::test]
+async fn no_dues_sync_that_must_write_waits_for_a_concurrent_writer() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let (process_id, template) =
+        seed_cleared_no_dues_process(&pool, "no_dues_lock_wait@vistas.com", "512").await;
+    seed_dues_snapshot(&pool, "512", dec!(0), dec!(0)).await;
+
+    let writer = hold_process_lock(&pool, process_id).await;
+
+    let sync_pool = pool.clone();
+    let sync_template = template.clone();
+    let sync = tokio::spawn(async move {
+        let mut tx = sync_pool.begin().await.unwrap();
+        process::db::sync_no_dues_step_completions(&mut tx, process_id, &sync_template)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !sync.is_finished(),
+        "sync must wait while a writer holds the process"
+    );
+
+    writer.commit().await.unwrap();
+    sync.await.unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let statuses = process::db::get_statuses(&mut conn, process_id, &template)
+        .await
+        .unwrap();
+    assert_eq!(statuses.get(&2), Some(&StepStatus::PendingReview));
+}
+
+/// A sync with nothing to write never queues behind writers — plain reads stay lock-free.
+#[tokio::test]
+async fn no_dues_sync_with_nothing_to_write_does_not_wait() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let (process_id, template) =
+        seed_cleared_no_dues_process(&pool, "no_dues_lock_free@vistas.com", "513").await;
+
+    let _writer = hold_process_lock(&pool, process_id).await;
+
+    let mut tx = pool.begin().await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        process::db::sync_no_dues_step_completions(&mut tx, process_id, &template),
+    )
+    .await
+    .expect("a sync with no changes must not block on the process lock")
+    .unwrap();
+}
