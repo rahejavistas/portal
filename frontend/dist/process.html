@@ -1345,19 +1345,21 @@
     </div>
 
     <div class="modal-overlay" id="audit-trail-modal" onclick="if (event.target === this) closeAuditTrailModal()">
-        <div class="modal-content" style="max-width: 640px; max-height: 82vh; overflow-y: auto;">
-            <button class="close-modal-btn" onclick="closeAuditTrailModal()">&times;</button>
-            <h3 style="margin-top: 0; font-size: 1.375rem; font-weight: 800; margin-bottom: 20px;">Audit Trail</h3>
+        <div class="modal-content" style="max-width: 640px; max-height: 82vh; display: flex; flex-direction: column;">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px;">
+                <h3 style="margin: 0; font-size: 1.375rem; font-weight: 800;">Audit Trail</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 12px;">
+                    <button type="button" class="btn" id="audit-pdf-export-btn" onclick="downloadAuditTrailPdf()">Export PDF</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeAuditTrailModal()">Close</button>
+                </div>
+            </div>
 
-            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Status Timeline</div>
-            <div id="audit-modal-events" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem; margin-bottom:24px;"></div>
+            <div style="overflow-y: auto; min-height: 0;">
+                <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Status Timeline</div>
+                <div id="audit-modal-events" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem; margin-bottom:24px;"></div>
 
-            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Field Changes</div>
-            <div id="audit-modal-fields" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem;"></div>
-
-            <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 24px;">
-                <button type="button" class="btn btn-secondary" onclick="closeAuditTrailModal()">Close</button>
-                <button type="button" class="btn" id="audit-pdf-export-btn" onclick="downloadAuditTrailPdf()">Export PDF</button>
+                <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted-foreground); margin-bottom: 8px;">Field Changes</div>
+                <div id="audit-modal-fields" style="display:flex; flex-direction:column; gap:10px; font-size:0.8125rem;"></div>
             </div>
         </div>
     </div>
@@ -2367,13 +2369,30 @@
             STEP_FLAGGED: 'Flagged for attention',
         };
 
-        function collectFieldNames(steps, map) {
+        function collectFieldsById(steps, map) {
             map = map || {};
             (steps || []).forEach(s => {
-                (s.fields || []).forEach(f => { map[f.template_field_id] = f.name; });
-                collectFieldNames(s.substeps, map);
+                (s.fields || []).forEach(f => { map[f.template_field_id] = f; });
+                collectFieldsById(s.substeps, map);
             });
             return map;
+        }
+
+        function describeDeclarationValue(textValue, declarationText) {
+            let parsed;
+            try {
+                parsed = JSON.parse(textValue);
+            } catch (e) {
+                return textValue;
+            }
+            if (!parsed.agreed) return 'Not agreed';
+            const blanks = parsed.blanks || {};
+            const ordered = declarationBlankTokens(declarationText);
+            const extra = Object.keys(blanks).filter(k => !ordered.includes(k)).sort();
+            const filled = ordered.concat(extra)
+                .filter(token => (blanks[token] || '').trim() !== '')
+                .map(token => `${token.charAt(0)}${token.slice(1).toLowerCase()}: ${blanks[token].trim()}`);
+            return filled.length === 0 ? 'Agreed' : `Agreed - ${filled.join(', ')}`;
         }
 
         function collectFieldHistory(steps, list) {
@@ -2407,18 +2426,21 @@
                     </div>
                 `).join('');
 
-            const fieldNames = collectFieldNames(p.steps);
+            const fieldsById = collectFieldsById(p.steps);
             const fieldHistory = collectFieldHistory(p.steps).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
             fieldsEl.innerHTML = fieldHistory.length === 0
                 ? '<span style="color:var(--muted-foreground);">No field changes yet.</span>'
                 : fieldHistory.map(h => {
+                    const field = fieldsById[h.template_field_id] || {};
                     const value = h.document_id
                         ? (h.document_title ? `Document: ${h.document_title}` : 'Document uploaded')
+                        : (field.type === 'declaration' && h.text_value)
+                        ? describeDeclarationValue(h.text_value, (field.requirements && field.requirements.declaration_text) || '')
                         : (h.text_value === 'true' ? 'Yes' : h.text_value === 'false' ? 'No' : (h.text_value || '(cleared)'));
                     return `
                         <div style="border-bottom:1px solid var(--border); padding-bottom:8px;">
                             <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:baseline;">
-                                <span style="font-weight:700;">${escapeHtml(fieldNames[h.template_field_id] || 'Field')}</span>
+                                <span style="font-weight:700;">${escapeHtml(field.name || 'Field')}</span>
                                 <span style="color:var(--muted-foreground); font-size:0.75rem;">${formatDate(h.updated_at)}</span>
                             </div>
                             <div style="color:var(--muted-foreground); font-size:0.75rem;">${h.actor_email ? escapeHtml(h.actor_email) : 'System'}</div>
@@ -2454,7 +2476,10 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `audit-trail-${p.process_id}.pdf`;
+                const now = new Date();
+                const pad = n => String(n).padStart(2, '0');
+                const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}`;
+                a.download = `audit-trail-${p.inward_reg_no || p.process_id}-${stamp}.pdf`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -3145,7 +3170,7 @@
                 const rejectButtonLabel = isCompleted ? 'Revoke & Reopen Step' : 'Send Back / Reject';
                 const rejectOnClick = isCompleted ? `submitAdminRevoke(${stepId})` : `submitAdminReview(${stepId}, false)`;
                 const approveOnClick = `submitAdminReview(${stepId}, true)`;
-                const approveButtonHtml = isCompleted ? '' : `<button class="btn" onclick="${approveOnClick}">Approve Step (Ctrl+Enter)</button>`;
+                const approveButtonHtml = isCompleted ? '' : `<button class="btn" onclick="${approveOnClick}">Approve Stage</button>`;
                 const approveShortcutAttr = isCompleted
                     ? ''
                     : `onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();${approveOnClick};}"`;
