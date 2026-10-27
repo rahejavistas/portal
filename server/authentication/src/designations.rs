@@ -17,6 +17,90 @@ pub struct PermissionRow {
     pub label: String,
 }
 
+#[derive(Debug)]
+pub enum DesignationChangeError {
+    UnknownDesignation(String),
+    MissingPermissions(Vec<String>),
+    Db(String),
+}
+
+impl std::fmt::Display for DesignationChangeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DesignationChangeError::UnknownDesignation(code) => {
+                write!(f, "Unknown designation: {}", code)
+            }
+            DesignationChangeError::MissingPermissions(missing) => write!(
+                f,
+                "designation grants permissions the caller doesn't hold: {}",
+                missing.join(", ")
+            ),
+            DesignationChangeError::Db(e) => f.write_str(e),
+        }
+    }
+}
+
+impl From<sqlx::Error> for DesignationChangeError {
+    fn from(e: sqlx::Error) -> Self {
+        DesignationChangeError::Db(e.to_string())
+    }
+}
+
+/// Holds until the transaction ends. Assigning, revoking, deleting and changing the
+/// permissions of one designation all take it first, so a check made under it can't be
+/// invalidated by another of those before the transaction commits. Returns the active
+/// designation's id. Reads after this call see everything committed while it waited.
+async fn lock_designation(
+    conn: &mut sqlx::PgConnection,
+    code: &str,
+) -> Result<Option<i32>, sqlx::Error> {
+    // `::text` only gives the void-returning lock call a type sqlx can decode.
+    let locked: Option<(i32, String)> = sqlx::query_as(
+        "SELECT designation_id, pg_advisory_xact_lock(hashtext('designation'), designation_id)::text \
+         FROM designations WHERE code = $1 AND is_active = TRUE",
+    )
+    .bind(code)
+    .fetch_optional(conn)
+    .await?;
+    Ok(locked.map(|(id, _)| id))
+}
+
+/// Of the permissions `designation_id` grants, those not in `held`.
+async fn permissions_not_held(
+    conn: &mut sqlx::PgConnection,
+    designation_id: i32,
+    held: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT p.code FROM designation_permissions dp \
+         JOIN permissions p ON p.permission_id = dp.permission_id \
+         WHERE dp.designation_id = $1 AND p.code <> ALL($2::text[])",
+    )
+    .bind(designation_id)
+    .bind(held)
+    .fetch_all(conn)
+    .await
+}
+
+/// Locks the designation and, when `held` is given, refuses it if it grants any permission
+/// outside `held`. Returns the designation's id.
+async fn lock_within(
+    conn: &mut sqlx::PgConnection,
+    code: &str,
+    held: Option<&[String]>,
+) -> Result<i32, DesignationChangeError> {
+    let designation_id = lock_designation(&mut *conn, code)
+        .await?
+        .ok_or_else(|| DesignationChangeError::UnknownDesignation(code.to_string()))?;
+    if let Some(held) = held {
+        let missing = permissions_not_held(conn, designation_id, held).await?;
+        if !missing.is_empty() {
+            return Err(DesignationChangeError::MissingPermissions(missing));
+        }
+    }
+    Ok(designation_id)
+}
+
 impl PermissionsManager {
     pub async fn list_designations(&self) -> Result<Vec<Designation>, sqlx::Error> {
         sqlx::query_as(
@@ -66,13 +150,19 @@ impl PermissionsManager {
         }
         self.require_editable_designation(code).await?;
 
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        lock_designation(&mut tx, code)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Unknown designation: {}", code))?;
+
         let still_assigned: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM user_designations ud \
              JOIN designations d ON d.designation_id = ud.designation_id \
              WHERE d.code = $1 AND ud.is_active = TRUE)",
         )
         .bind(code)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -89,7 +179,7 @@ impl PermissionsManager {
              WHERE d.code = $1)",
         )
         .bind(code)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
         if is_wing_representative {
@@ -98,9 +188,10 @@ impl PermissionsManager {
 
         sqlx::query("UPDATE designations SET is_active = FALSE WHERE code = $1")
             .bind(code)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
 
         let _ = log_permission_change(
             &self.pool,
@@ -222,6 +313,10 @@ impl PermissionsManager {
         enabled: bool,
         actor: Option<i32>,
     ) -> Result<(), String> {
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        lock_designation(&mut tx, designation_code)
+            .await
+            .map_err(|e| e.to_string())?;
         if enabled {
             sqlx::query(
                 "INSERT INTO designation_permissions (designation_id, permission_id, granted_by) \
@@ -233,7 +328,7 @@ impl PermissionsManager {
             .bind(designation_code)
             .bind(permission_code)
             .bind(actor)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
         } else {
@@ -244,10 +339,11 @@ impl PermissionsManager {
             )
             .bind(designation_code)
             .bind(permission_code)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
         }
+        tx.commit().await.map_err(|e| e.to_string())?;
 
         let verb = if enabled { "Granted" } else { "Revoked" };
         let _ = log_permission_change(
@@ -373,27 +469,52 @@ impl PermissionsManager {
         designation_code: &str,
         assigned_by: Option<i32>,
     ) -> Result<(), String> {
-        // DO UPDATE (not DO NOTHING) so RETURNING always yields a row on success.
-        let assigned: Option<(i32,)> = sqlx::query_as(
-            "WITH target AS ( \
-                 SELECT designation_id FROM designations WHERE code = $1 AND is_active = TRUE \
-             ) \
-             INSERT INTO user_designations (user_id, designation_id, assigned_by) \
-             SELECT $2, designation_id, $3 FROM target \
-             ON CONFLICT (user_id, designation_id) WHERE is_active = TRUE \
-             DO UPDATE SET assigned_by = EXCLUDED.assigned_by, updated_at = NOW() \
-             RETURNING designation_id",
-        )
-        .bind(designation_code)
-        .bind(user_id)
-        .bind(assigned_by)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        self.assign(user_id, designation_code, assigned_by, None)
+            .await
+            .map_err(|e| e.to_string())
+    }
 
-        if assigned.is_none() {
-            return Err(format!("Unknown designation: {}", designation_code));
-        }
+    /// Like `assign_designation`, but refuses a designation carrying any permission not in
+    /// `assigner_permissions`. The check runs under the designation lock, so a permission
+    /// granted to the designation in the meantime can't slip past it.
+    pub async fn assign_designation_within(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+        assigned_by: i32,
+        assigner_permissions: &[String],
+    ) -> Result<(), DesignationChangeError> {
+        self.assign(
+            user_id,
+            designation_code,
+            Some(assigned_by),
+            Some(assigner_permissions),
+        )
+        .await
+    }
+
+    async fn assign(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+        assigned_by: Option<i32>,
+        assigner_permissions: Option<&[String]>,
+    ) -> Result<(), DesignationChangeError> {
+        let mut tx = self.pool.begin().await?;
+        let designation_id = lock_within(&mut tx, designation_code, assigner_permissions).await?;
+
+        sqlx::query(
+            "INSERT INTO user_designations (user_id, designation_id, assigned_by) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (user_id, designation_id) WHERE is_active = TRUE \
+             DO UPDATE SET assigned_by = EXCLUDED.assigned_by, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(designation_id)
+        .bind(assigned_by)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
 
         let _ = log_permission_change(
             &self.pool,
@@ -408,26 +529,60 @@ impl PermissionsManager {
     }
 
     /// A no-op revoke (never held, or already revoked) is a success, not an error —
-    /// callers can always retry a revoke safely. Returns whether a row actually
-    /// changed, so callers only audit-log/notify on a real change.
+    /// callers can always retry a revoke safely. An unknown designation is an error.
+    /// Returns whether a row actually changed, so callers only audit-log/notify on a
+    /// real change.
     pub async fn revoke_designation(
         &self,
         user_id: i32,
         designation_code: &str,
         revoked_by: Option<i32>,
     ) -> Result<bool, String> {
-        let result = sqlx::query(
+        self.revoke(user_id, designation_code, revoked_by, None)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Like `revoke_designation`, but refuses a designation carrying any permission not in
+    /// `revoker_permissions`, checked under the designation lock.
+    pub async fn revoke_designation_within(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+        revoked_by: i32,
+        revoker_permissions: &[String],
+    ) -> Result<bool, DesignationChangeError> {
+        self.revoke(
+            user_id,
+            designation_code,
+            Some(revoked_by),
+            Some(revoker_permissions),
+        )
+        .await
+    }
+
+    async fn revoke(
+        &self,
+        user_id: i32,
+        designation_code: &str,
+        revoked_by: Option<i32>,
+        revoker_permissions: Option<&[String]>,
+    ) -> Result<bool, DesignationChangeError> {
+        let mut tx = self.pool.begin().await?;
+        let designation_id = lock_within(&mut tx, designation_code, revoker_permissions).await?;
+
+        let rows_affected = sqlx::query(
             "UPDATE user_designations SET is_active = FALSE, updated_at = NOW() \
-             WHERE user_id = $1 AND is_active = TRUE \
-               AND designation_id = (SELECT designation_id FROM designations WHERE code = $2)",
+             WHERE user_id = $1 AND is_active = TRUE AND designation_id = $2",
         )
         .bind(user_id)
-        .bind(designation_code)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        .bind(designation_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        tx.commit().await?;
+        let changed = rows_affected > 0;
 
-        let changed = result.rows_affected() > 0;
         if changed {
             let _ = log_permission_change(
                 &self.pool,

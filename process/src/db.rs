@@ -1,4 +1,5 @@
 use chrono::Datelike;
+use sqlx::Connection;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -109,6 +110,17 @@ pub struct SaveStepOutcome {
     pub newly_opened_step_ids: Vec<i32>,
 }
 
+/// Serializes every state-changing action on one process until the transaction ends:
+/// each re-reads the process state only after the previous one has committed. It takes
+/// `FOR NO KEY UPDATE` so child-row inserts (audit events, reviews) aren't blocked.
+async fn lock_process(conn: &mut sqlx::PgConnection, process_id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT 1 FROM processes WHERE process_id = $1 FOR NO KEY UPDATE")
+        .bind(process_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Save fields for a step. Validates, persists fields, and updates completion.
 /// Returns the new step status.
 pub async fn save_step(
@@ -120,6 +132,9 @@ pub async fn save_step(
     actor: &state_machine::ActorContext,
     actor_user_id: i32,
 ) -> Result<SaveStepOutcome, String> {
+    lock_process(conn, process_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
@@ -244,6 +259,9 @@ pub async fn review_step(
     mut params: ReviewStepParams<'_>,
     actor: &state_machine::ActorContext,
 ) -> Result<ReviewStepOutcome, String> {
+    lock_process(conn, process_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
@@ -302,6 +320,9 @@ pub async fn reopen_step(
     custom_note: Option<&str>,
     actor: &state_machine::ActorContext,
 ) -> Result<Vec<i32>, String> {
+    lock_process(conn, process_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut state = load_state(conn, process_id, template)
         .await
         .map_err(|e| e.to_string())?;
@@ -1081,26 +1102,46 @@ pub async fn sync_no_dues_step_completions(
         return Ok(());
     }
     for step_id in no_dues_step_ids {
-        let state = load_state(&mut *conn, process_id, template).await?;
         let Some(info) = step_info_map.get(&step_id) else {
             continue;
         };
-        // A formally admin-reviewed stage must never be silently reopened by this sync.
-        let already_completed = state.steps.get(&step_id).map(|s| s.is_completed) == Some(true);
-        if info.requires_review(template.step_id) && already_completed {
+        if no_dues_flips(&mut *conn, process_id, template, info)
+            .await?
+            .is_empty()
+        {
             continue;
         }
-        let updates = state_machine::compute_completion_updates(template, &state, step_id);
-        // Only persist steps whose flag actually flips, or completed_at drifts on every read.
-        let changed: Vec<(i32, bool)> = updates
+        // Reads that change nothing stay lock-free; a write re-derives its changes after
+        // any concurrent review/reopen has committed, so it can't apply a stale snapshot.
+        lock_process(&mut *conn, process_id).await?;
+        let flips = no_dues_flips(&mut *conn, process_id, template, info).await?;
+        persist_step_completions(&mut *conn, process_id, &flips).await?;
+    }
+    Ok(())
+}
+
+/// Completion flags that must flip for a `NoDues` step to match the live dues snapshot.
+async fn no_dues_flips(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template: &crate::ProcessTemplate,
+    info: &state_machine::StepInfo,
+) -> Result<Vec<(i32, bool)>, sqlx::Error> {
+    let state = load_state(conn, process_id, template).await?;
+    // A formally admin-reviewed stage must never be silently reopened by this sync.
+    let already_completed = state.steps.get(&info.step_id).map(|s| s.is_completed) == Some(true);
+    if info.requires_review(template.step_id) && already_completed {
+        return Ok(Vec::new());
+    }
+    // Only steps whose flag actually flips, or completed_at drifts on every read.
+    Ok(
+        state_machine::compute_completion_updates(template, &state, info.step_id)
             .into_iter()
             .filter(|&(id, completed)| {
                 state.steps.get(&id).map(|s| s.is_completed) != Some(completed)
             })
-            .collect();
-        persist_step_completions(&mut *conn, process_id, &changed).await?;
-    }
-    Ok(())
+            .collect(),
+    )
 }
 
 /// Reads the uploaded dues snapshot, not accounting — no row yet means zero due.
@@ -1276,12 +1317,14 @@ pub async fn recompute_gating_for_step(
     process_id: Uuid,
     template_step_id: i32,
 ) -> Result<(), sqlx::Error> {
-    let state = load_state(&mut *conn, process_id, template).await?;
+    let mut tx = conn.begin().await?;
+    lock_process(&mut tx, process_id).await?;
+    let state = load_state(&mut tx, process_id, template).await?;
     let steps_to_update =
         state_machine::compute_completion_updates(template, &state, template_step_id);
-    persist_step_completions(&mut *conn, process_id, &steps_to_update).await?;
-    sync_start_times(&mut *conn, process_id, template).await?;
-    Ok(())
+    persist_step_completions(&mut tx, process_id, &steps_to_update).await?;
+    sync_start_times(&mut tx, process_id, template).await?;
+    tx.commit().await
 }
 
 /// Resolve a step's instance ID from its (process_id, template_step_id) pair.

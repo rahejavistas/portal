@@ -1,4 +1,4 @@
-use authentication::{AuthResult, PermissionsManager};
+use authentication::{AuthResult, DesignationChangeError, PermissionsManager};
 use quality::setup_db_test_env;
 
 /// Tests programmatic user creation, email checking, and user details retrieval by ID.
@@ -458,4 +458,143 @@ async fn test_concurrent_permission_revokes_leave_no_stale_grant() {
             reloaded.permissions
         );
     }
+}
+
+/// Assigning is refused when the designation carries a permission the assigner lacks,
+/// and allowed once they hold all of them.
+#[tokio::test]
+async fn test_assign_designation_within_assigner_permissions() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    pm.create_designation("reviewer_role", "Reviewer Role", None)
+        .await
+        .unwrap();
+    pm.toggle_designation_permission("reviewer_role", "process.reviewer", true, None)
+        .await
+        .unwrap();
+    pm.toggle_designation_permission("reviewer_role", "process.view", true, None)
+        .await
+        .unwrap();
+    let target = pm
+        .create_user_with_credentials("target@vistas.com", Some("password123"), "A", "101", None)
+        .await
+        .unwrap();
+
+    let only_view = vec!["process.view".to_string()];
+    let err = pm
+        .assign_designation_within(target.user_id, "reviewer_role", 1, &only_view)
+        .await
+        .unwrap_err();
+    match err {
+        DesignationChangeError::MissingPermissions(missing) => {
+            assert_eq!(missing, vec!["process.reviewer".to_string()])
+        }
+        other => panic!("expected MissingPermissions, got {other:?}"),
+    }
+    assert!(pm
+        .get_user_designations(target.user_id)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let both = vec!["process.view".to_string(), "process.reviewer".to_string()];
+    pm.assign_designation_within(target.user_id, "reviewer_role", 1, &both)
+        .await
+        .unwrap();
+    assert_eq!(
+        pm.get_user_designations(target.user_id).await.unwrap(),
+        vec!["reviewer_role".to_string()]
+    );
+
+    let unknown = pm
+        .assign_designation_within(target.user_id, "no_such_role", 1, &both)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        unknown,
+        DesignationChangeError::UnknownDesignation(_)
+    ));
+}
+
+/// A delete racing an assign must end one of two ways: the assign lands and the delete is
+/// refused, or the delete lands and the assign is refused — never an active holder of a
+/// deleted designation.
+#[tokio::test]
+async fn test_concurrent_assign_and_delete_never_leave_holder_of_deleted_designation() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+    let user = pm
+        .create_user_with_credentials("holder@vistas.com", Some("password123"), "A", "101", None)
+        .await
+        .unwrap();
+
+    for round in 0..25 {
+        let code = format!("temp_role_{round}");
+        pm.create_designation(&code, "Temp Role", None)
+            .await
+            .unwrap();
+
+        let (assigned, deleted) = tokio::join!(
+            pm.assign_designation(user.user_id, &code, None),
+            pm.delete_designation(&code, None),
+        );
+        assert!(
+            assigned.is_ok() != deleted.is_ok(),
+            "exactly one must win in round {round}: assign={assigned:?} delete={deleted:?}"
+        );
+
+        let holders_of_deleted: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM user_designations ud \
+             JOIN designations d ON d.designation_id = ud.designation_id \
+             WHERE ud.is_active = TRUE AND d.is_active = FALSE",
+        )
+        .fetch_one(&env.db_pool)
+        .await
+        .unwrap();
+        assert_eq!(holders_of_deleted, 0, "round {round}");
+    }
+}
+
+/// Revoking is refused when the designation carries a permission the revoker lacks; a
+/// refused revoke leaves the holder in place.
+#[tokio::test]
+async fn test_revoke_designation_within_revoker_permissions() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    pm.create_designation("powerful_role", "Powerful Role", None)
+        .await
+        .unwrap();
+    pm.toggle_designation_permission("powerful_role", "process.reviewer", true, None)
+        .await
+        .unwrap();
+    let holder = pm
+        .create_user_with_credentials("holder2@vistas.com", Some("password123"), "A", "102", None)
+        .await
+        .unwrap();
+    pm.assign_designation(holder.user_id, "powerful_role", None)
+        .await
+        .unwrap();
+
+    let none: Vec<String> = Vec::new();
+    let err = pm
+        .revoke_designation_within(holder.user_id, "powerful_role", 1, &none)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DesignationChangeError::MissingPermissions(_)));
+    assert_eq!(
+        pm.get_user_designations(holder.user_id).await.unwrap(),
+        vec!["powerful_role".to_string()]
+    );
+
+    let held = vec!["process.reviewer".to_string()];
+    assert!(pm
+        .revoke_designation_within(holder.user_id, "powerful_role", 1, &held)
+        .await
+        .unwrap());
+    assert!(!pm
+        .revoke_designation_within(holder.user_id, "powerful_role", 1, &held)
+        .await
+        .unwrap());
 }

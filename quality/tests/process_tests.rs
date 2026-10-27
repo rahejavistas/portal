@@ -2075,3 +2075,89 @@ async fn test_reopen_step_stores_empty_flags() {
         );
     }
 }
+
+/// Two reviewers approving the same pending step at the same moment: the second must see
+/// the first's result and be refused, leaving exactly one approval on record.
+#[tokio::test]
+async fn test_concurrent_approvals_record_a_single_review() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+
+    let user_id: i32 = sqlx::query_scalar(
+        "INSERT INTO users (email, is_active) VALUES ('double_click@vistas.com', TRUE) RETURNING user_id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let template = quality::load_test_template_fixture();
+    let mut conn = pool.acquire().await.unwrap();
+    let mut exec = TestProcess::init(&mut conn, user_id, &template, None).await;
+    let process_id = exec.process_id;
+
+    let doc_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO documents (document_id, title, category, is_user_uploaded) \
+         VALUES ($1, 'x.pdf', 'PUBLIC', TRUE)",
+    )
+    .bind(doc_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (step, fids) in [
+        (3, vec![101, 102, 103, 105, 106]),
+        (4, vec![107]),
+        (5, vec![108]),
+        (6, vec![109, 110]),
+    ] {
+        let inputs: Vec<SaveFieldInput> = fids
+            .into_iter()
+            .map(|fid| SaveFieldInput {
+                template_field_id: fid,
+                text_value: None,
+                document_id: Some(doc_id),
+            })
+            .collect();
+        exec.save_step_fields(step, &inputs, false).await.unwrap();
+    }
+    assert_eq!(exec.status(2), StepStatus::PendingReview);
+
+    let approve = || async {
+        let mut tx = pool.begin().await.unwrap();
+        let result = process::db::review_step(
+            &mut tx,
+            process_id,
+            &template,
+            process::db::ReviewStepParams {
+                step_id: 2,
+                reviewer_user_id: Some(user_id),
+                is_approved: true,
+                notes: None,
+                flagged_step_ids: &[],
+                acted_as_designation: None,
+            },
+            &actor(true),
+        )
+        .await;
+        if result.is_ok() {
+            tx.commit().await.unwrap();
+        }
+        result.map(|_| ())
+    };
+    let (first, second) = tokio::join!(approve(), approve());
+    assert!(
+        first.is_ok() != second.is_ok(),
+        "exactly one approval must win: first={first:?} second={second:?}"
+    );
+
+    let approvals: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM process_step_reviews pr \
+         JOIN process_steps ps ON ps.step_instance_id = pr.step_instance_id \
+         WHERE ps.process_id = $1 AND ps.template_step_id = 2 AND pr.is_approved = TRUE",
+    )
+    .bind(process_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(approvals, 1);
+}
