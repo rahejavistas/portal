@@ -1193,16 +1193,23 @@ pub async fn audit_log_pdf(
         })
         .collect();
 
-    let field_names: HashMap<i32, String> = process::state_machine::build_step_info_map(&template)
-        .values()
-        .flat_map(|info| info.fields.iter())
-        .map(|f| (f.field_id, f.name.clone()))
-        .collect();
+    let template_fields: HashMap<i32, process::ProcessFieldTemplate> =
+        process::state_machine::build_step_info_map(&template)
+            .values()
+            .flat_map(|info| info.fields.iter())
+            .map(|f| (f.field_id, f.clone()))
+            .collect();
 
     let field_changes: Vec<accounting::pdf::FieldChangePdfEntry> = field_history
         .into_iter()
         .map(|h| {
+            let field = template_fields.get(&h.template_field_id);
+            let is_declaration = field.is_some_and(|f| f.r#type == process::FieldType::Declaration);
             let value = match h.text_value.as_deref() {
+                Some(text) if is_declaration => process::fields::describe_declaration_value(
+                    text,
+                    field.and_then(|f| f.requirements.as_ref()),
+                ),
                 Some("true") => "Yes".to_string(),
                 Some("false") => "No".to_string(),
                 Some(other) => other.to_string(),
@@ -1211,9 +1218,8 @@ pub async fn audit_log_pdf(
             };
             accounting::pdf::FieldChangePdfEntry {
                 created_at: h.updated_at,
-                field_name: field_names
-                    .get(&h.template_field_id)
-                    .cloned()
+                field_name: field
+                    .map(|f| f.name.clone())
                     .unwrap_or_else(|| format!("Field {}", h.template_field_id)),
                 value,
                 actor_email: h.actor_email,

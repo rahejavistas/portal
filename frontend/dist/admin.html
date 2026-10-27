@@ -3972,7 +3972,7 @@ function openDesignationPicker(field) {
             const nonSystemDesignations = allDesignations.filter(d => d.code !== 'super_admin' && !d.code.startsWith('wing_rep_'));
             const isDesignationPicker = owner.kind === 'admin' || owner.kind === 'designation' || owner.kind === 'wing_representative';
             const designationPickerLabel = owner.kind === 'admin'
-                ? 'Any Designation'
+                ? 'Anyone with Reviewer permission'
                 : owner.kind === 'wing_representative'
                 ? 'Wing Representative'
                 : owner.kind === 'designation'
@@ -3980,7 +3980,7 @@ function openDesignationPicker(field) {
                 : 'Specific Designation';
             const reviewerDropdownHtml = reviewerDropdownOpen ? `
                 <div class="reviewer-dropdown-menu" onclick="event.stopPropagation();">
-                    <div class="reviewer-dropdown-item ${owner.kind === 'admin' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Any Designation</div>
+                    <div class="reviewer-dropdown-item ${owner.kind === 'admin' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'admin' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Anyone with Reviewer permission</div>
                     <div class="reviewer-dropdown-item ${owner.kind === 'wing_representative' ? 'selected' : ''}" onclick="${pathExpr}.filled_by = { kind: 'wing_representative' }; reviewerDropdownOpen = false; renderBuilderStageDetail();">Wing Representative</div>
                     ${nonSystemDesignations.length === 0
                         ? ''

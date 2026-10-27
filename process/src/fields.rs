@@ -49,6 +49,56 @@ fn declaration_is_satisfied(val: &str, requirements: Option<&serde_json::Value>)
     }
 }
 
+/// Human-readable form of a stored declaration value for audit views, e.g.
+/// `Agreed - Name: Yash, Flat: K`. Blanks follow the declaration text's order, then any
+/// others alphabetically. An unparseable value is returned as-is.
+pub fn describe_declaration_value(val: &str, requirements: Option<&serde_json::Value>) -> String {
+    let Ok(parsed) = serde_json::from_str::<DeclarationValue>(val) else {
+        return val.to_string();
+    };
+    if !parsed.agreed {
+        return "Not agreed".to_string();
+    }
+
+    let mut ordered: Vec<&str> = declaration_text(requirements)
+        .map(declaration_blank_tokens)
+        .unwrap_or_default();
+    let mut extra: Vec<&str> = parsed
+        .blanks
+        .keys()
+        .map(String::as_str)
+        .filter(|k| !ordered.contains(k))
+        .collect();
+    extra.sort_unstable();
+    ordered.extend(extra);
+
+    let filled: Vec<String> = ordered
+        .into_iter()
+        .filter_map(|token| {
+            let value = parsed.blanks.get(token)?.trim();
+            if value.is_empty() {
+                return None;
+            }
+            let mut chars = token.chars();
+            let label = chars
+                .next()
+                .map(|c| {
+                    c.to_uppercase()
+                        .chain(chars.flat_map(char::to_lowercase))
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            Some(format!("{label}: {value}"))
+        })
+        .collect();
+
+    if filled.is_empty() {
+        "Agreed".to_string()
+    } else {
+        format!("Agreed - {}", filled.join(", "))
+    }
+}
+
 /// Validates the input values against the field's type.
 pub fn validate_field(
     field_type: FieldType,
@@ -224,6 +274,47 @@ mod tests {
     fn optional_empty_field_of_any_type_passes_validation() {
         assert!(validate_field(FieldType::Int, None, None, true, None, None).is_ok());
         assert!(validate_field(FieldType::Date, Some(""), None, true, None, None).is_ok());
+    }
+
+    #[test]
+    fn describe_declaration_lists_agreed_blanks_in_text_order() {
+        let requirements =
+            serde_json::json!({ "declaration_text": "I, ##NAME##, of ##FLAT## in ##WING##." });
+        assert_eq!(
+            describe_declaration_value(
+                r#"{"agreed":true,"blanks":{"WING":"403","NAME":"Yash","FLAT":"K"}}"#,
+                Some(&requirements),
+            ),
+            "Agreed - Name: Yash, Flat: K, Wing: 403"
+        );
+    }
+
+    #[test]
+    fn describe_declaration_without_blanks_or_agreement() {
+        assert_eq!(
+            describe_declaration_value(r#"{"agreed":true,"blanks":{}}"#, None),
+            "Agreed"
+        );
+        assert_eq!(
+            describe_declaration_value(r#"{"agreed":false,"blanks":{"NAME":"Yash"}}"#, None),
+            "Not agreed"
+        );
+    }
+
+    #[test]
+    fn describe_declaration_skips_blank_values_and_sorts_unknown_tokens() {
+        assert_eq!(
+            describe_declaration_value(
+                r#"{"agreed":true,"blanks":{"ZED":"z","ALPHA":"a","EMPTY":"  "}}"#,
+                None,
+            ),
+            "Agreed - Alpha: a, Zed: z"
+        );
+    }
+
+    #[test]
+    fn describe_declaration_returns_unparseable_input_unchanged() {
+        assert_eq!(describe_declaration_value("not json", None), "not json");
     }
 
     #[test]
