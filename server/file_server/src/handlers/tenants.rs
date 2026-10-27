@@ -120,19 +120,6 @@ pub async fn add_tenant(
         ));
     }
 
-    // Checked only once the caller is confirmed to actually own this flat — cap
-    // per-recipient so this can't be used to bomb or phish an arbitrary inbox.
-    if state
-        .rate_limiters
-        .email_invite_limiter
-        .check_key(&email)
-        .is_err()
-    {
-        return Err(too_many_requests(
-            "Too many invites sent to this email recently. Please try again later.",
-        ));
-    }
-
     let belongs = state
         .document_manager
         .document_belongs_to_flat(payload.rental_agreement_document_id, flat_id)
@@ -141,6 +128,19 @@ pub async fn add_tenant(
     if !belongs {
         return Err(bad_request(
             "Rental agreement document is not attached to this flat",
+        ));
+    }
+
+    // Checked only once the request is otherwise fully valid — cap per-recipient so
+    // this can't be used to bomb or phish an arbitrary inbox.
+    if state
+        .rate_limiters
+        .email_invite_limiter
+        .check_key(&email)
+        .is_err()
+    {
+        return Err(too_many_requests(
+            "Too many invites sent to this email recently. Please try again later.",
         ));
     }
 
