@@ -82,6 +82,26 @@ pub struct AdminAddNoteResponse {
     pub message: String,
 }
 
+/// Documents a process reviewer may attach to a step regardless of general document
+/// visibility (a reviewer's upload isn't covered by it). The caller must still confirm
+/// the document belongs to the process's flat.
+async fn reviewer_visible_document(
+    state: &AppState,
+    doc_id: Uuid,
+    template: &process::ProcessTemplate,
+    actor: &process::state_machine::ActorContext,
+) -> Result<Option<crate::document::DocumentWithMetadata>, ApiError> {
+    if super::require_reviewer_standing(template, actor).is_err() {
+        return Ok(None);
+    }
+    let doc = state
+        .document_manager
+        .admin_get_any_document(doc_id)
+        .await
+        .internal_err()?;
+    Ok(doc.filter(|d| !d.document.is_deleted))
+}
+
 /// POST /api/v1/process/save-step
 pub async fn save_process_step(
     SessionUser(user): SessionUser,
@@ -116,7 +136,9 @@ pub async fn save_process_step(
         if let Some(doc_id) = f.document_id {
             // Check if document is valid AND the user has permission to access it
             let doc_opt = match state.document_manager.get_document(doc_id, &user).await {
-                Err(e) if e == "FORBIDDEN" => None,
+                Err(e) if e == "FORBIDDEN" => {
+                    reviewer_visible_document(&state, doc_id, &template, &actor).await?
+                }
                 other => other.internal_err()?,
             };
 

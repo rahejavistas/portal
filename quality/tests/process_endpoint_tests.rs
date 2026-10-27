@@ -816,6 +816,132 @@ async fn test_process_reviewer_can_confirm_own_process_upload_without_document_p
         .expect("save-step should accept the now-confirmed document");
 }
 
+fn start_template_one_process(url: &str, auth: &str) -> String {
+    ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({"template_id": 1}))
+        .unwrap()
+        .into_json::<serde_json::Value>()
+        .unwrap()["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn reviewer_uploads_confirmed_document(url: &str, reviewer_auth: &str, pid: &str) -> String {
+    let url_val: serde_json::Value =
+        ureq::post(&format!("{}/api/v1/admin/process/upload-url", url))
+            .set("Authorization", reviewer_auth)
+            .send_json(serde_json::json!({
+                "process_id": pid,
+                "title": "Reviewer Upload",
+                "filename": "reviewer_upload.pdf",
+                "content_type": "application/pdf"
+            }))
+            .expect("reviewer upload-url failed")
+            .into_json()
+            .unwrap();
+    let document_id = url_val["document_id"].as_str().unwrap().to_string();
+    ureq::put(url_val["upload_url"].as_str().unwrap())
+        .set("Content-Type", "application/pdf")
+        .send_bytes(b"reviewer pdf content bytes")
+        .expect("S3 PUT upload failed");
+    ureq::post(&format!("{}/api/v1/admin/process/confirm-upload", url))
+        .set("Authorization", reviewer_auth)
+        .send_json(serde_json::json!({"process_id": pid, "document_id": document_id}))
+        .expect("reviewer confirm-upload failed");
+    document_id
+}
+
+fn save_document_step(url: &str, auth: &str, pid: &str, document_id: &str) -> Result<(), u16> {
+    let resp = ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": 3,
+            "fields": [{"template_field_id": 101, "text_value": null, "document_id": document_id}]
+        }));
+    match resp {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+/// A reviewer with only `process.reviewer` (no document permissions) must be able to
+/// attach a confirmed upload via `save-step` themselves — including a colleague's
+/// upload — but not a deleted one, nor one belonging to a different flat.
+#[tokio::test]
+async fn test_process_reviewer_can_attach_flat_document_in_save_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "attach_res1@test.com", "A", "101");
+    let res1_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "attach_res1@test.com", "password123")
+    );
+    quick_create_user(&env, &admin_jwt, "attach_res2@test.com", "A", "102");
+    let res2_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "attach_res2@test.com", "password123")
+    );
+    let pid1 = start_template_one_process(&url, &res1_auth);
+    let pid2 = start_template_one_process(&url, &res2_auth);
+
+    quick_create_designation(&env, &admin_jwt, "attach_reviewer", "Attach Reviewer");
+    quick_toggle_designation_permission(
+        &env,
+        &admin_jwt,
+        "attach_reviewer",
+        "process.reviewer",
+        true,
+    );
+    let uploader_id = quick_create_user(&env, &admin_jwt, "attach_rev1@test.com", "B", "201");
+    let uploader_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "attach_rev1@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, uploader_id, "attach_reviewer");
+    let other_id = quick_create_user(&env, &admin_jwt, "attach_rev2@test.com", "B", "202");
+    let other_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "attach_rev2@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, other_id, "attach_reviewer");
+
+    let doc = reviewer_uploads_confirmed_document(&url, &uploader_auth, &pid1);
+
+    save_document_step(&url, &uploader_auth, &pid1, &doc)
+        .expect("the uploading reviewer should be able to attach their own upload");
+    save_document_step(&url, &other_auth, &pid1, &doc)
+        .expect("any reviewer on the process should be able to attach the flat's document");
+    let wrong_flat = save_document_step(&url, &uploader_auth, &pid2, &doc);
+    assert!(
+        wrong_flat == Err(400),
+        "a reviewer must not attach a document to a process on a different flat"
+    );
+
+    let doc_uuid = uuid::Uuid::parse_str(&doc).unwrap();
+    sqlx::query("UPDATE documents SET is_deleted = TRUE WHERE document_id = $1")
+        .bind(doc_uuid)
+        .execute(&env.db_pool)
+        .await
+        .unwrap();
+    let deleted = save_document_step(&url, &uploader_auth, &pid1, &doc);
+    assert!(
+        deleted == Err(400),
+        "a soft-deleted document must not be attachable"
+    );
+
+    sqlx::query("UPDATE documents SET is_deleted = FALSE WHERE document_id = $1")
+        .bind(doc_uuid)
+        .execute(&env.db_pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn test_admin_add_note_standalone() {
     let env = setup_api_test_env().await;
