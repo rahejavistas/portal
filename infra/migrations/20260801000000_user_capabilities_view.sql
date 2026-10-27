@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS user_effective_access (
 
 CREATE OR REPLACE FUNCTION refresh_user_effective_access(p_user_id INT) RETURNS VOID AS $$
 BEGIN
+    -- Separate statement on purpose: the INSERT below must take its snapshot only after
+    -- any concurrent refresh for this user has committed, or it can re-write a stale grant.
+    PERFORM pg_advisory_xact_lock(hashtext('user_effective_access'), p_user_id);
+
     INSERT INTO user_effective_access (user_id, designations, permissions, can_manage_documents, wing, flat_number, updated_at)
     SELECT user_id, designations, permissions, can_manage_documents, wing, flat_number, NOW()
     FROM user_capabilities WHERE user_id = p_user_id
@@ -90,8 +94,11 @@ DECLARE
 BEGIN
     affected_designation_id := COALESCE(NEW.designation_id, OLD.designation_id);
     PERFORM refresh_user_effective_access(ud.user_id)
-    FROM user_designations ud
-    WHERE ud.designation_id = affected_designation_id AND ud.is_active = TRUE;
+    FROM (
+        SELECT DISTINCT user_id FROM user_designations
+        WHERE designation_id = affected_designation_id AND is_active = TRUE
+        ORDER BY user_id
+    ) ud;
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;

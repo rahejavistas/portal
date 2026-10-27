@@ -419,3 +419,43 @@ async fn test_designations_and_permissions() {
         .unwrap()
         .is_empty());
 }
+
+/// Revoking two permissions from one designation at the same moment must leave every
+/// holder with neither — the per-request permission cache cannot keep a revoked grant.
+#[tokio::test]
+async fn test_concurrent_permission_revokes_leave_no_stale_grant() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    pm.create_designation("auditor", "Auditor", None)
+        .await
+        .unwrap();
+    let user = pm
+        .create_user_with_credentials("auditor@vistas.com", Some("password123"), "A", "101", None)
+        .await
+        .unwrap();
+    pm.assign_designation(user.user_id, "auditor", None)
+        .await
+        .unwrap();
+
+    for _ in 0..25 {
+        for permission in ["process.reviewer", "process.view"] {
+            pm.toggle_designation_permission("auditor", permission, true, None)
+                .await
+                .unwrap();
+        }
+        let (a, b) = tokio::join!(
+            pm.toggle_designation_permission("auditor", "process.reviewer", false, None),
+            pm.toggle_designation_permission("auditor", "process.view", false, None),
+        );
+        a.unwrap();
+        b.unwrap();
+
+        let reloaded = pm.get_user_by_id(user.user_id).await.unwrap().unwrap();
+        assert!(
+            reloaded.permissions.is_empty(),
+            "stale grants after concurrent revoke: {:?}",
+            reloaded.permissions
+        );
+    }
+}
