@@ -4937,7 +4937,7 @@ function openDesignationPicker(field) {
 
         async function loadPublicDocsCache() {
             try {
-                const resp = await fetch(`${API_BASE}/api/v1/admin/documents/list`, {
+                const resp = await fetch(`${API_BASE}/api/v1/documents`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({})
@@ -5515,7 +5515,7 @@ function openDesignationPicker(field) {
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
             try {
-                const results = await Promise.all(changes.map(async c => {
+                const settled = await Promise.allSettled(changes.map(async c => {
                     const resp = await fetch(`${API_BASE}/api/v1/admin/roles/designations/permissions/toggle`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -5523,6 +5523,9 @@ function openDesignationPicker(field) {
                     });
                     return { c, ok: resp.ok, message: resp.ok ? null : await readErrorMessage(resp) };
                 }));
+                const results = settled.map((r, i) => r.status === 'fulfilled'
+                    ? r.value
+                    : { c: changes[i], ok: false, message: r.reason && r.reason.message ? r.reason.message : 'Request failed.' });
                 await loadNonSystemDesignations();
                 renderDesignationPermissionsMatrix();
                 const failures = results.filter(r => !r.ok);
@@ -6542,8 +6545,11 @@ function openDesignationPicker(field) {
             feedback.style.display = 'none';
             importBtn.disabled = true;
 
+            const createFlats = document.getElementById('bulk-folder-create-flats').checked;
+            const missingFlatKeys = new Set(state.missingFlats.map(m => `${m.wing}|${m.flat_number}`));
+
             try {
-                if (document.getElementById('bulk-folder-create-flats').checked && state.missingFlats.length > 0) {
+                if (createFlats && state.missingFlats.length > 0) {
                     const byWing = new Map();
                     for (const m of state.missingFlats) {
                         if (!byWing.has(m.wing)) byWing.set(m.wing, []);
@@ -6606,9 +6612,17 @@ function openDesignationPicker(field) {
 
                 let succeeded = 0;
                 const failures = [];
-                const total = state.validFiles.length;
+                const skippedMissingFlat = [];
+                const filesToUpload = createFlats
+                    ? state.validFiles
+                    : state.validFiles.filter(entry => {
+                        const stillMissing = missingFlatKeys.has(`${entry.wing}|${entry.flat_number}`);
+                        if (stillMissing) skippedMissingFlat.push(entry.file.name);
+                        return !stillMissing;
+                    });
+                const total = filesToUpload.length;
                 for (let i = 0; i < total; i++) {
-                    const entry = state.validFiles[i];
+                    const entry = filesToUpload[i];
                     feedback.style.display = 'block';
                     feedback.className = 'feedback-box';
                     feedback.textContent = `Uploading ${i + 1} of ${total}: ${entry.file.name}...`;
@@ -6634,11 +6648,14 @@ function openDesignationPicker(field) {
                     }
                 }
 
+                const skippedNote = skippedMissingFlat.length > 0
+                    ? ` ${skippedMissingFlat.length} file${skippedMissingFlat.length === 1 ? '' : 's'} skipped — their flat doesn't exist yet.`
+                    : '';
                 if (failures.length === 0) {
-                    docFeedback.textContent = `✓ ${succeeded} document${succeeded === 1 ? '' : 's'} added!`;
-                    docFeedback.className = 'feedback-box success';
+                    docFeedback.textContent = `✓ ${succeeded} document${succeeded === 1 ? '' : 's'} added!${skippedNote}`;
+                    docFeedback.className = skippedMissingFlat.length > 0 ? 'feedback-box' : 'feedback-box success';
                 } else {
-                    docFeedback.textContent = `${succeeded} of ${total} uploaded. Failed: ${failures.join('; ')}`;
+                    docFeedback.textContent = `${succeeded} of ${total} uploaded. Failed: ${failures.join('; ')}${skippedNote}`;
                     docFeedback.className = 'feedback-box error';
                 }
                 docFeedback.style.display = 'block';

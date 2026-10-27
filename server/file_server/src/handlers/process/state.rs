@@ -417,11 +417,6 @@ struct StepMapContext<'a> {
     actor: &'a process::state_machine::ActorContext,
     /// Hide the documents (value, history, signatures) on the owner's (`User`) stages.
     hide_owner_documents: bool,
-    /// Strip `actor_email` from history whenever the actor isn't one of this process's
-    /// own residents — e.g. an admin filling in on a `User`/`Tenant` step counts as
-    /// staff here, not as the owner, even though the step itself is resident-owned.
-    redact_staff_email: bool,
-    resident_emails: &'a std::collections::HashSet<String>,
 }
 
 /// Recursively map step templates to the response structure.
@@ -447,27 +442,12 @@ fn map_step_template(
                 .latest_field_states
                 .get(&field_id)
                 .filter(|_| !hide_document);
-            let mut history = ctx
+            let history = ctx
                 .field_history_map
                 .get(&field_id)
                 .filter(|_| !hide_document)
                 .cloned()
                 .unwrap_or_default();
-            for entry in &mut history {
-                // Not just documents — the owner's email must never reach the tenant.
-                let hide_owner_email = ctx.hide_owner_documents && is_owner_stage;
-                // Staff emails must never reach a plain resident — keyed off who
-                // actually wrote the entry, not the step's nominal filler, since an
-                // admin can fill a User/Tenant step on the resident's behalf.
-                let hide_staff_email = ctx.redact_staff_email
-                    && entry
-                        .actor_email
-                        .as_deref()
-                        .is_some_and(|email| !ctx.resident_emails.contains(email));
-                if hide_owner_email || hide_staff_email {
-                    entry.actor_email = None;
-                }
-            }
 
             let value = latest.map(|l| {
                 let (title, content_type) = l
@@ -1025,41 +1005,6 @@ pub async fn get_process_state(
 
     let has_reviewer_standing = super::require_reviewer_standing(&template, &actor).is_ok();
     let hide_owner_documents = !can_view_all && actor.hides_owner_documents(has_reviewer_standing);
-    // A plain resident must never see staff/reviewer email addresses.
-    let redact_staff_email = !can_view_all && !has_reviewer_standing;
-
-    // Who actually counts as "this process's own resident" — anyone else who wrote a
-    // history entry (an admin filling in on their behalf, say) is staff for redaction
-    // purposes, regardless of which kind of step they filled.
-    let mut resident_emails: std::collections::HashSet<String> = std::collections::HashSet::new();
-    if redact_staff_email {
-        if let Some(email) = process::db::get_user_email(&mut tx, owner_user_id)
-            .await
-            .internal_err()?
-        {
-            resident_emails.insert(email);
-        }
-        if let Some(oid) = ownership_id {
-            if let Some((_, email)) = process::db::get_active_tenant(&mut tx, oid)
-                .await
-                .internal_err()?
-            {
-                resident_emails.insert(email);
-            }
-        }
-    }
-
-    let reviews: Vec<ReviewHistoryInfo> = if redact_staff_email {
-        reviews
-            .into_iter()
-            .map(|mut r| {
-                r.admin_email = None;
-                r
-            })
-            .collect()
-    } else {
-        reviews
-    };
 
     let step_map_ctx = StepMapContext {
         statuses: &statuses,
@@ -1071,8 +1016,6 @@ pub async fn get_process_state(
         designation_label_map: &designation_label_map,
         actor: &actor,
         hide_owner_documents,
-        redact_staff_email,
-        resident_emails: &resident_emails,
     };
     let mut steps_res = Vec::new();
     if let Some(ref top_steps) = template.substeps {
