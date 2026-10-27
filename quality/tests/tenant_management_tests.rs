@@ -2247,3 +2247,87 @@ async fn test_tenant_sees_the_owners_declaration_as_agreed() {
         DECLARATION_VALUE
     );
 }
+
+/// A designation holder with no permissions attaches a document on a tenant-started
+/// process; the process belongs to the flat's owner, so the owner, the tenant and the
+/// holder can all download it, and another flat's tenant cannot.
+#[tokio::test]
+async fn test_staff_document_on_tenant_started_process_downloads_for_everyone_on_the_flat() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    let secretary_id = quick_create_user(&env, &admin_jwt, "tenant_dl_sec@dtest.test", "B", "601");
+    let secretary_jwt = quick_onboard_user(&env, "tenant_dl_sec@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, secretary_id, "secretary");
+
+    let (owner_jwt, tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_dl_owner@dtest.test",
+        "602",
+        "tenant_dl_tenant@dtest.test",
+    );
+    let (_other_owner_jwt, other_tenant_jwt) = onboard_owner_with_tenant(
+        &env,
+        &admin_jwt,
+        "tenant_dl_other_owner@dtest.test",
+        "603",
+        "tenant_dl_other_tenant@dtest.test",
+    );
+
+    let draft = serde_json::json!({
+        "template_id": null, "name": "Secretary Then Tenant", "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Secretary Stage",
+                "filled_by": { "kind": "designation", "code": "secretary" },
+                "fields": [{ "name": "Certificate", "type": "document" }]
+            },
+            {
+                "name": "Tenant Stage",
+                "filled_by": { "kind": "tenant" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            },
+            {
+                "name": "Owner Declaration",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Declaration", "type": "declaration" }]
+            }
+        ]
+    });
+    let template_id = create_and_activate_template(&url, &admin_jwt, &draft);
+    let state = start_process(&url, &tenant_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let step = &state["steps"][0];
+    let step_id = step["template_step_id"].as_i64().unwrap();
+    let field_id = step["fields"][0]["template_field_id"].as_i64().unwrap();
+
+    let document_id = admin_upload_doc(&url, &secretary_jwt, &process_id, "Certificate");
+    ureq::post(&format!("{}/api/v1/process/save-step", url))
+        .set("Authorization", &auth(&secretary_jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "fields": [{ "template_field_id": field_id, "text_value": null, "document_id": document_id }]
+        }))
+        .expect("the designation holder attaches their upload on a tenant-started process");
+
+    for (who, jwt) in [
+        ("secretary", &secretary_jwt),
+        ("owner", &owner_jwt),
+        ("tenant", &tenant_jwt),
+    ] {
+        assert_eq!(
+            process_download_status(&url, jwt, &process_id, &document_id),
+            200,
+            "{who} can download the staff document"
+        );
+    }
+    assert_eq!(
+        process_download_status(&url, &other_tenant_jwt, &process_id, &document_id),
+        403,
+        "another flat's tenant has no access to this process"
+    );
+}

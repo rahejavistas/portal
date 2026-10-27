@@ -24,7 +24,7 @@ There are two variants of this flow, sharing the same three-step shape:
 
 - **Resident**: `POST /api/v1/documents/upload-url` → `POST /api/v1/documents/confirm-upload`. Category is always `RESIDENT_SPECIFIC`, scoped to the uploader's own flat.
 - **Admin**: `POST /api/v1/admin/documents/upload-url` → `POST /api/v1/admin/documents/confirm-upload`. Caller supplies an explicit `category`, optional flat mapping, and optional metadata. When mapping to a single flat, the admin UI can select a whole folder instead of one file — each file in it runs through this same three-step flow independently (its own document, its own title derived from the filename), all mapped to that one flat.
-- **Process reviewer**: `POST /api/v1/admin/process/upload-url` creates a `RESIDENT_SPECIFIC` document attached to a process step; the flat mapping is derived server-side from the process owner, not supplied by the caller.
+- **Process reviewer**: `POST /api/v1/admin/process/upload-url` creates a `RESIDENT_SPECIFIC` document attached to a process step; the flat mapping is derived server-side from the process owner, not supplied by the caller. Reviewers can attach these documents to a step themselves, with no document permission needed.
 
 ## Security constraints enforced
 
