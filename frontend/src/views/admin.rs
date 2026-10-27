@@ -5533,7 +5533,7 @@ function openDesignationPicker(field) {
                     feedback.innerHTML = `<span class="icon">✓</span> Saved ${changes.length} change(s).`;
                 } else {
                     feedback.className = 'feedback-box error';
-                    const detail = failures.map(f => `${f.c.designationCode}/${f.c.permissionCode}: ${escapeHtml(f.message)}`).join('; ');
+                    const detail = failures.map(f => `${escapeHtml(f.c.designationCode)}/${escapeHtml(f.c.permissionCode)}: ${escapeHtml(f.message)}`).join('; ');
                     feedback.innerHTML = `<span class="icon">!</span> ${results.length - failures.length} of ${results.length} saved. Failed: ${detail}`;
                 }
             } catch (err) {

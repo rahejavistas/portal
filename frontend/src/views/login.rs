@@ -264,7 +264,7 @@ pub(crate) const LOGIN_HTML: &str = r#"
                 try {
                     const url = new URL(target, window.location.origin);
                     if (url.origin === window.location.origin) {
-                        return url.pathname + url.search + url.hash;
+                        return url.href;
                     }
                 } catch (e) {}
             }

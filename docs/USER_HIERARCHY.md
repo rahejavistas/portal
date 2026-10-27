@@ -74,7 +74,7 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 | `user_credentials` | Password hash and password-reset token, 1:1 with `users`. |
 | `flats` | Wing + flat number, the unit of residence, admin-managed (create/bulk-create/delete) via Society Profile → Flat Setup. `is_fire_flat` marks a flat excluded from the Add Resident picker and from bulk floor/wing removal. |
 | `flat_ownerships` | Which user owns/occupies which flat, with `is_active` (one active owner per flat, enforced by a partial unique index) and start/end dates. |
-| `designations` | The role catalog — only `super_admin`/`staff` are seeded (`is_system = TRUE`); everything else is admin-created at runtime. |
+| `designations` | The role catalog — `super_admin` is seeded and locked; `staff` is seeded but its permissions can be changed; everything else is admin-created at runtime. |
 | `permissions` | The permission catalog (see table above), seeded once, never admin-created. |
 | `designation_permissions` | Join table: which designations hold which permissions. |
 | `user_designations` | Join table: which users hold which designations, with `is_active` (revocation without deletion) and `assigned_by` (audit trail). |
