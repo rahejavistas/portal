@@ -2960,7 +2960,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
                         <div>
                             <strong style="color: #92400E; font-size: 1rem; display: block;">Under Review</strong>
-                            <span style="font-size: 0.875rem; color: #92400E;">Admin is currently reviewing your submissions for this stage.</span>
+                            <span style="font-size: 0.875rem; color: #92400E;">Nothing more is needed from you. Please wait while this stage is reviewed.</span>
                         </div>
                     </div>
                 `;
