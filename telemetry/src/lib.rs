@@ -1,9 +1,28 @@
 use base64::{engine::general_purpose, Engine as _};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::metrics::{Aggregation, InstrumentKind};
 use opentelemetry_sdk::Resource;
 use opentelemetry_semantic_conventions::resource;
 use std::collections::HashMap;
+
+/// Every histogram this app records is in seconds; the SDK's default bucket edges assume
+/// milliseconds and would put all latencies in the first bucket.
+fn aggregation_for(kind: InstrumentKind) -> Aggregation {
+    match kind {
+        InstrumentKind::Counter
+        | InstrumentKind::UpDownCounter
+        | InstrumentKind::ObservableCounter
+        | InstrumentKind::ObservableUpDownCounter => Aggregation::Sum,
+        InstrumentKind::ObservableGauge => Aggregation::LastValue,
+        InstrumentKind::Histogram => Aggregation::ExplicitBucketHistogram {
+            boundaries: vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ],
+            record_min_max: true,
+        },
+    }
+}
 
 pub fn init_telemetry(
     endpoint: Option<String>,
@@ -40,6 +59,7 @@ pub fn init_telemetry(
                 .with_headers(headers.clone()),
         )
         .with_resource(resource.clone())
+        .with_aggregation_selector(aggregation_for)
         .build()?;
 
     global::set_meter_provider(metrics);
