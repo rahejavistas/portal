@@ -49,7 +49,7 @@ impl From<sqlx::Error> for DesignationChangeError {
 /// Holds until the transaction ends. Assigning, revoking, deleting and changing the
 /// permissions of one designation all take it first, so a check made under it can't be
 /// invalidated by another of those before the transaction commits. Returns the active
-/// designation's id. Reads after this call see everything committed while it waited.
+/// designation's id.
 async fn lock_designation(
     conn: &mut sqlx::PgConnection,
     code: &str,
@@ -57,12 +57,22 @@ async fn lock_designation(
     // `::text` only gives the void-returning lock call a type sqlx can decode.
     let locked: Option<(i32, String)> = sqlx::query_as(
         "SELECT designation_id, pg_advisory_xact_lock(hashtext('designation'), designation_id)::text \
-         FROM designations WHERE code = $1 AND is_active = TRUE",
+         FROM designations WHERE code = $1",
     )
     .bind(code)
-    .fetch_optional(conn)
+    .fetch_optional(&mut *conn)
     .await?;
-    Ok(locked.map(|(id, _)| id))
+    let Some((designation_id, _)) = locked else {
+        return Ok(None);
+    };
+    // Separate statement: its snapshot is taken after the lock was granted, so it sees a
+    // delete that committed while this transaction waited.
+    sqlx::query_scalar(
+        "SELECT designation_id FROM designations WHERE designation_id = $1 AND is_active = TRUE",
+    )
+    .bind(designation_id)
+    .fetch_optional(conn)
+    .await
 }
 
 /// Of the permissions `designation_id` grants, those not in `held`.
