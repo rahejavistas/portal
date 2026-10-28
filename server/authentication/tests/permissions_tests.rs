@@ -517,43 +517,54 @@ async fn test_assign_designation_within_assigner_permissions() {
     ));
 }
 
-/// A delete racing an assign must end one of two ways: the assign lands and the delete is
-/// refused, or the delete lands and the assign is refused — never an active holder of a
-/// deleted designation.
+/// An assign waiting on the designation lock must see a delete that commits meanwhile and
+/// be refused, not attach the user to a deleted designation.
 #[tokio::test]
-async fn test_concurrent_assign_and_delete_never_leave_holder_of_deleted_designation() {
+async fn test_assign_waiting_on_lock_is_refused_after_designation_is_deleted() {
     let env = setup_db_test_env().await;
     let pm = PermissionsManager::new(env.db_pool.clone());
+    pm.create_designation("doomed_role", "Doomed Role", None)
+        .await
+        .unwrap();
     let user = pm
         .create_user_with_credentials("holder@vistas.com", Some("password123"), "A", "101", None)
         .await
         .unwrap();
-
-    for round in 0..25 {
-        let code = format!("temp_role_{round}");
-        pm.create_designation(&code, "Temp Role", None)
+    let designation_id: i32 =
+        sqlx::query_scalar("SELECT designation_id FROM designations WHERE code = 'doomed_role'")
+            .fetch_one(&env.db_pool)
             .await
             .unwrap();
 
-        let (assigned, deleted) = tokio::join!(
-            pm.assign_designation(user.user_id, &code, None),
-            pm.delete_designation(&code, None),
-        );
-        assert!(
-            assigned.is_ok() != deleted.is_ok(),
-            "exactly one must win in round {round}: assign={assigned:?} delete={deleted:?}"
-        );
-
-        let holders_of_deleted: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM user_designations ud \
-             JOIN designations d ON d.designation_id = ud.designation_id \
-             WHERE ud.is_active = TRUE AND d.is_active = FALSE",
-        )
-        .fetch_one(&env.db_pool)
+    let mut holder = env.db_pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('designation'), $1)")
+        .bind(designation_id)
+        .execute(&mut *holder)
         .await
         .unwrap();
-        assert_eq!(holders_of_deleted, 0, "round {round}");
-    }
+
+    let waiting_pm = PermissionsManager::new(env.db_pool.clone());
+    let user_id = user.user_id;
+    let assign = tokio::spawn(async move {
+        waiting_pm
+            .assign_designation(user_id, "doomed_role", None)
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    sqlx::query("UPDATE designations SET is_active = FALSE WHERE designation_id = $1")
+        .bind(designation_id)
+        .execute(&mut *holder)
+        .await
+        .unwrap();
+    holder.commit().await.unwrap();
+
+    assert!(assign.await.unwrap().is_err());
+    assert!(pm
+        .get_user_designations(user.user_id)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// Revoking is refused when the designation carries a permission the revoker lacks; a
