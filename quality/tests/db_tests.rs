@@ -48,7 +48,9 @@ async fn test_permissions_manager_user_crud() {
     assert!(db_flat_exists);
 
     let db_ownership_active: bool = sqlx::query_scalar(
-        "SELECT is_active FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+        "SELECT fo.is_active FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE",
     )
     .bind(user.user_id)
     .fetch_one(&pool)
@@ -57,7 +59,7 @@ async fn test_permissions_manager_user_crud() {
     assert!(db_ownership_active);
 }
 
-/// Tests that the database constraint allows at most one active owner per flat.
+/// A flat takes two owners with equal standing and rejects a third.
 #[tokio::test]
 async fn test_active_flat_ownership_constraint() {
     let env = setup_db_test_env().await;
@@ -78,23 +80,30 @@ async fn test_active_flat_ownership_constraint() {
         .await
         .unwrap();
 
+    pm.create_user_with_credentials(
+        "owner2@vistas.com",
+        Some("password22"),
+        wing,
+        flat_num,
+        None,
+    )
+    .await
+    .expect("a second owner is allowed");
+
     let attempt = pm
         .create_user_with_credentials(
-            "owner2@vistas.com",
-            Some("password22"),
+            "owner3@vistas.com",
+            Some("password33"),
             wing,
             flat_num,
             None,
         )
         .await;
 
-    assert!(attempt.is_err());
-    let err_msg = attempt.unwrap_err();
-    assert!(
-        err_msg.contains("duplicate key value")
-            || err_msg.contains("unique constraint")
-            || err_msg.contains("Flat is already actively owned by another user")
-    );
+    assert!(matches!(
+        attempt.expect_err("a third owner must be rejected"),
+        authentication::CreateUserError::FlatFull
+    ));
 }
 
 /// Tests role assignments, active role state transitions, and demotions.
@@ -199,7 +208,7 @@ async fn test_document_manager_visibility_resolution() {
         .expect("Failed to create Doc 2")
         .0;
 
-    let allowed_ids = dm.get_allowed_document_ids(&demoted_user).await.unwrap();
+    let allowed_ids = dm.flat_view_document_ids(&demoted_user).await.unwrap();
     assert!(allowed_ids.contains(&doc1.document.document_id));
     assert!(allowed_ids.contains(&doc2.document.document_id));
 
@@ -228,7 +237,7 @@ async fn test_document_manager_visibility_resolution() {
         .unwrap()
         .0;
 
-    let allowed_ids_after = dm.get_allowed_document_ids(&demoted_user).await.unwrap();
+    let allowed_ids_after = dm.flat_view_document_ids(&demoted_user).await.unwrap();
     assert!(!allowed_ids_after.contains(&doc3.document.document_id));
 
     let visible_list = dm.list_visible_documents(&demoted_user).await.unwrap();
@@ -240,6 +249,127 @@ async fn test_document_manager_visibility_resolution() {
     assert!(visible_list_ids.contains(&doc1.document.document_id));
     assert!(visible_list_ids.contains(&doc2.document.document_id));
     assert!(!visible_list_ids.contains(&doc3.document.document_id));
+}
+
+/// A document manager or category reader opening their own flat's documents view sees
+/// only that flat's documents and public ones — never another flat's — while the admin
+/// list still returns everything.
+#[tokio::test]
+async fn test_flat_view_excludes_other_flats_even_with_document_access() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let pm = Arc::new(PermissionsManager::new(pool.clone()));
+
+    let resident = pm
+        .create_user_with_credentials(
+            "doc_manager@vistas.com",
+            Some("password123"),
+            "A",
+            "0101",
+            None,
+        )
+        .await
+        .unwrap();
+    pm.create_designation("doc_managers", "Doc Managers", None)
+        .await
+        .unwrap();
+    pm.toggle_designation_permission("doc_managers", "documents.all.manage", true, None)
+        .await
+        .unwrap();
+    pm.create_designation("category_readers", "Category Readers", None)
+        .await
+        .unwrap();
+    pm.assign_designation(resident.user_id, "doc_managers", None)
+        .await
+        .unwrap();
+    pm.assign_designation(resident.user_id, "category_readers", None)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO document_category_designations (category, designation_id, can_read, can_manage) \
+         SELECT 'RESIDENT_SPECIFIC', designation_id, TRUE, FALSE FROM designations WHERE code = 'category_readers'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    std::env::set_var("AWS_ACCESS_KEY_ID", "admin");
+    std::env::set_var("AWS_SECRET_ACCESS_KEY", "password");
+    let s3_accessor = base::s3::S3Accessor::new(&base::config::S3Config {
+        region: "us-east-1".to_string(),
+        bucket_name: "vistas-files".to_string(),
+        endpoint_url: Some(format!("http://localhost:{}", quality::TEST_MINIO_PORT)),
+        public_endpoint_url: Some(format!("http://localhost:{}", quality::TEST_MINIO_PORT)),
+        presigned_expiry: None,
+    })
+    .await;
+    let dm = file_server::document::DocumentManager::new(pool.clone(), s3_accessor);
+
+    ensure_wing_exists_for_test(&pool, "B").await;
+    sqlx::query(
+        "INSERT INTO flats (wing, flat_number) VALUES ('B', '0202') ON CONFLICT DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let create = |title: &'static str, category: &'static str, flat: Option<FlatIdentifier>| {
+        let dm = &dm;
+        async move {
+            dm.admin_create_upload_intent(
+                file_server::document::AdminUploadIntentInput {
+                    title,
+                    description: None,
+                    category,
+                    metadata: None,
+                    content_type: "application/pdf",
+                    uploaded_by: None,
+                },
+                flat.as_ref(),
+            )
+            .await
+            .unwrap()
+            .0
+            .document
+            .document_id
+        }
+    };
+    let public_doc = create("Notice", "PUBLIC", None).await;
+    let own_flat_doc = create(
+        "A-0101 deed",
+        "RESIDENT_SPECIFIC",
+        Some(FlatIdentifier::new("A", "0101").unwrap()),
+    )
+    .await;
+    let other_flat_doc = create(
+        "B-0202 deed",
+        "RESIDENT_SPECIFIC",
+        Some(FlatIdentifier::new("B", "0202").unwrap()),
+    )
+    .await;
+
+    let visible: Vec<uuid::Uuid> = dm
+        .list_visible_documents(&pm.get_user_by_id(resident.user_id).await.unwrap().unwrap())
+        .await
+        .unwrap()
+        .iter()
+        .map(|d| d.document.document_id)
+        .collect();
+    assert!(visible.contains(&public_doc));
+    assert!(visible.contains(&own_flat_doc));
+    assert!(
+        !visible.contains(&other_flat_doc),
+        "another flat's document must never appear in this user's flat view"
+    );
+
+    let admin_view: Vec<uuid::Uuid> = dm
+        .admin_list_all_documents()
+        .await
+        .unwrap()
+        .iter()
+        .map(|d| d.document.document_id)
+        .collect();
+    assert!(admin_view.contains(&other_flat_doc));
 }
 
 /// Verifies `documents.uploaded_by` is recorded correctly across every document creation

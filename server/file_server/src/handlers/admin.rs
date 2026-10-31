@@ -83,6 +83,17 @@ pub async fn create_user(
         .await
     {
         Ok(user) => (StatusCode::CREATED, Json(user)).into_response(),
+        Err(e @ (authentication::CreateUserError::FlatFull
+        | authentication::CreateUserError::Invalid(_))) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+        )
+            .into_response(),
+        Err(e @ authentication::CreateUserError::FlatBusy) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({

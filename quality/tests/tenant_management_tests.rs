@@ -2331,3 +2331,224 @@ async fn test_staff_document_on_tenant_started_process_downloads_for_everyone_on
         "another flat's tenant has no access to this process"
     );
 }
+
+fn state_status(url: &str, jwt: &str, process_id: &str) -> u16 {
+    post_status(
+        url,
+        "/api/v1/process/state",
+        jwt,
+        serde_json::json!({ "process_id": process_id, "personal_only": true }),
+    )
+}
+
+/// Either co-owner works the flat's processes and tenant; another flat's owner gets nothing.
+#[tokio::test]
+async fn test_co_owners_share_the_flats_processes_and_tenant_but_strangers_do_not() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    quick_create_user(&env, &admin_jwt, "co_owner_a@dtest.test", "C", "601");
+    quick_create_user(&env, &admin_jwt, "co_owner_b@dtest.test", "C", "601");
+    quick_create_user(&env, &admin_jwt, "co_stranger@dtest.test", "C", "602");
+    let a_jwt = quick_onboard_user(&env, "co_owner_a@dtest.test", "password123");
+    let b_jwt = quick_onboard_user(&env, "co_owner_b@dtest.test", "password123");
+    let stranger_jwt = quick_onboard_user(&env, "co_stranger@dtest.test", "password123");
+
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &owner_first_draft("Co-owner Declaration"));
+    let state = start_process(&url, &a_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let ownership_id = state["ownership_id"].as_i64().unwrap();
+    let (step_id, field_id) = field_and_step_ids(&state);
+
+    assert_eq!(
+        owned_ownership_id(&url, &admin_jwt, &b_jwt),
+        ownership_id,
+        "both co-owners share one ownership"
+    );
+    assert!(listed_process_ids(&url, &b_jwt).contains(&process_id));
+    assert_eq!(state_status(&url, &b_jwt, &process_id), 200);
+    assert!(!listed_process_ids(&url, &stranger_jwt).contains(&process_id));
+    assert_eq!(state_status(&url, &stranger_jwt, &process_id), 403);
+
+    assert_eq!(
+        save_value(
+            &url,
+            &stranger_jwt,
+            &process_id,
+            step_id,
+            field_id,
+            Some(DECLARATION_VALUE),
+            None
+        )
+        .unwrap_err(),
+        403
+    );
+    let declared = save_value(
+        &url,
+        &b_jwt,
+        &process_id,
+        step_id,
+        field_id,
+        Some(DECLARATION_VALUE),
+        None,
+    )
+    .expect("the second co-owner can make the declaration on a process the first started");
+    assert_eq!(declared["status"], "success");
+
+    assert_eq!(
+        add_tenant(
+            &env,
+            &admin_jwt,
+            &stranger_jwt,
+            ownership_id,
+            "C",
+            "601",
+            "co_tenant_bad@dtest.test"
+        )
+        .unwrap_err(),
+        403
+    );
+    add_tenant(
+        &env,
+        &admin_jwt,
+        &b_jwt,
+        ownership_id,
+        "C",
+        "601",
+        "co_tenant@dtest.test",
+    )
+    .expect("either co-owner can add the flat's tenant");
+    let tenant_view: serde_json::Value = ureq::post(&format!("{}/api/v1/tenants/current", url))
+        .set("Authorization", &auth(&a_jwt))
+        .send_json(serde_json::json!({ "ownership_id": ownership_id }))
+        .expect("the other co-owner sees the tenant")
+        .into_json()
+        .unwrap();
+    assert_eq!(tenant_view["tenant_email"], "co_tenant@dtest.test");
+}
+
+/// A designation held by one co-owner gives the other nothing.
+#[tokio::test]
+async fn test_a_co_owners_designation_does_not_reach_the_other_co_owner() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let a_id = quick_create_user(&env, &admin_jwt, "co_desig_a@dtest.test", "C", "611");
+    quick_create_user(&env, &admin_jwt, "co_desig_b@dtest.test", "C", "611");
+    quick_create_designation(&env, &admin_jwt, "co_viewer", "Co Viewer");
+    quick_toggle_designation_permission(&env, &admin_jwt, "co_viewer", "users.view", true);
+    quick_assign_designation(&env, &admin_jwt, a_id, "co_viewer");
+    let a_jwt = quick_onboard_user(&env, "co_desig_a@dtest.test", "password123");
+    let b_jwt = quick_onboard_user(&env, "co_desig_b@dtest.test", "password123");
+
+    let list =
+        |jwt: &str| post_status(&url, "/api/v1/admin/users/list", jwt, serde_json::json!({}));
+    assert_eq!(list(&a_jwt), 200);
+    assert_eq!(list(&b_jwt), 403);
+}
+
+/// A flat holds at most two owners, and revoking it takes both owners' access to its processes.
+#[tokio::test]
+async fn test_flat_takes_two_owners_and_revoking_it_removes_both() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let a_id = quick_create_user(&env, &admin_jwt, "co_rev_a@dtest.test", "C", "621");
+    quick_create_user(&env, &admin_jwt, "co_rev_b@dtest.test", "C", "621");
+    let third = post_status(
+        &url,
+        "/api/v1/admin/users/create",
+        &admin_jwt,
+        serde_json::json!({ "email": "co_rev_c@dtest.test", "wing": "C", "flat_number": "621" }),
+    );
+    assert_eq!(third, 400, "a third owner is refused");
+
+    let a_jwt = quick_onboard_user(&env, "co_rev_a@dtest.test", "password123");
+    let b_jwt = quick_onboard_user(&env, "co_rev_b@dtest.test", "password123");
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let process_id = start_process(&url, &a_jwt, template_id)["process_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(state_status(&url, &b_jwt, &process_id), 200);
+
+    let revoked = post_status(
+        &url,
+        "/api/v1/admin/users/revoke-flat",
+        &admin_jwt,
+        serde_json::json!({ "user_id": a_id, "wing": "C", "flat_number": "621" }),
+    );
+    assert_eq!(revoked, 200);
+    assert_ne!(
+        state_status(&url, &b_jwt, &process_id),
+        200,
+        "the other owner is out too, and with no flat or designation left cannot sign in"
+    );
+}
+
+/// A former co-owner who can still sign in is locked out of the revoked flat.
+#[tokio::test]
+async fn test_former_co_owner_cannot_reach_the_revoked_flats_tenant_or_documents() {
+    let env = quality::setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+
+    let a_id = quick_create_user(&env, &admin_jwt, "former_a@dtest.test", "C", "631");
+    quick_create_user(&env, &admin_jwt, "former_b@dtest.test", "C", "631");
+    quick_create_user(&env, &admin_jwt, "former_b@dtest.test", "C", "632");
+    let a_jwt = quick_onboard_user(&env, "former_a@dtest.test", "password123");
+    let b_jwt = quick_onboard_user(&env, "former_b@dtest.test", "password123");
+
+    let template_id = create_and_activate_template(&url, &admin_jwt, &tenant_draft());
+    let state = start_process(&url, &a_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap().to_string();
+    let ownership_id = state["ownership_id"].as_i64().unwrap();
+    let doc_id = quick_create_document(
+        &env,
+        &admin_jwt,
+        "Flat Deed",
+        "RESIDENT_SPECIFIC",
+        Some(("C", "631")),
+    );
+    let download = |jwt: &str| {
+        post_status(
+            &url,
+            "/api/v1/process/download-url",
+            jwt,
+            serde_json::json!({ "process_id": process_id, "document_id": doc_id }),
+        )
+    };
+    assert_ne!(
+        download(&b_jwt),
+        403,
+        "a current co-owner is not locked out"
+    );
+
+    let revoked = post_status(
+        &url,
+        "/api/v1/admin/users/revoke-flat",
+        &admin_jwt,
+        serde_json::json!({ "user_id": a_id, "wing": "C", "flat_number": "631" }),
+    );
+    assert_eq!(revoked, 200);
+
+    assert_eq!(download(&b_jwt), 403);
+    assert_eq!(state_status(&url, &b_jwt, &process_id), 403);
+    assert_eq!(
+        add_tenant(
+            &env,
+            &admin_jwt,
+            &b_jwt,
+            ownership_id,
+            "C",
+            "631",
+            "former_tenant@dtest.test"
+        )
+        .unwrap_err(),
+        403
+    );
+}

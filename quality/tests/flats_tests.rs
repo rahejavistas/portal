@@ -395,7 +395,10 @@ async fn test_bulk_user_upload_registers_wings_and_flats_and_is_idempotent() {
     let fixture = include_bytes!("../fixtures/member_data_sample.xlsx");
 
     let first = upload_members(&url, &a, fixture);
-    assert_eq!(first["successfully_onboarded"], 3);
+    assert_eq!(
+        first["successfully_onboarded"], 4,
+        "three EmailIDs plus the one CCMail, which becomes the second owner of Z-0002"
+    );
     assert_eq!(first["flats_created"], 3);
 
     let second = upload_members(&url, &a, fixture);
@@ -403,6 +406,11 @@ async fn test_bulk_user_upload_registers_wings_and_flats_and_is_idempotent() {
         second["flats_created"], 0,
         "re-uploading the same file must not create duplicate flats"
     );
+    assert_eq!(
+        second["successfully_onboarded"], 4,
+        "re-adding the same owners is a no-op, not a 'flat is full' failure"
+    );
+    assert_eq!(second["failed_users"].as_array().unwrap().len(), 1);
 
     let list: serde_json::Value = ureq::post(&format!("{}/api/v1/admin/flats/list", url))
         .set("Authorization", &a)
@@ -419,4 +427,27 @@ async fn test_bulk_user_upload_registers_wings_and_flats_and_is_idempotent() {
         .collect();
     numbers.sort_unstable();
     assert_eq!(numbers, ["0001", "0002", "0003"]);
+
+    let owners_of = |flat_number: &str| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["wing"] == "Z" && f["flat_number"] == flat_number)
+            .map(|f| {
+                f["owner_emails"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("no owner_emails array in {f}"))
+                    .iter()
+                    .map(|e| e.as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        owners_of("0002"),
+        ["cc.two@example.test", "resident.two@example.test"],
+        "EmailID and CCMail must both be registered as owners of the unit"
+    );
+    assert_eq!(owners_of("0001"), ["resident.one@example.test"]);
+    assert_eq!(owners_of("0003"), ["resident.three@example.test"]);
 }

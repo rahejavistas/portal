@@ -580,7 +580,10 @@ pub async fn list_processes_for_user(
     user_id: i32,
 ) -> Result<Vec<ProcessListItem>, sqlx::Error> {
     let query = format!(
-        "{} WHERE p.user_id = $1 AND (fo.ownership_id IS NULL OR fo.is_active = TRUE) \
+        "{} WHERE (p.ownership_id IS NULL AND p.user_id = $1) \
+            OR (fo.is_active = TRUE AND EXISTS ( \
+                SELECT 1 FROM flat_ownership_users fou \
+                WHERE fou.ownership_id = fo.ownership_id AND fou.user_id = $1 AND fou.is_active = TRUE)) \
          {} \
          ORDER BY p.created_at DESC",
         PROCESS_LIST_QUERY_BASE, PROCESS_LIST_GROUP_BY
@@ -701,22 +704,24 @@ pub async fn get_active_tenant(
     .await
 }
 
-/// `ownership_id`'s current active owner as (user_id, email), if any.
-pub async fn get_active_owner(
+/// `ownership_id`'s current active owners as (user_id, email), lowest user_id first.
+pub async fn get_active_owners(
     conn: &mut sqlx::PgConnection,
     ownership_id: i32,
-) -> Result<Option<(i32, String)>, sqlx::Error> {
+) -> Result<Vec<(i32, String)>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT fo.user_id, u.email FROM flat_ownerships fo \
-         JOIN users u ON u.user_id = fo.user_id \
-         WHERE fo.ownership_id = $1 AND fo.is_active = TRUE",
+        "SELECT fou.user_id, u.email FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         JOIN users u ON u.user_id = fou.user_id \
+         WHERE fo.ownership_id = $1 AND fo.is_active = TRUE \
+         ORDER BY fou.user_id",
     )
     .bind(ownership_id)
-    .fetch_optional(conn)
+    .fetch_all(conn)
     .await
 }
 
-/// Whether `user_id` is the current active owner of `ownership_id`'s flat.
+/// Whether `user_id` is one of the current active owners of `ownership_id`'s flat.
 pub async fn is_active_owner_of_ownership(
     conn: &mut sqlx::PgConnection,
     user_id: i32,
@@ -724,8 +729,9 @@ pub async fn is_active_owner_of_ownership(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT EXISTS ( \
-            SELECT 1 FROM flat_ownerships \
-            WHERE ownership_id = $1 AND user_id = $2 AND is_active = TRUE \
+            SELECT 1 FROM flat_ownerships fo \
+            JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+            WHERE fo.ownership_id = $1 AND fou.user_id = $2 AND fo.is_active = TRUE \
          )",
     )
     .bind(ownership_id)
@@ -746,7 +752,9 @@ pub async fn is_tenant_only(
             WHERE t.tenant_user_id = $1 AND t.is_active = TRUE \
               AND t.expires_at >= CURRENT_DATE AND fo.is_active = TRUE \
          ) AND NOT EXISTS ( \
-            SELECT 1 FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE \
+            SELECT 1 FROM flat_ownership_users fou \
+            JOIN flat_ownerships fo ON fo.ownership_id = fou.ownership_id \
+            WHERE fou.user_id = $1 AND fou.is_active = TRUE AND fo.is_active = TRUE \
          )",
     )
     .bind(user_id)
@@ -864,7 +872,9 @@ pub async fn get_active_ownerships_for_user(
 ) -> Result<Vec<(i32, i32)>, sqlx::Error> {
     // (ownership_id, flat_id)
     sqlx::query_as(
-        "SELECT ownership_id, flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+        "SELECT fo.ownership_id, fo.flat_id FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE",
     )
     .bind(user_id)
     .fetch_all(conn)
@@ -878,7 +888,9 @@ pub async fn get_active_ownerships_and_tenancies_for_user(
 ) -> Result<Vec<(i32, i32)>, sqlx::Error> {
     // (ownership_id, flat_id)
     sqlx::query_as(
-        "SELECT ownership_id, flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE \
+        "SELECT fo.ownership_id, fo.flat_id FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE \
          UNION \
          SELECT t.ownership_id, fo.flat_id FROM tenant_ownerships t \
          JOIN flat_ownerships fo ON fo.ownership_id = t.ownership_id \
@@ -905,8 +917,9 @@ pub async fn get_user_active_flats(
     sqlx::query_as(
         "SELECT f.flat_id, f.wing, f.flat_number \
          FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
          JOIN flats f ON fo.flat_id = f.flat_id \
-         WHERE fo.user_id = $1 AND fo.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE \
          UNION \
          SELECT f.flat_id, f.wing, f.flat_number \
          FROM tenant_ownerships t \

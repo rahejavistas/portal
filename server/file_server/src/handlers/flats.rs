@@ -12,7 +12,7 @@ pub struct FlatSummary {
     pub flat_number: String,
     pub area_sqft: Option<Decimal>,
     pub is_fire_flat: bool,
-    pub owner_email: Option<String>,
+    pub owner_emails: Vec<String>,
 }
 
 pub async fn list_flats(
@@ -21,10 +21,13 @@ pub async fn list_flats(
 ) -> Result<Json<Vec<FlatSummary>>, ApiError> {
     let mut conn = state.pg_pool.acquire().await.map_err(internal_err)?;
     let flats: Vec<FlatSummary> = sqlx::query_as(
-        "SELECT f.flat_id, f.wing, f.flat_number, f.area_sqft, f.is_fire_flat, u.email AS owner_email \
+        "SELECT f.flat_id, f.wing, f.flat_number, f.area_sqft, f.is_fire_flat, COALESCE(( \
+             SELECT ARRAY_AGG(u.email ORDER BY u.email) FROM flat_ownerships fo \
+             JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+             JOIN users u ON u.user_id = fou.user_id \
+             WHERE fo.flat_id = f.flat_id AND fo.is_active = TRUE \
+         ), ARRAY[]::TEXT[]) AS owner_emails \
          FROM flats f \
-         LEFT JOIN flat_ownerships fo ON fo.flat_id = f.flat_id AND fo.is_active = TRUE \
-         LEFT JOIN users u ON u.user_id = fo.user_id \
          ORDER BY f.wing, f.flat_number",
     )
     .fetch_all(&mut *conn)
@@ -81,7 +84,7 @@ pub async fn create_flat(
         flat_number,
         area_sqft,
         is_fire_flat,
-        owner_email: None,
+        owner_emails: Vec::new(),
     }))
 }
 

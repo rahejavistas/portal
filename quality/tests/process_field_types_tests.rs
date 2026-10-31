@@ -54,13 +54,18 @@ async fn seed_user_with_flat(pool: &sqlx::PgPool, email: &str, flat_number: &str
     .await
     .unwrap();
     let ownership_id: i32 = sqlx::query_scalar(
-        "INSERT INTO flat_ownerships (flat_id, user_id, is_active) VALUES ($1, $2, TRUE) RETURNING ownership_id",
+        "INSERT INTO flat_ownerships (flat_id, is_active) VALUES ($1, TRUE) RETURNING ownership_id",
     )
     .bind(flat_id)
-    .bind(user_id)
     .fetch_one(pool)
     .await
     .unwrap();
+    sqlx::query("INSERT INTO flat_ownership_users (ownership_id, user_id) VALUES ($1, $2)")
+        .bind(ownership_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
     (user_id, ownership_id)
 }
 

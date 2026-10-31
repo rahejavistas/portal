@@ -162,14 +162,15 @@ impl User {
     }
 
     /// IDs of every flat the user actively owns. A user can own more than one flat, so
-    /// callers must not assume a single result (there's no DB constraint limiting a user
-    /// to one active ownership — only one active owner per flat).
+    /// callers must not assume a single result.
     pub async fn get_active_flat_ids<'e, E: sqlx::Executor<'e, Database = sqlx::Postgres>>(
         &self,
         executor: E,
     ) -> Result<Vec<i32>, sqlx::Error> {
         sqlx::query_scalar(
-            "SELECT flat_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+            "SELECT fo.flat_id FROM flat_ownerships fo \
+             JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+             WHERE fou.user_id = $1 AND fo.is_active = TRUE",
         )
         .bind(self.user_id)
         .fetch_all(executor)
@@ -335,6 +336,95 @@ async fn upsert_user_by_email(
     Ok(new_user_id)
 }
 
+pub const MAX_FLAT_OWNERS: i64 = 2;
+
+#[derive(Debug)]
+pub enum CreateUserError {
+    Invalid(String),
+    FlatFull,
+    FlatBusy,
+    Internal(String),
+}
+
+impl std::fmt::Display for CreateUserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(msg) | Self::Internal(msg) => f.write_str(msg),
+            Self::FlatFull => write!(
+                f,
+                "Flat already has the maximum of {MAX_FLAT_OWNERS} owners"
+            ),
+            Self::FlatBusy => f.write_str("The flat was changed at the same time. Please retry."),
+        }
+    }
+}
+
+impl From<sqlx::Error> for CreateUserError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Internal(e.to_string())
+    }
+}
+
+impl From<String> for CreateUserError {
+    fn from(msg: String) -> Self {
+        Self::Internal(msg)
+    }
+}
+
+/// Idempotent per user. Locks the ownership row so concurrent adds can't exceed the cap.
+async fn add_flat_owner(
+    tx: &mut sqlx::PgConnection,
+    flat_id: i32,
+    user_id: i32,
+) -> Result<(), CreateUserError> {
+    sqlx::query(
+        "INSERT INTO flat_ownerships (flat_id, is_active) VALUES ($1, TRUE) \
+         ON CONFLICT (flat_id) WHERE is_active = TRUE DO NOTHING",
+    )
+    .bind(flat_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let ownership_id: Option<i32> = sqlx::query_scalar(
+        "SELECT ownership_id FROM flat_ownerships \
+         WHERE flat_id = $1 AND is_active = TRUE FOR UPDATE",
+    )
+    .bind(flat_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let ownership_id = ownership_id.ok_or(CreateUserError::FlatBusy)?;
+
+    let added = sqlx::query(
+        "INSERT INTO flat_ownership_users (ownership_id, user_id) \
+         SELECT $1, $2 \
+         WHERE (SELECT COUNT(*) FROM flat_ownership_users \
+                WHERE ownership_id = $1 AND is_active = TRUE) < $3 \
+         ON CONFLICT (ownership_id, user_id) DO UPDATE \
+             SET is_active = TRUE, removed_at = NULL \
+             WHERE flat_ownership_users.is_active = FALSE",
+    )
+    .bind(ownership_id)
+    .bind(user_id)
+    .bind(MAX_FLAT_OWNERS)
+    .execute(&mut *tx)
+    .await?;
+
+    if added.rows_affected() == 0 {
+        let already_owner: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM flat_ownership_users \
+                            WHERE ownership_id = $1 AND user_id = $2 AND is_active = TRUE)",
+        )
+        .bind(ownership_id)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !already_owner {
+            return Err(CreateUserError::FlatFull);
+        }
+    }
+    Ok(())
+}
+
 /// Appends one row to the permission-change audit log. Shared across crates (document
 /// category access lives in `file_server`, not here) since both write to the same DB.
 pub async fn log_permission_change(
@@ -455,24 +545,22 @@ impl PermissionsManager {
         wing: &str,
         flat_number: &str,
         created_by: Option<i32>,
-    ) -> Result<User, String> {
+    ) -> Result<User, CreateUserError> {
         let password_hash = match password_plain {
             Some(pwd) => {
-                validate_password_strength(pwd)?;
-                Some(hash_password(pwd)?)
+                validate_password_strength(pwd).map_err(|e| CreateUserError::Invalid(e.into()))?;
+                Some(hash_password(pwd).map_err(CreateUserError::Invalid)?)
             }
             None => None,
         };
 
         self.ensure_wing_exists(wing, created_by).await?;
 
-        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin().await?;
 
         let user_id =
             upsert_user_by_email(&mut tx, email, password_hash.as_deref(), created_by).await?;
 
-        // Upsert the flat unit, then map ownership — fails if another user already
-        // actively owns it.
         let (flat_id,): (i32,) = sqlx::query_as(
             "INSERT INTO flats (wing, flat_number) VALUES ($1, $2) \
              ON CONFLICT (wing, flat_number) DO UPDATE SET wing = EXCLUDED.wing \
@@ -481,35 +569,11 @@ impl PermissionsManager {
         .bind(wing)
         .bind(flat_number)
         .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
 
-        let active_owner: Option<(i32,)> = sqlx::query_as(
-            "SELECT user_id FROM flat_ownerships WHERE flat_id = $1 AND is_active = TRUE",
-        )
-        .bind(flat_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
+        add_flat_owner(&mut tx, flat_id, user_id).await?;
 
-        match active_owner {
-            Some((existing_owner_id,)) if existing_owner_id != user_id => {
-                return Err("Flat is already actively owned by another user".to_string());
-            }
-            Some(_) => {}
-            None => {
-                sqlx::query(
-                    "INSERT INTO flat_ownerships (flat_id, user_id, is_active) VALUES ($1, $2, TRUE)",
-                )
-                .bind(flat_id)
-                .bind(user_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| e.to_string())?;
-            }
-        }
-
-        tx.commit().await.map_err(|e| e.to_string())?;
+        tx.commit().await?;
 
         Ok(assemble_user(RawUser {
             user_id,
@@ -923,50 +987,72 @@ impl PermissionsManager {
         .map(|rows: Vec<RawUser>| rows.into_iter().map(assemble_user).collect())
     }
 
-    /// Soft deletes a resident's flat mapping by setting is_active to FALSE.
+    /// Ends the flat's ownership for all its owners, if `user_id` is one of them.
     pub async fn revoke_flat_ownership(
         &self,
         user_id: i32,
         wing: &str,
         flat_number: &str,
     ) -> Result<(), String> {
-        let flat_row: Option<(i32,)> =
-            sqlx::query_as("SELECT flat_id FROM flats WHERE wing = $1 AND flat_number = $2")
-                .bind(wing)
-                .bind(flat_number)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        // Same row lock as `add_flat_owner`, so adds and revokes can't interleave.
+        let ownership_id: Option<i32> = sqlx::query_scalar(
+            "SELECT fo.ownership_id FROM flat_ownerships fo \
+             JOIN flats f ON f.flat_id = fo.flat_id \
+             JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+             WHERE f.wing = $1 AND f.flat_number = $2 AND fo.is_active = TRUE AND fou.user_id = $3 \
+             FOR UPDATE OF fo",
+        )
+        .bind(wing)
+        .bind(flat_number)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        let Some(ownership_id) = ownership_id else {
+            return Ok(());
+        };
 
-        if let Some((flat_id,)) = flat_row {
+        sqlx::query(
+            "UPDATE flat_ownerships SET is_active = FALSE, end_date = NOW() WHERE ownership_id = $1",
+        )
+        .bind(ownership_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        let removed: Vec<i32> = sqlx::query_scalar(
+            "UPDATE flat_ownership_users SET is_active = FALSE, removed_at = NOW() \
+             WHERE ownership_id = $1 AND is_active = TRUE RETURNING user_id",
+        )
+        .bind(ownership_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        tx.commit().await.map_err(|e| e.to_string())?;
+
+        for removed_id in removed {
+            self.deactivate_if_orphaned(removed_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn deactivate_if_orphaned(&self, user_id: i32) -> Result<(), String> {
+        let Some(user) = self
+            .get_user_by_id(user_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(());
+        };
+        if user.wing == "TBD" && user.flat_number == "TBD" && user.designations.is_empty() {
             sqlx::query(
-                "UPDATE flat_ownerships SET is_active = FALSE, end_date = NOW() \
-                 WHERE user_id = $1 AND flat_id = $2",
+                "UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE user_id = $1",
             )
             .bind(user_id)
-            .bind(flat_id)
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         }
-
-        // If that was their last flat and they hold no designations, they're orphaned.
-        if let Some(user) = self
-            .get_user_by_id(user_id)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            if user.wing == "TBD" && user.flat_number == "TBD" && user.designations.is_empty() {
-                sqlx::query(
-                    "UPDATE users SET is_active = FALSE, updated_at = NOW() WHERE user_id = $1",
-                )
-                .bind(user_id)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            }
-        }
-
         Ok(())
     }
 
@@ -980,7 +1066,8 @@ impl PermissionsManager {
         sqlx::query_scalar(
             "SELECT u.email FROM flat_ownerships fo \
              JOIN flats f ON fo.flat_id = f.flat_id \
-             JOIN users u ON fo.user_id = u.user_id \
+             JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+             JOIN users u ON fou.user_id = u.user_id \
              WHERE f.wing = $1 AND f.flat_number = $2 AND fo.is_active = TRUE \
              ORDER BY u.email",
         )

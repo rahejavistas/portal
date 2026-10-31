@@ -113,15 +113,11 @@ pub(super) async fn load_authorized_process(
         })?;
 
     // A former owner must lose read access too, not just the write-side checks.
-    let is_starter = info.user_id == user.user_id;
     let owns_process = match info.ownership_id {
-        Some(oid) => {
-            is_starter
-                && process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
-                    .await
-                    .internal_err()?
-        }
-        None => is_starter,
+        Some(oid) => process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
+            .await
+            .internal_err()?,
+        None => info.user_id == user.user_id,
     };
     let wing_representative_codes = process::db::get_all_wing_representative_codes(conn)
         .await
@@ -180,8 +176,7 @@ pub(super) async fn build_actor_context(
     })
 }
 
-/// Sets the caller's flat-scoped roles on `actor`. `is_process_owner` also needs the
-/// caller to still be the flat's active owner, so a sold flat's former owner loses it.
+/// Sets the caller's flat-scoped roles on `actor`; any current owner of the flat is the process owner.
 pub(super) async fn resolve_flat_roles(
     conn: &mut sqlx::PgConnection,
     actor: &mut process::state_machine::ActorContext,
@@ -189,10 +184,9 @@ pub(super) async fn resolve_flat_roles(
     ownership_id: Option<i32>,
     process_owner_id: i32,
 ) -> Result<(), ApiError> {
-    let is_starter = process_owner_id == user.user_id;
     let Some(oid) = ownership_id else {
         actor.tenant_missing_for_this_flat = true;
-        actor.is_process_owner = is_starter;
+        actor.is_process_owner = process_owner_id == user.user_id;
         return Ok(());
     };
     actor.is_active_tenant_for_this_flat =
@@ -202,10 +196,9 @@ pub(super) async fn resolve_flat_roles(
     actor.tenant_missing_for_this_flat = !process::db::has_active_tenant(conn, oid)
         .await
         .internal_err()?;
-    actor.is_process_owner = is_starter
-        && process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
-            .await
-            .internal_err()?;
+    actor.is_process_owner = process::db::is_active_owner_of_ownership(conn, user.user_id, oid)
+        .await
+        .internal_err()?;
     Ok(())
 }
 
@@ -317,7 +310,10 @@ pub(super) async fn notify_newly_opened_designation_steps(
         }
     }
     if let Some(info) = owner_step {
-        if let Ok(Some((owner_id, email))) = process::db::get_active_owner(&mut conn, oid).await {
+        for (owner_id, email) in process::db::get_active_owners(&mut conn, oid)
+            .await
+            .unwrap_or_default()
+        {
             let wants_notification = permissions_manager
                 .get_notification_prefs(owner_id)
                 .await

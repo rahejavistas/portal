@@ -1093,8 +1093,15 @@ async fn test_defaulters_report_is_correct_for_a_flat_with_ownership_history() {
     .fetch_one(&env.db_pool)
     .await
     .unwrap();
-    sqlx::query("INSERT INTO flat_ownerships (flat_id, user_id, is_active) VALUES ($1, $2, FALSE)")
-        .bind(flat_id)
+    let former_ownership_id: i32 = sqlx::query_scalar(
+        "INSERT INTO flat_ownerships (flat_id, is_active) VALUES ($1, FALSE) RETURNING ownership_id",
+    )
+    .bind(flat_id)
+    .fetch_one(&env.db_pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO flat_ownership_users (ownership_id, user_id) VALUES ($1, $2)")
+        .bind(former_ownership_id)
         .bind(former_owner_id)
         .execute(&env.db_pool)
         .await

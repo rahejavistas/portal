@@ -135,7 +135,7 @@ Any authenticated user. Self-service only.
 See [Document Upload Flow](DOCUMENT_UPLOAD.md) for the presigned-URL upload mechanism and access rules.
 
 ### POST `/api/v1/documents`
-Lists all non-deleted documents visible to the caller.
+Lists the documents for the caller's own flat view: public documents, plus documents attached to a flat the caller owns (a tenant sees only what they uploaded for their flat). Never includes another flat's documents, regardless of the caller's admin or category permissions; the admin document list is where those are browsed.
 * **Response (200):** `Vec<DocumentWithMetadata>` (see [Document shape](#document-shape)).
 
 ### POST `/api/v1/documents/:id`
@@ -280,8 +280,8 @@ Requires `users.view`, `users.manage`, `users.roles.manage`, or `users.roles.vie
 ### POST `/api/v1/admin/users/create`
 Requires `users.manage`.
 * **Request:** `{ "email": "new@example.com", "wing": "A", "flat_number": "301" }`
-* **Response (201):** `User`.
-* **400** on invalid email/flat.
+* **Response (201):** `User`. If the flat already has an owner, the new user joins as a second co-owner.
+* **400** on invalid email/flat, or if the flat already has two owners.
 
 ### POST `/api/v1/admin/users/create-staff`
 Requires `users.manage`. Creates an account with no flat ownership, auto-assigned the `staff` designation.
@@ -292,10 +292,11 @@ Requires `users.manage`. Creates an account with no flat ownership, auto-assigne
 ### POST `/api/v1/admin/users/revoke-flat`
 Requires `users.manage`.
 * **Request:** `{ "user_id": 12, "wing": "A", "flat_number": "301" }`
+Removes every owner of the flat together (a flat can have two co-owners), provided `user_id` is one of them; otherwise nothing changes.
 * **Response (200):** `{ "status": "success", "message": "Flat mapping revoked successfully." }`
 
 ### POST `/api/v1/admin/users/upload`
-Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; duplicate flat claims within the file are rejected. An XLSX member-data file (`UnitNo` / `EmailID` columns) is also accepted. Every wing and flat found in the file is added to the society's catalogue even if that row's resident can't be onboarded (e.g. missing email); flats that already exist are left alone.
+Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; a flat claimed by more than two rows is rejected (two rows make co-owners). An XLSX member-data file (`UnitNo` / `EmailID` columns) is also accepted. Every wing and flat found in the file is added to the society's catalogue even if that row's resident can't be onboarded (e.g. missing email); flats that already exist are left alone.
 * **Response (200):** `{ "total_rows": 50, "successfully_onboarded": 48, "flats_created": 12, "failed_users": [ { "email": "bad@x.com", "reason": "Invalid flat number" } ] }`
 
 ---
