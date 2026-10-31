@@ -79,6 +79,24 @@ This will compile the Rust project and output a deployment bundle at:
 | `S3_REGION` | `ap-south-1` | AWS Region of your bucket |
 | `ADMIN_EMAIL` | `admin@vistas.com` | Primary admin email |
 
+### Step 2.3: Metrics to Grafana Cloud via the Collector Layer
+
+The server never talks to Grafana. It sends metrics to a collector running next to it as a Lambda extension (`localhost:4318`), and the collector forwards them to Grafana after the response has gone out. Grafana credentials live only in the collector's environment, not in the zip or the app config.
+
+1. Build with the collector config included:
+   ```bash
+   cargo lambda build --release --arm64 --output-format zip --include config_prod.toml --include collector.yaml
+   ```
+2. Add the AWS-managed **ADOT collector layer for arm64** in `ap-south-1` to the function. Take the ARN for the current version from the AWS ADOT Lambda documentation. Use the collector-only layer, not a language layer.
+3. Add these environment variables:
+
+| Key | Value | Description |
+| :--- | :--- | :--- |
+| `OPENTELEMETRY_COLLECTOR_CONFIG_URI` | `/var/task/collector.yaml` | Tells the collector which config to load |
+| `GRAFANA_OTLP_AUTH` | `Basic <base64 of instanceID:token>` | Grafana Cloud credentials |
+
+4. `config_prod.toml` has `otlp_endpoint = "http://localhost:4318"` under `[telemetry]` and no credentials. Without the layer attached nothing receives the metrics, so add the layer before deploying this build.
+
 ---
 
 ## 3. S3 Bucket & CORS Setup

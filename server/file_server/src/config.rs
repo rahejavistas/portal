@@ -4,8 +4,6 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, Clone)]
 pub struct TelemetryConfig {
     pub otlp_endpoint: Option<String>,
-    pub otlp_username: Option<String>,
-    pub otlp_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

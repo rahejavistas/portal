@@ -48,9 +48,7 @@ public_endpoint_url = "http://localhost:9000" # optional — browser-facing endp
 presigned_expiry = "15m"                     # optional
 
 [telemetry]
-# otlp_endpoint = ""
-# otlp_username = ""
-# otlp_password = ""
+# otlp_endpoint = "http://localhost:4318"   # the collector beside the function; omit to disable export
 
 [rate_limit]
 enabled = true
@@ -72,7 +70,7 @@ admin_per_min = 300
 | `jwt_expiry` / `forgot_password_expiry` | yes | Human-readable durations (`"1h"`, `"15m"`, etc — parsed by `humantime`). |
 | `postgres.*` | yes | See `base::config::PostgresConfig`. `database_url`, if set, is a full connection string that takes priority in the pool builder over the individual host/port/user fields — see `DATABASE_URL` below. |
 | `s3.*` | yes | See `base::config::S3Config`. |
-| `telemetry.*` | no | All three sub-fields optional; omit them (or the OTLP endpoint) to disable telemetry export entirely. |
+| `telemetry.otlp_endpoint` | no | Where metrics are sent over OTLP/HTTP. In Lambda this is the collector layer on `localhost`, which holds the backend credentials; omit it to disable export. |
 | `rate_limit.*` | yes | `enabled = false` disables rate limiting outright (used in `config_prod.toml` and test configs). |
 | `signyu.*` | no | The whole `[signyu]` section can be omitted. `api_key` absent (from both the file and env) means the SignYu provider is simply unavailable — `add-signers` with `provider: "signyu"` returns a 400. |
 
