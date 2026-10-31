@@ -298,16 +298,17 @@ async fn test_multiple_flat_ownership_and_conflict() {
     assert!(u1.flat_number.contains("404"));
     assert!(u1.flat_number.contains("405"));
 
-    // User 2 tries to claim D-404 which is owned by User 1
+    pm.create_user_with_credentials("coowner@vistas.com", Some("password3"), "D", "404", None)
+        .await
+        .unwrap();
     let conflict = pm
-        .create_user_with_credentials("thief@vistas.com", Some("password3"), "D", "404", None)
+        .create_user_with_credentials("thief@vistas.com", Some("password4"), "D", "404", None)
         .await;
 
-    assert!(conflict.is_err());
-    assert_eq!(
+    assert!(matches!(
         conflict.unwrap_err(),
-        "Flat is already actively owned by another user"
-    );
+        authentication::CreateUserError::FlatFull
+    ));
 }
 
 /// Tests that creating an old orphaned user with a new flat restores their is_active flag.
@@ -608,4 +609,134 @@ async fn test_revoke_designation_within_revoker_permissions() {
         .revoke_designation_within(holder.user_id, "powerful_role", 1, &held)
         .await
         .unwrap());
+}
+
+/// A designation on one co-owner never reaches the other.
+#[tokio::test]
+async fn test_co_owner_does_not_inherit_designation() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    let first = pm
+        .create_user_with_credentials("co1@vistas.com", Some("password1"), "G", "701", None)
+        .await
+        .unwrap();
+    let second = pm
+        .create_user_with_credentials("co2@vistas.com", Some("password2"), "G", "701", None)
+        .await
+        .unwrap();
+    assert_ne!(first.user_id, second.user_id);
+
+    pm.create_designation("treasurer", "Treasurer", None)
+        .await
+        .unwrap();
+    pm.toggle_designation_permission("treasurer", "accounting.manage", true, None)
+        .await
+        .unwrap();
+    pm.assign_designation(first.user_id, "treasurer", None)
+        .await
+        .unwrap();
+
+    let first = pm.get_user_by_id(first.user_id).await.unwrap().unwrap();
+    let second = pm.get_user_by_id(second.user_id).await.unwrap().unwrap();
+    assert_eq!(
+        (first.wing.as_str(), first.flat_number.as_str()),
+        ("G", "701")
+    );
+    assert_eq!(
+        (second.wing.as_str(), second.flat_number.as_str()),
+        ("G", "701")
+    );
+    assert!(first.has_permission(authentication::Permission::AccountingManage));
+    assert!(second.designations.is_empty());
+    assert!(!second.has_permission(authentication::Permission::AccountingManage));
+
+    let listed: Vec<String> = pm
+        .get_all_users()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|u| u.email)
+        .collect();
+    assert!(listed.contains(&"co1@vistas.com".to_string()));
+    assert!(listed.contains(&"co2@vistas.com".to_string()));
+}
+
+/// Re-adding an owner doesn't use the second slot.
+#[tokio::test]
+async fn test_re_adding_same_owner_is_idempotent() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    for _ in 0..2 {
+        pm.create_user_with_credentials("solo@vistas.com", Some("password1"), "G", "702", None)
+            .await
+            .unwrap();
+    }
+    pm.create_user_with_credentials("second@vistas.com", Some("password2"), "G", "702", None)
+        .await
+        .expect("slot must still be free");
+    let emails = pm.active_owner_emails_for_flat("G", "702").await.unwrap();
+    assert_eq!(emails, vec!["second@vistas.com", "solo@vistas.com"]);
+}
+
+/// Revoking a flat removes all its owners.
+#[tokio::test]
+async fn test_revoke_flat_removes_both_owners() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    let first = pm
+        .create_user_with_credentials("rv1@vistas.com", Some("password1"), "G", "703", None)
+        .await
+        .unwrap();
+    let second = pm
+        .create_user_with_credentials("rv2@vistas.com", Some("password2"), "G", "703", None)
+        .await
+        .unwrap();
+    pm.create_user_with_credentials("rv1@vistas.com", None, "G", "704", None)
+        .await
+        .unwrap();
+
+    pm.revoke_flat_ownership(first.user_id, "G", "703")
+        .await
+        .unwrap();
+
+    assert!(pm
+        .active_owner_emails_for_flat("G", "703")
+        .await
+        .unwrap()
+        .is_empty());
+    let first = pm.get_user_by_id(first.user_id).await.unwrap().unwrap();
+    assert!(first.is_active, "still owns G-704");
+    assert_eq!(first.flat_number, "704");
+    let second = pm.get_user_by_id(second.user_id).await.unwrap().unwrap();
+    assert!(!second.is_active, "no flat or designation left");
+
+    pm.create_user_with_credentials("rv3@vistas.com", Some("password3"), "G", "703", None)
+        .await
+        .expect("flat is free again");
+}
+
+/// Revoking as a non-owner changes nothing.
+#[tokio::test]
+async fn test_revoke_flat_ignores_non_owner() {
+    let env = setup_db_test_env().await;
+    let pm = PermissionsManager::new(env.db_pool.clone());
+
+    pm.create_user_with_credentials("own@vistas.com", Some("password1"), "G", "705", None)
+        .await
+        .unwrap();
+    let bystander = pm
+        .create_user_with_credentials("by@vistas.com", Some("password2"), "G", "706", None)
+        .await
+        .unwrap();
+
+    pm.revoke_flat_ownership(bystander.user_id, "G", "705")
+        .await
+        .unwrap();
+    assert_eq!(
+        pm.active_owner_emails_for_flat("G", "705").await.unwrap(),
+        vec!["own@vistas.com"]
+    );
 }

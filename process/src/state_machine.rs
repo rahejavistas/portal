@@ -45,8 +45,7 @@ pub struct ActorContext {
     pub is_active_tenant_for_this_flat: bool,
     /// No active tenant mapped at all — lets an admin fill `Tenant` steps instead.
     pub tenant_missing_for_this_flat: bool,
-    /// Whether the caller owns this process (`processes.user_id`) and is still the
-    /// flat's active owner.
+    /// Whether the caller currently owns the process's flat (or started a flat-less process).
     pub is_process_owner: bool,
 }
 

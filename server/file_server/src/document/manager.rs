@@ -44,23 +44,13 @@ impl DocumentManager {
             .map_err(|e| e.to_string())
     }
 
-    /// Fetches all allowed document IDs for a user based on category, designations, and flat ownership.
-    pub async fn get_allowed_document_ids(
+    /// Public documents, plus those on flats the user owns (or a tenant's own uploads). Ignores admin permissions.
+    pub async fn flat_view_document_ids(
         &self,
         user: &authentication::User,
     ) -> Result<std::collections::HashSet<Uuid>, String> {
         let mut allowed_ids = std::collections::HashSet::new();
 
-        if user.has_permission(authentication::Permission::DocumentsAllManage) {
-            let admin_ids: Vec<Uuid> =
-                sqlx::query_scalar("SELECT document_id FROM documents WHERE NOT is_deleted")
-                    .fetch_all(&self.pg_pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
-            return Ok(admin_ids.into_iter().collect());
-        }
-
-        // 1. Documents in any is_public_read category are visible to everyone
         let public_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT d.document_id FROM documents d \
              JOIN document_categories dc ON dc.code = d.category \
@@ -71,26 +61,13 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(public_ids);
 
-        // 2. Documents whose category is read-mapped to one of the user's active designations
-        let designation_mapped_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT DISTINCT d.document_id \
-             FROM documents d \
-             JOIN document_category_designations dcd ON dcd.category = d.category \
-             JOIN user_designations ud ON ud.designation_id = dcd.designation_id \
-             WHERE ud.user_id = $1 AND ud.is_active = TRUE AND dcd.can_read = TRUE AND NOT d.is_deleted",
-        )
-        .bind(user.user_id)
-        .fetch_all(&self.pg_pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        allowed_ids.extend(designation_mapped_ids);
-
-        // 3. Documents assigned to flat(s) owned/occupied by the user (RESIDENT_SPECIFIC)
+        // Documents assigned to flat(s) owned/occupied by the user (RESIDENT_SPECIFIC)
         let owned_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT df.document_id \
              FROM document_flats df \
              JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
-             WHERE fo.user_id = $1 AND fo.is_active = TRUE",
+             JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+             WHERE fou.user_id = $1 AND fo.is_active = TRUE",
         )
         .bind(user.user_id)
         .fetch_all(&self.pg_pool)
@@ -98,7 +75,7 @@ impl DocumentManager {
         .map_err(|e| e.to_string())?;
         allowed_ids.extend(owned_ids);
 
-        // 4. Documents the user uploaded as the current tenant of the flat.
+        // Documents the user uploaded as the current tenant of the flat.
         let tenant_uploaded_ids: Vec<Uuid> = sqlx::query_scalar(
             "SELECT DISTINCT d.document_id FROM documents d \
              JOIN document_flats df ON df.document_id = d.document_id \
@@ -116,7 +93,7 @@ impl DocumentManager {
         Ok(allowed_ids)
     }
 
-    /// Same visibility rules as `get_allowed_document_ids`, checked for one document.
+    /// Wider than the flat view: also honours admin permissions and category read-grants.
     async fn document_visible_to_user(
         &self,
         document_id: Uuid,
@@ -138,7 +115,8 @@ impl DocumentManager {
                 UNION ALL \
                 SELECT 1 FROM document_flats df \
                 JOIN flat_ownerships fo ON df.flat_id = fo.flat_id \
-                WHERE df.document_id = $1 AND fo.user_id = $2 AND fo.is_active = TRUE \
+                JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+                WHERE df.document_id = $1 AND fou.user_id = $2 AND fo.is_active = TRUE \
                 UNION ALL \
                 SELECT 1 FROM documents d \
                 JOIN document_flats df ON df.document_id = d.document_id \
@@ -193,13 +171,13 @@ impl DocumentManager {
         Ok(doc)
     }
 
-    /// Lists all non-deleted documents the user is authorized to view.
+    /// The resident's own documents view: only `flat_view_document_ids`.
     /// Pushes the allowed IDs into SQL to avoid fetching all documents and filtering in Rust.
     pub async fn list_visible_documents(
         &self,
         user: &authentication::User,
     ) -> Result<Vec<DocumentWithMetadata>, String> {
-        let allowed_ids = self.get_allowed_document_ids(user).await?;
+        let allowed_ids = self.flat_view_document_ids(user).await?;
         let ids: Vec<Uuid> = allowed_ids.into_iter().collect();
 
         let docs: Vec<DocumentWithMetadata> = sqlx::query_as(
@@ -568,11 +546,14 @@ impl DocumentManager {
              LEFT JOIN generic_document_metadata g ON d.document_id = g.document_id \
              LEFT JOIN document_subcategories sc ON g.subcategory_id = sc.subcategory_id \
              LEFT JOIN LATERAL ( \
-                SELECT fl.wing, fl.flat_number, u.email AS owner_email \
+                SELECT fl.wing, fl.flat_number, \
+                       (SELECT string_agg(u.email, ', ' ORDER BY u.email) \
+                        FROM flat_ownership_users fou \
+                        JOIN users u ON u.user_id = fou.user_id \
+                        WHERE fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE) AS owner_email \
                 FROM document_flats df \
                 JOIN flats fl ON fl.flat_id = df.flat_id \
                 LEFT JOIN flat_ownerships fo ON fo.flat_id = fl.flat_id AND fo.is_active = TRUE \
-                LEFT JOIN users u ON u.user_id = fo.user_id \
                 WHERE df.document_id = d.document_id \
                 LIMIT 1 \
              ) f ON TRUE \

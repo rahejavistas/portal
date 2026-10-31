@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS flats (
 CREATE TABLE IF NOT EXISTS flat_ownerships (
     ownership_id SERIAL PRIMARY KEY,
     flat_id INT NOT NULL REFERENCES flats(flat_id) ON DELETE CASCADE,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     start_date TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     end_date TIMESTAMP WITH TIME ZONE,
     is_active BOOLEAN DEFAULT TRUE NOT NULL
@@ -72,7 +71,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_active_flat_ownership
 ON flat_ownerships (flat_id)
 WHERE (is_active = TRUE);
 
-CREATE INDEX IF NOT EXISTS idx_flat_ownerships_user ON flat_ownerships(user_id) WHERE is_active = TRUE;
+-- Owners of an ownership (max two active, capped in code). Removal keeps the row.
+CREATE TABLE IF NOT EXISTS flat_ownership_users (
+    ownership_id INT NOT NULL REFERENCES flat_ownerships(ownership_id) ON DELETE CASCADE,
+    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    added_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    removed_at TIMESTAMP WITH TIME ZONE,
+    PRIMARY KEY (ownership_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_flat_ownership_users_user ON flat_ownership_users(user_id) WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS permissions (
     permission_id SERIAL PRIMARY KEY,

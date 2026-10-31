@@ -1815,7 +1815,7 @@
     <div id="revoke-flat-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.5); z-index:9999; justify-content:center; align-items:center;">
         <div style="background:var(--background); padding:24px; border-radius:12px; width:min(400px, 92vw); box-sizing:border-box; border:1px solid var(--border); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
             <h3 style="margin-top:0; color:var(--foreground); font-size:18px;">Revoke Resident Flat</h3>
-            <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px; line-height:1.5;">Select the flat mapping you want to revoke for this user.</p>
+            <p style="color:var(--muted-foreground); font-size:14px; margin-bottom:20px; line-height:1.5;">Select the flat to revoke. If the flat has two owners, both are removed from it.</p>
             
             <div class="form-group">
                 <label for="revoke-flat-select">Select Flat</label>
@@ -2799,7 +2799,7 @@
             flatInput.disabled = false;
             flatInput.placeholder = flats.length === 0 ? 'No flats set up for this wing' : 'Type or pick a flat...';
             flatOptions.innerHTML = flats
-                .map(f => `<option value="${escapeHtml(f.flat_number)}">${f.owner_email ? ' (occupied)' : ''}</option>`)
+                .map(f => `<option value="${escapeHtml(f.flat_number)}">${f.owner_emails.length ? ' (' + f.owner_emails.length + (f.owner_emails.length === 1 ? ' owner)' : ' owners)') : ''}</option>`)
                 .join('');
             scheduleFlatOwnerLookup();
         }
@@ -3016,7 +3016,7 @@
             flatSelect.innerHTML = flats.length === 0
                 ? '<option value="">No flats set up for this wing</option>'
                 : '<option value="">Select flat...</option>' +
-                    flats.map(f => `<option value="${escapeHtml(f.flat_number)}">${escapeHtml(f.flat_number)}${f.owner_email ? ' (occupied)' : ''}</option>`).join('');
+                    flats.map(f => `<option value="${escapeHtml(f.flat_number)}">${escapeHtml(f.flat_number)}${f.owner_emails.length ? ' (' + f.owner_emails.length + (f.owner_emails.length === 1 ? ' owner)' : ' owners)') : ''}</option>`).join('');
         }
 
         const onboardForm = document.getElementById('onboard-form');

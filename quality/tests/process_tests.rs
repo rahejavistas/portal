@@ -1084,13 +1084,18 @@ async fn test_process_cascade_deletion_on_user_revoke() {
     .unwrap();
 
     let ownership_id: i32 = sqlx::query_scalar(
-        "INSERT INTO flat_ownerships (flat_id, user_id, is_active) VALUES ($1, $2, TRUE) RETURNING ownership_id",
+        "INSERT INTO flat_ownerships (flat_id, is_active) VALUES ($1, TRUE) RETURNING ownership_id",
     )
     .bind(flat_id)
-    .bind(user_id)
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query("INSERT INTO flat_ownership_users (ownership_id, user_id) VALUES ($1, $2)")
+        .bind(ownership_id)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     // 2. Initialize a process workflow
     let template = quality::load_test_template_fixture();
@@ -2160,4 +2165,92 @@ async fn test_concurrent_approvals_record_a_single_review() {
     .await
     .unwrap();
     assert_eq!(approvals, 1);
+}
+
+#[tokio::test]
+async fn test_co_owners_share_a_flat_process_and_a_stranger_does_not() {
+    let env = setup_db_test_env().await;
+    let pool = env.db_pool.clone();
+    let pm = authentication::PermissionsManager::new(pool.clone());
+
+    let starter = pm
+        .create_user_with_credentials("co_start@vistas.com", Some("password1"), "H", "801", None)
+        .await
+        .unwrap();
+    let partner = pm
+        .create_user_with_credentials("co_partner@vistas.com", Some("password2"), "H", "801", None)
+        .await
+        .unwrap();
+    let stranger = pm
+        .create_user_with_credentials(
+            "co_stranger@vistas.com",
+            Some("password3"),
+            "H",
+            "802",
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut conn = pool.acquire().await.unwrap();
+    let ownerships = process::db::get_active_ownerships_for_user(&mut conn, starter.user_id)
+        .await
+        .unwrap();
+    let partner_ownerships =
+        process::db::get_active_ownerships_for_user(&mut conn, partner.user_id)
+            .await
+            .unwrap();
+    assert_eq!(
+        ownerships, partner_ownerships,
+        "both owners share one ownership_id"
+    );
+    let (ownership_id, _) = ownerships[0];
+
+    let template = quality::load_test_template_fixture();
+    let exec = TestProcess::init(&mut conn, starter.user_id, &template, Some(ownership_id)).await;
+    let process_id = exec.process_id;
+    drop(exec);
+
+    for owner in [&starter, &partner] {
+        assert!(
+            process::db::is_active_owner_of_ownership(&mut conn, owner.user_id, ownership_id)
+                .await
+                .unwrap()
+        );
+        let listed = process::db::list_processes_for_user(&mut conn, owner.user_id)
+            .await
+            .unwrap();
+        assert!(listed.iter().any(|p| p.process_id == process_id));
+    }
+    assert!(
+        !process::db::is_active_owner_of_ownership(&mut conn, stranger.user_id, ownership_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        process::db::list_processes_for_user(&mut conn, stranger.user_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    drop(conn);
+    pm.revoke_flat_ownership(starter.user_id, "H", "801")
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    for gone in [&starter, &partner] {
+        assert!(
+            !process::db::is_active_owner_of_ownership(&mut conn, gone.user_id, ownership_id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            process::db::list_processes_for_user(&mut conn, gone.user_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a revoked flat takes both owners' access to its processes with it"
+        );
+    }
 }

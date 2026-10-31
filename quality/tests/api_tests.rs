@@ -161,10 +161,14 @@ async fn test_document_permissions_and_soft_delete() {
         .map(|d| d["document"]["document_id"].as_str().unwrap().to_string())
         .collect();
 
-    assert_eq!(visible_ids2.len(), 3);
+    assert_eq!(
+        visible_ids2.len(),
+        2,
+        "a category read-grant must not add documents to the flat view"
+    );
     assert!(visible_ids2.contains(&doc1_id));
     assert!(visible_ids2.contains(&doc2_id));
-    assert!(visible_ids2.contains(&doc4_id));
+    assert!(!visible_ids2.contains(&doc4_id));
     assert!(!visible_ids2.contains(&doc3_id));
 
     let get_doc4_promoted = ureq::post(&format!("{}/api/v1/documents/{}", url, doc4_id))
@@ -198,7 +202,7 @@ async fn test_document_permissions_and_soft_delete() {
         .map(|d| d["document"]["document_id"].as_str().unwrap().to_string())
         .collect();
 
-    assert_eq!(visible_ids3.len(), 2);
+    assert_eq!(visible_ids3.len(), 1);
     assert!(!visible_ids3.contains(&doc1_id));
 }
 

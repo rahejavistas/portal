@@ -33,7 +33,7 @@ struct ParsedFile {
     flats: Vec<FlatIdentifier>,
 }
 
-/// A flat claimed by more than one row is dropped from both parsers — the same
+/// A flat claimed by more rows than it can have owners is dropped from both parsers — the same
 /// email recurring across *different* flats (a resident owning multiple units)
 /// is fine and untouched, since this is keyed by flat, not by email.
 fn dedupe_ambiguous_flats(
@@ -48,7 +48,7 @@ fn dedupe_ambiguous_flats(
     let mut valid_users = Vec::new();
     for user in parsed_users {
         let flat_key = user.flat.to_string();
-        if flat_counts.get(&flat_key).copied().unwrap_or(0) > 1 {
+        if flat_counts.get(&flat_key).copied().unwrap_or(0) > authentication::MAX_FLAT_OWNERS {
             failed_users.push(FailedUser {
                 email: user.email,
                 reason: format!("Ambiguous: Multiple rows claim flat {}", flat_key),
@@ -217,10 +217,8 @@ fn cell_text(cell: &Data) -> String {
 }
 
 /// The "member data" export every onboarding batch actually comes as: one row per
-/// flat, headers `UnitNo | MemberName | MobileNo | EmailID | CCMail`. `CCMail` (a
-/// secondary contact, not a login) is intentionally not onboarded — this schema
-/// only allows one active owner per flat (`idx_active_flat_ownership`), so a second
-/// account on the same unit would just fail on conflict.
+/// flat, headers `UnitNo | MemberName | MobileNo | EmailID | CCMail`. Both
+/// `EmailID` and `CCMail` become owners of the unit.
 fn parse_member_xlsx(bytes: &[u8]) -> Result<ParsedFile, String> {
     let range = open_first_sheet(bytes)?;
     let mut rows_iter = range.rows();
@@ -234,19 +232,25 @@ fn parse_member_xlsx(bytes: &[u8]) -> Result<ParsedFile, String> {
     let email_idx = column_index(header_row, "emailid")
         .ok_or_else(|| "Header row is missing an 'EmailID' column".to_string())?;
 
+    let cc_idx = column_index(header_row, "ccmail");
+
     let mut failed_users = Vec::new();
     let mut parsed_users = Vec::new();
     let mut flats = Vec::new();
     let mut total_rows = 0;
 
-    for row in rows_iter {
-        let unit_raw = row.get(unit_idx).map(cell_text).unwrap_or_default();
-        let email = row
-            .get(email_idx)
+    let email_at = |row: &[Data], idx: usize| {
+        row.get(idx)
             .map(cell_text)
             .unwrap_or_default()
             .trim()
-            .to_lowercase();
+            .to_lowercase()
+    };
+
+    for row in rows_iter {
+        let unit_raw = row.get(unit_idx).map(cell_text).unwrap_or_default();
+        let email = email_at(row, email_idx);
+        let cc_email = cc_idx.map(|i| email_at(row, i)).unwrap_or_default();
         let flat = match FlatIdentifier::parse_concatenated(&unit_raw) {
             Ok(f) => f,
             Err(_) => {
@@ -272,16 +276,25 @@ fn parse_member_xlsx(bytes: &[u8]) -> Result<ParsedFile, String> {
                 email: format!("(flat {})", flat),
                 reason: "Missing EmailID.".to_string(),
             });
-            continue;
         }
-        if !email.contains('@') || !email.contains('.') {
-            failed_users.push(FailedUser {
-                email,
-                reason: "Invalid email format.".to_string(),
+        let contacts = [email.as_str(), cc_email.as_str()];
+        for (i, contact) in contacts.into_iter().enumerate() {
+            let repeats_primary = i == 1 && contact == email;
+            if contact.is_empty() || repeats_primary {
+                continue;
+            }
+            if !contact.contains('@') || !contact.contains('.') {
+                failed_users.push(FailedUser {
+                    email: contact.to_string(),
+                    reason: "Invalid email format.".to_string(),
+                });
+                continue;
+            }
+            parsed_users.push(ParsedUser {
+                email: contact.to_string(),
+                flat: flat.clone(),
             });
-            continue;
         }
-        parsed_users.push(ParsedUser { email, flat });
     }
 
     let users = dedupe_ambiguous_flats(parsed_users, &mut failed_users);
@@ -405,7 +418,7 @@ pub async fn upload_users(
             Ok(_) => successfully_onboarded += 1,
             Err(e) => failed_users.push(FailedUser {
                 email: user.email,
-                reason: e,
+                reason: e.to_string(),
             }),
         }
     }
@@ -434,6 +447,28 @@ mod tests {
     }
 
     #[test]
+    fn dedupe_allows_two_owners_per_flat_but_not_three() {
+        let mut failed = Vec::new();
+        let two = dedupe_ambiguous_flats(
+            vec![parsed("a@x.com", "A", "101"), parsed("b@x.com", "A", "101")],
+            &mut failed,
+        );
+        assert_eq!(two.len(), 2);
+        assert!(failed.is_empty());
+
+        let three = dedupe_ambiguous_flats(
+            vec![
+                parsed("a@x.com", "A", "101"),
+                parsed("b@x.com", "A", "101"),
+                parsed("c@x.com", "A", "101"),
+            ],
+            &mut failed,
+        );
+        assert!(three.is_empty());
+        assert_eq!(failed.len(), 3);
+    }
+
+    #[test]
     fn dedupe_keeps_the_same_email_across_different_flats() {
         // A real resident owning multiple units - must not be treated as ambiguous,
         // since the check is keyed by flat, not by email.
@@ -447,20 +482,6 @@ mod tests {
         );
         assert_eq!(valid.len(), 2);
         assert!(failed.is_empty());
-    }
-
-    #[test]
-    fn dedupe_rejects_two_different_emails_claiming_the_same_flat() {
-        let mut failed = Vec::new();
-        let valid = dedupe_ambiguous_flats(
-            vec![
-                parsed("first@vistas.com", "A", "0301"),
-                parsed("second@vistas.com", "A", "0301"),
-            ],
-            &mut failed,
-        );
-        assert!(valid.is_empty());
-        assert_eq!(failed.len(), 2);
     }
 
     #[test]
@@ -489,7 +510,7 @@ mod tests {
             total_rows,
             flats,
         } = parse_member_xlsx(bytes).expect("fixture must parse");
-        users.sort_by_key(|a| a.flat.to_string());
+        users.sort_by_key(|a| (a.flat.to_string(), a.email.clone()));
 
         assert_eq!(
             total_rows, 4,
@@ -502,7 +523,7 @@ mod tests {
         );
         assert_eq!(failed[0].email, "broken.unit@example.test");
         assert!(failed[0].reason.contains("Invalid UnitNo"));
-        assert_eq!(users.len(), 3);
+        assert_eq!(users.len(), 4);
         assert_eq!(
             flats.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
             ["Z-0001", "Z-0002", "Z-0003"],
@@ -512,11 +533,13 @@ mod tests {
         assert_eq!(users[0].flat.to_string(), "Z-0001");
         assert_eq!(users[0].email, "resident.one@example.test");
         assert_eq!(users[1].flat.to_string(), "Z-0002");
+        assert_eq!(users[1].email, "cc.two@example.test");
+        assert_eq!(users[2].flat.to_string(), "Z-0002");
         assert_eq!(
-            users[1].email, "resident.two@example.test",
-            "CCMail must never be onboarded as the account email"
+            users[2].email, "resident.two@example.test",
+            "EmailID and CCMail both become owners of the same unit"
         );
-        assert_eq!(users[2].flat.to_string(), "Z-0003");
-        assert_eq!(users[2].email, "resident.three@example.test");
+        assert_eq!(users[3].flat.to_string(), "Z-0003");
+        assert_eq!(users[3].email, "resident.three@example.test");
     }
 }

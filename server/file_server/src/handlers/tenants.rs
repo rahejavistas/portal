@@ -30,7 +30,9 @@ async fn email_belongs_to_a_privileged_account(
     sqlx::query_scalar(
         "SELECT EXISTS ( \
             SELECT 1 FROM users u WHERE u.email = $1 AND ( \
-                EXISTS (SELECT 1 FROM flat_ownerships fo WHERE fo.user_id = u.user_id AND fo.is_active = TRUE) \
+                EXISTS (SELECT 1 FROM flat_ownership_users fou \
+                        JOIN flat_ownerships fo ON fo.ownership_id = fou.ownership_id \
+                        WHERE fou.user_id = u.user_id AND fou.is_active = TRUE AND fo.is_active = TRUE) \
                 OR EXISTS (SELECT 1 FROM user_designations ud WHERE ud.user_id = u.user_id AND ud.is_active = TRUE) \
             ) \
          )",
@@ -269,7 +271,8 @@ pub async fn my_flats(
     let flats: Vec<MyFlat> = sqlx::query_as(
         "SELECT fo.ownership_id, f.wing, f.flat_number FROM flat_ownerships fo \
          JOIN flats f ON f.flat_id = fo.flat_id \
-         WHERE fo.user_id = $1 AND fo.is_active = TRUE",
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE",
     )
     .bind(user.user_id)
     .fetch_all(&mut *conn)

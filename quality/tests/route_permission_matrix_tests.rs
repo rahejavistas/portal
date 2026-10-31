@@ -921,7 +921,9 @@ async fn test_tenant_routes_are_self_service_with_no_permission_gate() {
     let a = auth(&jwt);
 
     let ownership_id: i32 = sqlx::query_scalar(
-        "SELECT ownership_id FROM flat_ownerships WHERE user_id = $1 AND is_active = TRUE",
+        "SELECT fo.ownership_id FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fou.user_id = $1 AND fo.is_active = TRUE",
     )
     .bind(rid)
     .fetch_one(&env.db_pool)

@@ -27,11 +27,12 @@ LEFT JOIN (
     GROUP BY ud.user_id
 ) perm ON u.user_id = perm.user_id
 LEFT JOIN (
-    SELECT fo.user_id, string_agg(fl.wing, ', ') AS wing, string_agg(fl.flat_number, ', ') AS flat_number
-    FROM flat_ownerships fo
+    SELECT fou.user_id, string_agg(fl.wing, ', ') AS wing, string_agg(fl.flat_number, ', ') AS flat_number
+    FROM flat_ownership_users fou
+    JOIN flat_ownerships fo ON fo.ownership_id = fou.ownership_id
     JOIN flats fl ON fl.flat_id = fo.flat_id
-    WHERE fo.is_active = TRUE
-    GROUP BY fo.user_id
+    WHERE fo.is_active = TRUE AND fou.is_active = TRUE
+    GROUP BY fou.user_id
 ) f ON u.user_id = f.user_id
 LEFT JOIN (
     SELECT DISTINCT ud.user_id
@@ -83,8 +84,8 @@ CREATE TRIGGER trg_user_designations_refresh
 AFTER INSERT OR UPDATE OR DELETE ON user_designations
 FOR EACH ROW EXECUTE FUNCTION trg_refresh_single_user();
 
-CREATE TRIGGER trg_flat_ownerships_refresh
-AFTER INSERT OR UPDATE OR DELETE ON flat_ownerships
+CREATE TRIGGER trg_flat_ownership_users_refresh
+AFTER INSERT OR UPDATE OR DELETE ON flat_ownership_users
 FOR EACH ROW EXECUTE FUNCTION trg_refresh_single_user();
 
 -- Refreshes every user holding a designation whose permissions/category-access/code changed.

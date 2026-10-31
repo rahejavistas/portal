@@ -222,7 +222,7 @@ pub async fn process_download_url(
 
         // Non-owners (reviewers, tenants) may only fetch documents actually attached to
         // this process; a tenant-only caller never those on the owner's stages.
-        if info.user_id != user.user_id {
+        if !actor.is_process_owner {
             let hide_owner_documents = !can_view_all
                 && actor.hides_owner_documents(
                     super::require_reviewer_standing(&template, &actor).is_ok(),
@@ -248,7 +248,11 @@ pub async fn process_download_url(
             }
         }
 
-        info.user_id
+        if actor.is_process_owner {
+            user.user_id
+        } else {
+            info.user_id
+        }
     };
 
     let owner = state

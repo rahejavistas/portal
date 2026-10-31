@@ -34,6 +34,24 @@ A flat's owner can map a tenant to it (`POST /api/v1/tenants/add`) — a separat
 | Designations/permissions held by the owner | N/A | Never inherited — a tenant's session carries only their own designations (normally none) |
 | OTP/notification settings | Own profile | Own profile — same self-service endpoints as any user |
 
+## Co-owners
+
+A flat can have two owners, each with their own email and login. There is no owner/co-owner distinction — both have exactly the same standing on the flat.
+
+| What | Either co-owner | Only the person it was given to |
+|---|---|---|
+| Flat documents | Yes | |
+| Processes on the flat (start, continue, submit, declaration) | Yes, from either email | |
+| Tenant for the flat (add / end) | Yes | |
+| Process emails for the owner's turn | Both emails | |
+| Admin access, designations and their permissions | | Only the email the designation was assigned to |
+| Password, OTP and notification settings | | Each email on its own |
+
+- Adding a third owner to a flat is refused. Adding someone already on the flat changes nothing.
+- Revoking a flat from a resident removes **both** owners from it together; the flat's processes and tenant stop being accessible to either. A resident left with no flat and no designation can no longer sign in.
+- Each co-owner appears as a separate resident in the residents list, and the flat list shows both emails.
+- A co-owner never inherits the other's designations or permissions, even though they share the flat.
+
 ## Permissions
 
 The full permission catalog is a compile-time enum (`authentication::Permission`), seeded into the `permissions` table in the same migration as the designations above:
@@ -57,12 +75,21 @@ The full permission catalog is a compile-time enum (`authentication::Permission`
 
 ## Document access resolution
 
-Document visibility is driven by `documents.category`, not by a per-document ACL. `document/manager.rs::get_allowed_document_ids` resolves the set of document IDs a user may see:
+Document visibility is driven by `documents.category`, not by a per-document ACL. There are two different views:
 
-1. Holding `documents.all.manage` — bypasses everything, sees every non-deleted document. (`super_admin` gets this because it's seeded with every permission, not because of the designation itself — the check is purely permission-based.)
-2. Any category with `is_public_read = TRUE` — visible to every authenticated user.
-3. Category read-mapped to one of the user's active designations, via `document_category_designations` (`can_read = TRUE`).
-4. `RESIDENT_SPECIFIC` (or any other `is_flat_scoped` category) documents explicitly linked (via `document_flats`) to a flat the user actively owns/occupies (`flat_ownerships`).
+**A resident's own Documents view (their flat's dashboard)** shows only:
+
+1. Documents in any `is_public_read` category — visible to every authenticated user.
+2. Documents linked to a flat the user actively owns (`RESIDENT_SPECIFIC`, or any other flat-scoped category). A current tenant sees only what they uploaded themselves for their flat.
+
+Nothing else appears here, whatever permissions or designations the user holds: another flat's documents never show up in a flat view, even for a super admin or a document manager.
+
+**The admin Documents area** is where everything is browsed:
+
+- `documents.all.manage` holders see every non-deleted document. (`super_admin` gets this because it's seeded with every permission, not because of the designation itself.)
+- Other users see the categories their designations are mapped to with `can_manage` in `document_category_designations`.
+
+Opening a single document by its ID (for example to attach it to a process stage) still honours admin permissions and category read-mappings, but that does not put the document into anyone's flat view.
 
 ## Tables
 
@@ -73,7 +100,8 @@ Document visibility is driven by `documents.category`, not by a per-document ACL
 | `users` | Core identity: email, active flag, timestamps. |
 | `user_credentials` | Password hash and password-reset token, 1:1 with `users`. |
 | `flats` | Wing + flat number, the unit of residence, admin-managed (create/bulk-create/delete) via Society Profile → Flat Setup. `is_fire_flat` marks a flat excluded from the Add Resident picker and from bulk floor/wing removal. |
-| `flat_ownerships` | Which user owns/occupies which flat, with `is_active` (one active owner per flat, enforced by a partial unique index) and start/end dates. |
+| `flat_ownerships` | One row per flat's current (and past) ownership, with `is_active` (one active ownership per flat, enforced by a partial unique index) and start/end dates. Processes and tenants hang off this row, so they belong to the flat, not to one person. |
+| `flat_ownership_users` | The people holding an ownership — one or two, with equal standing. Removing a flat from a resident deletes every row for that ownership and ends it. |
 | `designations` | The role catalog — `super_admin` is seeded and locked; `staff` is seeded but its permissions can be changed; everything else is admin-created at runtime. |
 | `permissions` | The permission catalog (see table above), seeded once, never admin-created. |
 | `designation_permissions` | Join table: which designations hold which permissions. |

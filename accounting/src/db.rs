@@ -1110,7 +1110,9 @@ pub async fn user_owns_flat(
     flat_id: i32,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM flat_ownerships WHERE flat_id = $1 AND user_id = $2 AND is_active = TRUE)",
+        "SELECT EXISTS(SELECT 1 FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         WHERE fo.flat_id = $1 AND fou.user_id = $2 AND fo.is_active = TRUE)",
     )
     .bind(flat_id)
     .bind(user_id)
@@ -1165,14 +1167,16 @@ pub async fn has_outstanding_dues(
     .await
 }
 
-/// The current active owner's email for a flat, for display on documents (NOC).
+/// Active owners' emails, comma-joined, for the NOC.
 pub async fn get_flat_owner_email(
     conn: &mut sqlx::PgConnection,
     flat_id: i32,
 ) -> Result<Option<String>, sqlx::Error> {
     let email: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT u.email FROM flat_ownerships fo JOIN users u ON u.user_id = fo.user_id \
-         WHERE fo.flat_id = $1 AND fo.is_active = TRUE LIMIT 1",
+        "SELECT string_agg(u.email, ', ' ORDER BY u.email) FROM flat_ownerships fo \
+         JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+         JOIN users u ON u.user_id = fou.user_id \
+         WHERE fo.flat_id = $1 AND fo.is_active = TRUE",
     )
     .bind(flat_id)
     .fetch_optional(conn)

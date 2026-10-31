@@ -332,15 +332,18 @@ async fn resolve_or_init_process(
     // A tenant starts it on the owner's behalf: the process belongs to the flat's owner.
     let process_owner_id = match selected_ownership {
         Some(oid) => {
-            let (owner_id, _) = process::db::get_active_owner(conn, oid)
+            let owners = process::db::get_active_owners(conn, oid)
                 .await
-                .internal_err()?
-                .ok_or_else(|| {
+                .internal_err()?;
+            let owner_id = match owners.iter().find(|&&(id, _)| id == user.user_id) {
+                Some(&(id, _)) => id,
+                None => owners.first().map(|&(id, _)| id).ok_or_else(|| {
                     (
                         StatusCode::FORBIDDEN,
                         Json("This flat has no active owner".to_string()),
                     )
-                })?;
+                })?,
+            };
             if owner_id != user.user_id && !super::template_has_tenant_step(&template) {
                 return Err((
                     StatusCode::FORBIDDEN,

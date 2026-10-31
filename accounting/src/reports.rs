@@ -275,10 +275,10 @@ pub async fn defaulters(
              GROUP BY i.flat_id \
          ) \
          SELECT f.flat_id, f.wing, f.flat_number, \
-                (SELECT u.email FROM flat_ownerships fo \
-                   JOIN users u ON u.user_id = fo.user_id \
-                  WHERE fo.flat_id = f.flat_id AND fo.is_active = TRUE \
-                  ORDER BY fo.user_id LIMIT 1) AS owner_email, \
+                (SELECT string_agg(u.email, ', ' ORDER BY u.email) FROM flat_ownerships fo \
+                   JOIN flat_ownership_users fou ON fou.ownership_id = fo.ownership_id AND fou.is_active = TRUE \
+                   JOIN users u ON u.user_id = fou.user_id \
+                  WHERE fo.flat_id = f.flat_id AND fo.is_active = TRUE) AS owner_email, \
                 p.total_outstanding, p.max_days_overdue, p.unpaid_invoice_count \
          FROM per_flat p \
          JOIN flats f ON f.flat_id = p.flat_id \
