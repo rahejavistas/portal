@@ -296,7 +296,7 @@ Removes every owner of the flat together (a flat can have two co-owners), provid
 * **Response (200):** `{ "status": "success", "message": "Flat mapping revoked successfully." }`
 
 ### POST `/api/v1/admin/users/upload`
-Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; a flat claimed by more than two rows is rejected (two rows make co-owners). An XLSX member-data file (`UnitNo` / `EmailID` columns) is also accepted. Every wing and flat found in the file is added to the society's catalogue even if that row's resident can't be onboarded (e.g. missing email); flats that already exist are left alone.
+Requires `users.manage`. `multipart/form-data`, file field name `file` — CSV with `Email`, `Wing`, `Flat` columns (case-insensitive). Flat number must be in range and wing one of `A-K`; a flat claimed by more than two rows is rejected (two rows make co-owners). An XLSX member-data file (`UnitNo` / `EmailID` columns, plus an optional `CCMail` column) is also accepted; `EmailID` and `CCMail` both become owners of the unit. Every wing and flat found in the file is added to the society's catalogue even if that row's resident can't be onboarded (e.g. missing email); flats that already exist are left alone.
 * **Response (200):** `{ "total_rows": 50, "successfully_onboarded": 48, "flats_created": 12, "failed_users": [ { "email": "bad@x.com", "reason": "Invalid flat number" } ] }`
 
 ---
@@ -307,7 +307,7 @@ Managing the wing/floor/flat catalog itself (as opposed to who owns a flat, whic
 
 ### POST `/api/v1/admin/flats/list`
 Requires `users.view`, `users.manage`, `users.roles.manage`, or `users.roles.view`.
-* **Response (200):** `[ { "flat_id": 5, "wing": "A", "flat_number": "0301", "area_sqft": "850.00", "is_fire_flat": false, "owner_email": "resident@..." } ]` — `owner_email` is `null` for a vacant flat.
+* **Response (200):** `[ { "flat_id": 5, "wing": "A", "flat_number": "0301", "area_sqft": "850.00", "is_fire_flat": false, "owner_emails": ["resident@..."] } ]` — `owner_emails` lists every current owner (up to two), and is an empty array for a vacant flat.
 
 ### POST `/api/v1/admin/flats/create`
 * **Request:** `{ "wing": "A", "flat_number": "0301", "area_sqft": "850.00" }` (`area_sqft` optional, must be positive if given)
