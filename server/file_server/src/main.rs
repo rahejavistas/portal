@@ -16,11 +16,7 @@ use file_server::{document, handlers, middleware};
 async fn main() {
     let config = AppConfig::load_config();
 
-    if let Err(e) = telemetry::init_telemetry(
-        config.telemetry.otlp_endpoint.clone(),
-        config.telemetry.otlp_username.clone(),
-        config.telemetry.otlp_password.clone(),
-    ) {
+    if let Err(e) = telemetry::init_telemetry(config.telemetry.otlp_endpoint.clone()) {
         eprintln!("Warning: Failed to initialize telemetry: {}", e);
     }
 
