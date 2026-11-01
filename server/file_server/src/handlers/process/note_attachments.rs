@@ -45,7 +45,17 @@ pub(super) fn require_may_review_step(
     }
 }
 
-/// 400 unless the attachment's file has actually reached storage.
+fn check_uploaded_size(size: Option<i64>) -> Result<(), &'static str> {
+    match size {
+        Some(bytes) if bytes > crate::document::MAX_UPLOAD_BYTES => {
+            Err("The attachment exceeds the 1GB limit")
+        }
+        Some(bytes) if bytes > 0 => Ok(()),
+        _ => Err("The attachment file was not uploaded"),
+    }
+}
+
+/// 400 unless the attachment's file has reached storage and is within the size limit.
 pub(super) async fn require_uploaded(
     state: &AppState,
     process_id: Uuid,
@@ -57,10 +67,7 @@ pub(super) async fn require_uploaded(
         .head_object(&attachment_key(process_id, attachment_id))
         .await
         .internal_err()?;
-    match size {
-        Some(bytes) if bytes > 0 => Ok(()),
-        _ => Err(bad_request("The attachment file was not uploaded")),
-    }
+    check_uploaded_size(size).map_err(bad_request)
 }
 
 #[derive(Deserialize)]
@@ -197,4 +204,18 @@ pub async fn admin_note_attachment_download_url(
         .await
         .internal_err()?;
     Ok(Json(DocumentUrlResponse { download_url }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_size_must_be_present_nonempty_and_within_the_limit() {
+        assert!(check_uploaded_size(Some(1)).is_ok());
+        assert!(check_uploaded_size(Some(crate::document::MAX_UPLOAD_BYTES)).is_ok());
+        assert!(check_uploaded_size(Some(crate::document::MAX_UPLOAD_BYTES + 1)).is_err());
+        assert!(check_uploaded_size(Some(0)).is_err());
+        assert!(check_uploaded_size(None).is_err());
+    }
 }

@@ -1080,7 +1080,7 @@ impl DocumentManager {
             None => {
                 return Err("File not found on S3. Upload may not have completed.".to_string());
             }
-            Some(size) if size > 1024 * 1024 * 1024 => {
+            Some(size) if size > super::MAX_UPLOAD_BYTES => {
                 return Err(format!(
                     "Uploaded file exceeds the 1GB limit ({} bytes). Upload rejected.",
                     size

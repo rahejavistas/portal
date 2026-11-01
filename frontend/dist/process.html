@@ -2955,11 +2955,15 @@
                     </div>
                 `;
             } else if (stepStatus === 'PENDING_REVIEW') {
+                const reviewHeading = IS_ADMIN_PROCESS_PAGE ? 'Ready for Review' : 'Under Review';
+                const reviewDesc = IS_ADMIN_PROCESS_PAGE
+                    ? 'Review what the resident provided for this stage, then approve it or send it back.'
+                    : 'Nothing more is needed from you. Please wait while this stage is reviewed.';
                 statusBanner = `
                     <div style="background-color: #FFFBEB; border: 1px solid #FDE68A; padding: 16px; border-radius: var(--radius-lg); margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
                         <div>
-                            <strong style="color: #92400E; font-size: 1rem; display: block;">Under Review</strong>
-                            <span style="font-size: 0.875rem; color: #92400E;">Nothing more is needed from you. Please wait while this stage is reviewed.</span>
+                            <strong style="color: #92400E; font-size: 1rem; display: block;">${reviewHeading}</strong>
+                            <span style="font-size: 0.875rem; color: #92400E;">${reviewDesc}</span>
                         </div>
                     </div>
                 `;
@@ -3045,7 +3049,7 @@
                 standaloneCommentsHtml = `
                     <div style="margin-bottom: 24px;">
                         <h4 style="margin: 0 0 12px 0; font-size: 1rem; font-weight: 700; color: #581C87; display: flex; align-items: center; gap: 8px;">
-                            <span>🔒</span> Internal Admin Notes
+                            Internal Admin Notes
                         </h4>
                         <div style="display: flex; flex-direction: column; gap: 8px;">
                 `;
@@ -4249,14 +4253,14 @@
         <div style="background: var(--background); width: 100%; max-width: 500px; border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box;">
             <div style="padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background-color: #FAF5FF;">
                 <h3 style="margin: 0; font-size: 1.25rem; color: #581C87; display: flex; align-items: center; gap: 8px;">
-                    <span>🔒</span> Add Internal Note
+                    Add Internal Note
                 </h3>
                 <button type="button" onclick="closeAdminNoteModal()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #9333EA;">&times;</button>
             </div>
             
             <div style="padding: 20px;">
                 <p style="margin: 0 0 16px 0; font-size: 0.875rem; color: #6B21A8;">
-                    This note will only be visible to administrators. Residents cannot see these comments.
+                    This note will only be visible to administrators. Residents cannot see these comments or attachments.
                 </p>
                 <textarea id="adminNoteInput" style="width: 100%; min-height: 120px; padding: 12px; border: 1px solid #D8B4FE; border-radius: var(--radius-md); font-family: inherit; font-size: 0.9375rem; line-height: 1.5; resize: vertical;" placeholder="Type your internal note here..."></textarea>
 
