@@ -36,6 +36,10 @@ impl DocumentManager {
         }
     }
 
+    pub fn s3_accessor(&self) -> &base::s3::S3Accessor {
+        &self.s3_accessor
+    }
+
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
         let key = super::derive_s3_key(doc.document_id);
         self.s3_accessor

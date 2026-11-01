@@ -221,7 +221,7 @@ Fetching by `process_id` is allowed if the caller: owns the process; holds `proc
     "is_completed": false,
     "next_actions": [ { "template_step_id": 3, "name": "Upload ID Proof", "assigned_to": "user" } ],
     "reviews": [ { "review_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "is_approved": true, "notes": "Looks good", "created_at": "...", "flagged_step_ids": [] } ],
-    "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "..." } ],
+    "admin_comments": [ { "comment_id": "uuid", "process_id": "uuid", "template_step_id": 2, "admin_email": "admin@...", "comment": "Internal note", "created_at": "...", "attachment_id": "uuid|null", "attachment_name": "evidence.pdf|null" } ],
     "audit_log": [ { "audit_id": 1, "template_step_id": 2, "event_type": "STEP_APPROVED", "detail": null, "actor_email": "admin@...", "created_at": "..." } ],
     "effective_due_date": "2026-08-28",
     "is_sla_paused": false,
@@ -438,9 +438,22 @@ Confirms an upload started via the endpoint above. **Deliberately separate from*
 
 ### POST `/api/v1/admin/process/add-note`
 Adds a standalone internal-only comment on a process step — never shown to the resident.
-* **Request:** `{ "process_id": "uuid", "template_step_id": 2, "comment": "Called resident, awaiting callback" }`
+* **Request:** `{ "process_id": "uuid", "template_step_id": 2, "comment": "Called resident, awaiting callback", "attachment_id": "uuid" }` — `attachment_id` is optional (see the two routes below).
 * **Response (200):** `{ "status": "success", "message": "Internal note added" }`
-* **400** if `comment` is empty.
+* **400** if `comment` is empty, or if `attachment_id` is not the caller's own upload for this exact process and step, was already used on another note, or its file never reached storage. Nothing is saved in that case.
+
+### POST `/api/v1/admin/process/add-note/attachment-upload-url`
+Starts the upload of a note's optional attachment. Same access as `add-note`: the caller must be able to review that step.
+* **Request:** `{ "process_id": "uuid", "template_step_id": 2, "filename": "evidence.pdf" }`
+* **Response (200):** `{ "attachment_id": "uuid", "upload_url": "...", "content_type": "application/pdf" }` — the client uploads the file to `upload_url` with that exact `content_type`, then passes `attachment_id` to `add-note`.
+* **400** for a file type that isn't allowed or a step that doesn't exist. **403** if the caller can't review that step.
+* Attachments are kept apart from the documents library: they never appear in any document list, a resident's flat view, or the document explorer.
+
+### POST `/api/v1/admin/process/note-attachment/download-url`
+Returns a short-lived download link for an internal note's attachment. Same audience as the internal notes themselves (`process.reviewer` / `process.view`).
+* **Request:** `{ "process_id": "uuid", "attachment_id": "uuid" }`
+* **Response (200):** `{ "download_url": "..." }`
+* **403** for anyone outside that audience, including the process owner. **404** if the attachment isn't attached to a note on that process.
 
 ---
 

@@ -74,6 +74,8 @@ pub struct AdminAddNoteRequest {
     pub process_id: Uuid,
     pub template_step_id: i32,
     pub comment: String,
+    #[serde(default)]
+    pub attachment_id: Option<process::db::CommentAttachmentId>,
 }
 
 #[derive(Serialize)]
@@ -477,8 +479,6 @@ pub async fn admin_add_note(
     }
 
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
-
-    // Verify the process exists and the caller has access to it
     let actor = build_actor_context(&mut conn, &state.permissions_manager, &user.0).await?;
     let (_info, template) = load_authorized_process(
         &mut conn,
@@ -488,27 +488,32 @@ pub async fn admin_add_note(
         &actor.designation_codes,
     )
     .await?;
+    super::note_attachments::require_may_review_step(&template, &actor, payload.template_step_id)?;
+    drop(conn);
 
-    let step_owner = process::state_machine::build_step_info_map(&template)
-        .get(&payload.template_step_id)
-        .map(|info| info.filled_by.clone())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json("Step not found".to_string())))?;
-    if !actor.may_review(&step_owner) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json("Access Denied: you do not act on this step".to_string()),
-        ));
+    if let Some(attachment_id) = payload.attachment_id {
+        super::note_attachments::require_uploaded(&state, payload.process_id, attachment_id)
+            .await?;
     }
 
-    process::db::insert_admin_comment(
-        &mut conn,
+    let mut tx = state.pg_pool.begin().await.internal_err()?;
+    let inserted = process::db::insert_admin_comment(
+        &mut tx,
         payload.process_id,
         payload.template_step_id,
         user.0.user_id,
         comment,
+        payload.attachment_id,
     )
-    .await
-    .internal_err()?;
+    .await;
+    if let Err(process::db::AdminCommentError::AttachmentUnavailable) = inserted {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json("The attachment was not uploaded for this note".to_string()),
+        ));
+    }
+    inserted.internal_err()?;
+    tx.commit().await.internal_err()?;
 
     Ok(Json(AdminAddNoteResponse {
         status: "success".to_string(),

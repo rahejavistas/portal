@@ -2,10 +2,12 @@
 //! `uploads` (document URLs). Template authoring lives in `handlers::process_templates`.
 
 mod actions;
+mod note_attachments;
 mod state;
 mod uploads;
 
 pub use actions::*;
+pub use note_attachments::{admin_note_attachment_download_url, admin_note_attachment_upload_url};
 pub use state::*;
 pub use uploads::*;
 

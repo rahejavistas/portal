@@ -988,3 +988,269 @@ async fn test_admin_add_note_standalone() {
         "Resident should not see admin comments"
     );
 }
+
+fn start_note_attachment(
+    url: &str,
+    auth: &str,
+    pid: &str,
+    step: i32,
+    filename: &str,
+) -> Result<serde_json::Value, u16> {
+    let resp = ureq::post(&format!(
+        "{}/api/v1/admin/process/add-note/attachment-upload-url",
+        url
+    ))
+    .set("Authorization", auth)
+    .send_json(serde_json::json!({
+        "process_id": pid,
+        "template_step_id": step,
+        "filename": filename
+    }));
+    match resp {
+        Ok(r) => Ok(r.into_json().unwrap()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn put_note_attachment(started: &serde_json::Value, bytes: &[u8]) {
+    ureq::put(started["upload_url"].as_str().unwrap())
+        .set("Content-Type", started["content_type"].as_str().unwrap())
+        .send_bytes(bytes)
+        .expect("S3 PUT upload failed");
+}
+
+fn add_note(
+    url: &str,
+    auth: &str,
+    pid: &str,
+    step: i32,
+    comment: &str,
+    attachment_id: Option<&str>,
+) -> Result<(), u16> {
+    let resp = ureq::post(&format!("{}/api/v1/admin/process/add-note", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({
+            "process_id": pid,
+            "template_step_id": step,
+            "comment": comment,
+            "attachment_id": attachment_id
+        }));
+    match resp {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn process_state(url: &str, auth: &str, pid: &str) -> serde_json::Value {
+    ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", auth)
+        .send_json(serde_json::json!({"process_id": pid}))
+        .expect("process state failed")
+        .into_json()
+        .unwrap()
+}
+
+fn note_attachment_download(
+    url: &str,
+    auth: &str,
+    pid: &str,
+    attachment_id: &str,
+) -> Result<String, u16> {
+    let resp = ureq::post(&format!(
+        "{}/api/v1/admin/process/note-attachment/download-url",
+        url
+    ))
+    .set("Authorization", auth)
+    .send_json(serde_json::json!({"process_id": pid, "attachment_id": attachment_id}));
+    match resp {
+        Ok(r) => {
+            let body: serde_json::Value = r.into_json().unwrap();
+            Ok(body["download_url"].as_str().unwrap().to_string())
+        }
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+#[tokio::test]
+async fn test_internal_note_attachment_is_visible_to_reviewers_and_never_to_the_resident() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let (pid, res_auth, admin_auth) = setup_process(&url, &env);
+
+    let started = start_note_attachment(&url, &admin_auth, &pid, 2, "evidence.pdf").unwrap();
+    let attachment_id = started["attachment_id"].as_str().unwrap().to_string();
+    assert_eq!(started["content_type"], "application/pdf");
+    put_note_attachment(&started, b"internal evidence bytes");
+    add_note(
+        &url,
+        &admin_auth,
+        &pid,
+        2,
+        "See the attached evidence.",
+        Some(&attachment_id),
+    )
+    .unwrap();
+
+    let admin_view = process_state(&url, &admin_auth, &pid);
+    let comment = &admin_view["admin_comments"][0];
+    assert_eq!(comment["attachment_id"], attachment_id.as_str());
+    assert_eq!(comment["attachment_name"], "evidence.pdf");
+
+    let download_url = note_attachment_download(&url, &admin_auth, &pid, &attachment_id).unwrap();
+    let mut downloaded = Vec::new();
+    std::io::Read::read_to_end(
+        &mut ureq::get(&download_url).call().unwrap().into_reader(),
+        &mut downloaded,
+    )
+    .unwrap();
+    assert_eq!(downloaded, b"internal evidence bytes");
+
+    let res_view = process_state(&url, &res_auth, &pid);
+    assert!(res_view["admin_comments"].as_array().unwrap().is_empty());
+    let res_body = res_view.to_string();
+    assert!(
+        !res_body.contains(&attachment_id) && !res_body.contains("evidence.pdf"),
+        "the attachment must not appear anywhere in the resident's process state"
+    );
+    assert_eq!(
+        note_attachment_download(&url, &res_auth, &pid, &attachment_id),
+        Err(403)
+    );
+    assert_eq!(
+        start_note_attachment(&url, &res_auth, &pid, 2, "mine.pdf").map(|_| ()),
+        Err(403)
+    );
+
+    let resident_docs: Vec<serde_json::Value> = ureq::post(&format!("{}/api/v1/documents", url))
+        .set("Authorization", &res_auth)
+        .send_json(serde_json::json!({}))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    assert!(
+        !resident_docs
+            .to_vec()
+            .iter()
+            .any(|d| d.to_string().contains("evidence.pdf")),
+        "the attachment must never be listed as a document"
+    );
+}
+
+#[tokio::test]
+async fn test_internal_note_attachment_only_binds_to_its_own_process_step_and_uploader() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let (pid, _res_auth, admin_auth) = setup_process(&url, &env);
+    let admin_jwt = admin_auth.trim_start_matches("Bearer ").to_string();
+
+    quick_create_user(&env, &admin_jwt, "res2@test.com", "A", "102");
+    let res2_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "res2@test.com", "password123")
+    );
+    let pid2 = start_template_one_process(&url, &res2_auth);
+
+    quick_create_designation(&env, &admin_jwt, "note_reviewer", "Note Reviewer");
+    quick_toggle_designation_permission(
+        &env,
+        &admin_jwt,
+        "note_reviewer",
+        "process.reviewer",
+        true,
+    );
+    let other_id = quick_create_user(&env, &admin_jwt, "note_rev2@test.com", "B", "201");
+    let other_auth = format!(
+        "Bearer {}",
+        quick_onboard_user(&env, "note_rev2@test.com", "password123")
+    );
+    quick_assign_designation(&env, &admin_jwt, other_id, "note_reviewer");
+
+    let comment_count = |auth: &str, process: &str| -> usize {
+        process_state(&url, auth, process)["admin_comments"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+
+    let started = start_note_attachment(&url, &admin_auth, &pid, 2, "a.pdf").unwrap();
+    let id = started["attachment_id"].as_str().unwrap().to_string();
+    put_note_attachment(&started, b"a");
+
+    assert_eq!(
+        add_note(&url, &other_auth, &pid, 2, "stolen", Some(&id)),
+        Err(400),
+        "another reviewer must not attach someone else's upload"
+    );
+    assert_eq!(
+        add_note(&url, &admin_auth, &pid, 3, "wrong step", Some(&id)),
+        Err(400),
+        "an attachment is bound to the step it was uploaded for"
+    );
+    assert_eq!(
+        add_note(&url, &admin_auth, &pid2, 2, "wrong process", Some(&id)),
+        Err(400),
+        "an attachment is bound to the process it was uploaded for"
+    );
+    assert_eq!(
+        comment_count(&admin_auth, &pid),
+        0,
+        "failed attaches leave no note behind"
+    );
+    assert_eq!(comment_count(&admin_auth, &pid2), 0);
+
+    add_note(&url, &admin_auth, &pid, 2, "first", Some(&id)).unwrap();
+    assert_eq!(
+        add_note(&url, &admin_auth, &pid, 2, "second", Some(&id)),
+        Err(400),
+        "an attachment can only be attached to one note"
+    );
+    assert_eq!(comment_count(&admin_auth, &pid), 1);
+
+    assert_eq!(
+        note_attachment_download(&url, &admin_auth, &pid2, &id),
+        Err(404),
+        "the download must be scoped to the process the attachment belongs to"
+    );
+    assert!(note_attachment_download(&url, &admin_auth, &pid, &id).is_ok());
+    assert!(
+        note_attachment_download(&url, &other_auth, &pid, &id).is_ok(),
+        "any process reviewer can open a note's attachment"
+    );
+
+    let pending = start_note_attachment(&url, &admin_auth, &pid, 2, "never-attached.pdf").unwrap();
+    let pending_id = pending["attachment_id"].as_str().unwrap().to_string();
+    put_note_attachment(&pending, b"b");
+    assert_eq!(
+        note_attachment_download(&url, &admin_auth, &pid, &pending_id),
+        Err(404),
+        "an upload that was never attached to a note is not downloadable"
+    );
+
+    let not_uploaded = start_note_attachment(&url, &admin_auth, &pid, 2, "missing.pdf").unwrap();
+    let not_uploaded_id = not_uploaded["attachment_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        add_note(
+            &url,
+            &admin_auth,
+            &pid,
+            2,
+            "no file",
+            Some(&not_uploaded_id)
+        ),
+        Err(400),
+        "an attachment whose file never reached storage is rejected"
+    );
+    assert_eq!(comment_count(&admin_auth, &pid), 1);
+
+    assert_eq!(
+        start_note_attachment(&url, &admin_auth, &pid, 2, "malware.exe").map(|_| ()),
+        Err(400)
+    );
+    assert_eq!(
+        start_note_attachment(&url, &admin_auth, &pid, 999, "x.pdf").map(|_| ()),
+        Err(400)
+    );
+}
