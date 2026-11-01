@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 /// The well-known code of the two protected system categories (seeded, never deletable).
 /// Every other category is admin-defined at runtime — see `document_categories` table.
+pub const MAX_UPLOAD_BYTES: i64 = 1024 * 1024 * 1024;
 pub const PUBLIC_CATEGORY: &str = "PUBLIC";
 pub const RESIDENT_SPECIFIC_CATEGORY: &str = "RESIDENT_SPECIFIC";
 
