@@ -169,6 +169,24 @@ async fn test_users_manage_only() {
             .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "template_step_id": 1, "comment": "x"})),
         "process/add-note with only users.manage",
     );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/add-note/attachment-upload-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "template_step_id": 1, "filename": "x.pdf"})),
+        "process/add-note/attachment-upload-url with only users.manage",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/note-attachment/download-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "attachment_id": uuid::Uuid::new_v4()})),
+        "process/note-attachment/download-url with only users.manage",
+    );
 }
 
 /// A designation holding only `users.view` can list flats and flat plans (read-only
@@ -240,6 +258,26 @@ async fn test_process_reviewer_only() {
             .set("Authorization", &a)
             .send_json(serde_json::json!({"process_id": process_id, "template_step_id": 1, "comment": "reviewed"})),
         "process/add-note with process.reviewer",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/add-note/attachment-upload-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"process_id": process_id, "template_step_id": 1, "filename": "x.pdf"})),
+        "process/add-note/attachment-upload-url with process.reviewer",
+    );
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/note-attachment/download-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(
+            serde_json::json!({"process_id": process_id, "attachment_id": uuid::Uuid::new_v4()}),
+        ),
+        "process/note-attachment/download-url with process.reviewer",
     );
     assert_not_forbidden(
         ureq::post(&format!("{}/api/v1/process/audit-log-pdf", url))
@@ -477,6 +515,36 @@ async fn test_documents_signatures_queue_open_to_any_authenticated_user() {
             .set("Authorization", &a)
             .send_json(serde_json::json!({})),
         "signers/list requires process.reviewer",
+    );
+}
+
+/// Read-only oversight (`process.view`) can open an internal note's attachment, the same
+/// audience as the notes themselves, but cannot start an upload.
+#[tokio::test]
+async fn test_process_view_opens_note_attachments_but_cannot_upload() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let jwt = seeded_resident(&env, &admin_jwt, "noteview", "811", &["process.view"]);
+    let a = auth(&jwt);
+
+    assert_not_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/note-attachment/download-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "attachment_id": uuid::Uuid::new_v4()})),
+        "process/note-attachment/download-url with process.view",
+    );
+    assert_forbidden(
+        ureq::post(&format!(
+            "{}/api/v1/admin/process/add-note/attachment-upload-url",
+            url
+        ))
+        .set("Authorization", &a)
+        .send_json(serde_json::json!({"process_id": uuid::Uuid::new_v4(), "template_step_id": 1, "filename": "x.pdf"})),
+        "process/add-note/attachment-upload-url with only process.view",
     );
 }
 

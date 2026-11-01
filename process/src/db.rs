@@ -1719,6 +1719,18 @@ pub async fn remove_public_holiday(
 // Standalone admin-only comments
 // ==========================================
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, sqlx::Type,
+)]
+#[sqlx(transparent)]
+pub struct CommentAttachmentId(pub Uuid);
+
+impl std::fmt::Display for CommentAttachmentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct AdminComment {
     pub comment_id: Uuid,
@@ -1727,29 +1739,113 @@ pub struct AdminComment {
     pub admin_email: Option<String>,
     pub comment: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub attachment_id: Option<CommentAttachmentId>,
+    pub attachment_name: Option<String>,
 }
 
-/// Insert a standalone admin-only comment. These are never shown to residents.
+#[derive(Debug)]
+pub enum AdminCommentError {
+    AttachmentUnavailable,
+    Db(sqlx::Error),
+}
+
+impl std::fmt::Display for AdminCommentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AdminCommentError::AttachmentUnavailable => {
+                f.write_str("The attachment was not uploaded for this note")
+            }
+            AdminCommentError::Db(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl From<sqlx::Error> for AdminCommentError {
+    fn from(e: sqlx::Error) -> Self {
+        AdminCommentError::Db(e)
+    }
+}
+
+/// Inserts a reviewer-only comment. An `attachment` must be the caller's pending upload for
+/// this process and step; on `AttachmentUnavailable` the caller must roll back.
 pub async fn insert_admin_comment(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     template_step_id: i32,
     admin_id: i32,
     comment: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    attachment: Option<CommentAttachmentId>,
+) -> Result<(), AdminCommentError> {
+    let comment_id: Uuid = sqlx::query_scalar(
         "INSERT INTO process_reviewer_comments \
          (process_id, template_step_id, reviewer_user_id, comment, created_at) \
-         VALUES ($1, $2, $3, $4, NOW())",
+         VALUES ($1, $2, $3, $4, NOW()) RETURNING comment_id",
     )
     .bind(process_id)
     .bind(template_step_id)
     .bind(admin_id)
     .bind(comment)
-    .execute(conn)
+    .fetch_one(&mut *conn)
     .await?;
 
+    if let Some(attachment_id) = attachment {
+        let linked = sqlx::query(
+            "UPDATE process_comment_attachments SET comment_id = $1 \
+             WHERE attachment_id = $2 AND process_id = $3 AND template_step_id = $4 \
+               AND uploaded_by = $5 AND comment_id IS NULL",
+        )
+        .bind(comment_id)
+        .bind(attachment_id)
+        .bind(process_id)
+        .bind(template_step_id)
+        .bind(admin_id)
+        .execute(conn)
+        .await?
+        .rows_affected();
+        if linked == 0 {
+            return Err(AdminCommentError::AttachmentUnavailable);
+        }
+    }
     Ok(())
+}
+
+/// Starts an attachment upload; it stays unattached until `insert_admin_comment` links it.
+pub async fn create_comment_attachment(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    template_step_id: i32,
+    uploaded_by: i32,
+    file_name: &str,
+    content_type: &str,
+) -> Result<CommentAttachmentId, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO process_comment_attachments \
+         (process_id, template_step_id, uploaded_by, file_name, content_type) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING attachment_id",
+    )
+    .bind(process_id)
+    .bind(template_step_id)
+    .bind(uploaded_by)
+    .bind(file_name)
+    .bind(content_type)
+    .fetch_one(conn)
+    .await
+}
+
+/// Whether `attachment_id` is attached to a note on this process.
+pub async fn comment_attachment_is_attached(
+    conn: &mut sqlx::PgConnection,
+    process_id: Uuid,
+    attachment_id: CommentAttachmentId,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM process_comment_attachments \
+         WHERE attachment_id = $1 AND process_id = $2 AND comment_id IS NOT NULL)",
+    )
+    .bind(attachment_id)
+    .bind(process_id)
+    .fetch_one(conn)
+    .await
 }
 
 /// Fetch all admin-only comments for a process. Only returned to admin callers.
@@ -1759,9 +1855,11 @@ pub async fn get_admin_comments(
 ) -> Result<Vec<AdminComment>, sqlx::Error> {
     sqlx::query_as(
         "SELECT ac.comment_id, ac.process_id, ac.template_step_id, \
-                u.email as admin_email, ac.comment, ac.created_at \
+                u.email as admin_email, ac.comment, ac.created_at, \
+                att.attachment_id, att.file_name AS attachment_name \
          FROM process_reviewer_comments ac \
          LEFT JOIN users u ON ac.reviewer_user_id = u.user_id \
+         LEFT JOIN process_comment_attachments att ON att.comment_id = ac.comment_id \
          WHERE ac.process_id = $1 \
          ORDER BY ac.created_at ASC",
     )

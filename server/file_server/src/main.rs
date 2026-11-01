@@ -208,6 +208,14 @@ async fn main() {
                 )
                 .route("/process/add-note", post(handlers::process::admin_add_note))
                 .route(
+                    "/process/add-note/attachment-upload-url",
+                    post(handlers::process::admin_note_attachment_upload_url),
+                )
+                .route(
+                    "/process/note-attachment/download-url",
+                    post(handlers::process::admin_note_attachment_download_url),
+                )
+                .route(
                     "/process/documents/add-signers",
                     post(handlers::process::admin_add_document_signers),
                 );

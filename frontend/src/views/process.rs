@@ -3069,6 +3069,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                             <p style="margin: 0; font-size: 0.875rem; color: #581C87; line-height: 1.5;">
                                 ${escapeHtml(c.comment).replace(/\n/g, '<br>')}
                             </p>
+                            ${c.attachment_id ? `<button type="button" class="btn" style="margin-top: 10px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left;" onclick="downloadNoteAttachment('${c.attachment_id}')">Attachment: ${escapeHtml(c.attachment_name || 'file')}</button>` : ''}
                         </div>
                     `;
                 });
@@ -3185,7 +3186,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                         </div>
                         <div class="admin-action-buttons">
                             <button class="btn admin-note-btn" onclick="openAdminNoteModal(${stepId})">
-                                🔒 Add Internal Note
+                                Add Internal Note
                             </button>
                             <div class="admin-action-primary">
                                 <button class="btn btn-danger" onclick="${rejectOnClick}">${rejectButtonLabel}</button>
@@ -3938,6 +3939,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         function openAdminNoteModal(stepId) {
             adminNoteStepId = stepId;
             document.getElementById('adminNoteInput').value = '';
+            document.getElementById('adminNoteAttachment').value = '';
             document.getElementById('adminNoteModal').style.display = 'flex';
         }
 
@@ -3946,11 +3948,84 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             adminNoteStepId = null;
         }
 
+        async function uploadNoteAttachment(file) {
+            try {
+                const urlRes = await fetch(`${API_BASE}/api/v1/admin/process/add-note/attachment-upload-url`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        process_id: currentProcessDetails.process_id,
+                        template_step_id: adminNoteStepId,
+                        filename: file.name
+                    })
+                });
+                if (!urlRes.ok) {
+                    showAlert('Failed to prepare the attachment: ' + await readErrorMessage(urlRes));
+                    return null;
+                }
+                const { attachment_id, upload_url, content_type } = await urlRes.json();
+                const putRes = await fetch(upload_url, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': content_type },
+                    body: file
+                });
+                if (!putRes.ok) {
+                    showAlert('Failed to upload the attachment. Please try again.');
+                    return null;
+                }
+                return attachment_id;
+            } catch (e) {
+                console.error(e);
+                showAlert('Connection error while uploading the attachment.');
+                return null;
+            }
+        }
+
+        async function downloadNoteAttachment(attachmentId) {
+            const newTab = window.open('', '_blank');
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/admin/process/note-attachment/download-url`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        process_id: currentProcessDetails.process_id,
+                        attachment_id: attachmentId
+                    })
+                });
+                if (!response.ok) {
+                    if (newTab) newTab.close();
+                    showAlert(`Could not open the attachment: ${await readErrorMessage(response)}`);
+                    return;
+                }
+                const data = await response.json();
+                if (newTab) {
+                    newTab.location = data.download_url;
+                } else {
+                    window.open(data.download_url, '_blank');
+                }
+            } catch (e) {
+                if (newTab) newTab.close();
+                console.error(e);
+                showAlert('Connection error while retrieving the attachment.');
+            }
+        }
+
         async function submitAdminNote() {
             if (!adminNoteStepId) return;
             const noteText = document.getElementById('adminNoteInput').value.trim();
             if (!noteText) {
                 showAlert('Please enter a note before submitting.');
+                return;
+            }
+            const attachmentFile = document.getElementById('adminNoteAttachment').files[0];
+            if (attachmentFile && attachmentFile.size > 1024 * 1024 * 1024) {
+                showAlert('Attachment size must be under 1GB.');
                 return;
             }
 
@@ -3966,6 +4041,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             submitBtn.disabled = true;
 
             try {
+                if (attachmentFile) {
+                    const attachmentId = await uploadNoteAttachment(attachmentFile);
+                    if (attachmentId === null) return;
+                    payload.attachment_id = attachmentId;
+                }
                 const response = await fetch(`${API_BASE}/api/v1/admin/process/add-note`, {
                     method: 'POST',
                     headers: {
@@ -4180,6 +4260,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     This note will only be visible to administrators. Residents cannot see these comments.
                 </p>
                 <textarea id="adminNoteInput" style="width: 100%; min-height: 120px; padding: 12px; border: 1px solid #D8B4FE; border-radius: var(--radius-md); font-family: inherit; font-size: 0.9375rem; line-height: 1.5; resize: vertical;" placeholder="Type your internal note here..."></textarea>
+
+                <label for="adminNoteAttachment" style="display: block; margin: 16px 0 6px 0; font-size: 0.8125rem; font-weight: 700; color: #6B21A8;">Optional Attachment</label>
+                <input type="file" id="adminNoteAttachment" style="width: 100%; min-width: 0; border: 1px solid #D8B4FE; border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
                 
                 <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px;">
                     <button class="btn" style="background-color: white; color: var(--foreground); border: 1px solid var(--border);" onclick="closeAdminNoteModal()">Cancel</button>
