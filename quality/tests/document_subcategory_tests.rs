@@ -217,7 +217,7 @@ async fn test_upload_with_valid_subcategory_populates_metadata() {
             .set("Authorization", &admin_auth)
             .send_json(serde_json::json!({
                 "title": "Water Shutdown Notice",
-                "filename": "notice.txt",
+                "filename": "notice.pdf",
                 "category": "NOTICES2",
                 "metadata": {
                     "subcategory_code": "URGENT",
@@ -270,7 +270,7 @@ async fn test_upload_with_unknown_subcategory_code_fails() {
         .set("Authorization", &admin_auth)
         .send_json(serde_json::json!({
             "title": "Doc",
-            "filename": "doc.txt",
+            "filename": "doc.pdf",
             "category": "NOTICES3",
             "metadata": {
                 "subcategory_code": "DOES_NOT_EXIST",
@@ -301,7 +301,7 @@ async fn test_upload_with_subcategory_from_wrong_category_fails() {
         .set("Authorization", &admin_auth)
         .send_json(serde_json::json!({
             "title": "Doc",
-            "filename": "doc.txt",
+            "filename": "doc.pdf",
             "category": "CAT_TWO",
             "metadata": {
                 "subcategory_code": "ONLY_HERE",
@@ -331,7 +331,7 @@ async fn test_upload_without_subcategory_succeeds() {
             .set("Authorization", &admin_auth)
             .send_json(serde_json::json!({
                 "title": "Plain Notice",
-                "filename": "notice.txt",
+                "filename": "notice.pdf",
                 "category": "NOTICES4",
                 "metadata": {
                     "tags": [],

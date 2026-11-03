@@ -43,7 +43,7 @@ impl DocumentManager {
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
         let key = super::derive_s3_key(doc.document_id);
         self.s3_accessor
-            .create_presigned_url(&key)
+            .create_presigned_url(&key, &doc.title)
             .await
             .map_err(|e| e.to_string())
     }

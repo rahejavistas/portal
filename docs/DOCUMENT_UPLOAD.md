@@ -29,8 +29,8 @@ There are two variants of this flow, sharing the same three-step shape:
 ## Security constraints enforced
 
 - JWT authentication + authorization on every API call
-- File extension whitelist (pdf, doc, docx, xls, xlsx, txt)
-- Content-type derived from extension (client-provided value ignored)
+- Only PDF files can be uploaded
+- Downloaded files are saved under the document title
 - Presigned URL locked to exact S3 key and content-type
 - `is_upload_confirmed` gate prevents unconfirmed files from being used in workflows (list/download/process-field endpoints filter on it)
 - Server-side file size validation via S3 HEAD check during confirmation (1GB max)

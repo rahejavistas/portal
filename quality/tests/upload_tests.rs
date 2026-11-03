@@ -12,7 +12,7 @@ async fn test_multipart_document_upload() {
     let payload = serde_json::json!({
         "title": "S3 Upload Integration Test",
         "category": "PUBLIC",
-        "filename": "hello.txt"
+        "filename": "hello.pdf"
     });
 
     // Step 1: Get presigned URL

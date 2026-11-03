@@ -22,7 +22,7 @@ fn self_upload_document(url: &str, res_auth: &str, title: &str) -> String {
         .set("Authorization", res_auth)
         .send_json(serde_json::json!({
             "title": title,
-            "filename": "personal.txt",
+            "filename": "personal.pdf",
             "content_type": "text/plain"
         }))
         .expect("upload-url request failed");

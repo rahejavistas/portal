@@ -1832,19 +1832,19 @@ pub async fn create_comment_attachment(
     .await
 }
 
-/// Whether `attachment_id` is attached to a note on this process.
-pub async fn comment_attachment_is_attached(
+/// File name of `attachment_id` if it is attached to a note on this process.
+pub async fn comment_attachment_file_name(
     conn: &mut sqlx::PgConnection,
     process_id: Uuid,
     attachment_id: CommentAttachmentId,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM process_comment_attachments \
-         WHERE attachment_id = $1 AND process_id = $2 AND comment_id IS NOT NULL)",
+        "SELECT file_name FROM process_comment_attachments \
+         WHERE attachment_id = $1 AND process_id = $2 AND comment_id IS NOT NULL",
     )
     .bind(attachment_id)
     .bind(process_id)
-    .fetch_one(conn)
+    .fetch_optional(conn)
     .await
 }
 
