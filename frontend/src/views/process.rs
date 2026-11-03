@@ -4239,7 +4239,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             <div style="padding: 20px; overflow-y: auto;">
                 <h4 style="margin: 0 0 12px 0; font-size: 1rem;">Upload New</h4>
                 <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px;">
-                    <input type="file" id="picker-new-upload" style="flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
+                    <input type="file" id="picker-new-upload" accept=".pdf" style="flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
                     <button type="button" class="btn btn-primary" onclick="uploadNewDocumentFromPicker()" style="white-space: nowrap;">Upload & Select</button>
                 </div>
                 
@@ -4266,7 +4266,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 <textarea id="adminNoteInput" style="width: 100%; min-height: 120px; padding: 12px; border: 1px solid #D8B4FE; border-radius: var(--radius-md); font-family: inherit; font-size: 0.9375rem; line-height: 1.5; resize: vertical;" placeholder="Type your internal note here..."></textarea>
 
                 <label for="adminNoteAttachment" style="display: block; margin: 16px 0 6px 0; font-size: 0.8125rem; font-weight: 700; color: #6B21A8;">Optional Attachment</label>
-                <input type="file" id="adminNoteAttachment" style="width: 100%; min-width: 0; border: 1px solid #D8B4FE; border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
+                <input type="file" id="adminNoteAttachment" accept=".pdf" style="width: 100%; min-width: 0; border: 1px solid #D8B4FE; border-radius: var(--radius-md); padding: 8px; box-sizing: border-box;">
                 
                 <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 20px;">
                     <button class="btn" style="background-color: white; color: var(--foreground); border: 1px solid var(--border);" onclick="closeAdminNoteModal()">Cancel</button>

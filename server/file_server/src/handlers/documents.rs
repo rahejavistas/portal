@@ -10,34 +10,18 @@ use axum::{
 use base::flat::FlatIdentifier;
 use uuid::Uuid;
 
-pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &[
-    "pdf", "doc", "docx", "xls", "xlsx", "txt", "jpg", "jpeg", "png",
-];
+pub const VALID_UPLOAD_EXTENSIONS: &[&str] = &["pdf"];
+pub const UPLOAD_CONTENT_TYPE: &str = "application/pdf";
 
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
 
-pub fn derive_content_type_from_ext(ext: &str) -> String {
-    match ext {
-        "pdf" => "application/pdf",
-        "doc" => "application/msword",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xls" => "application/vnd.ms-excel",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "txt" => "text/plain",
-        "jpg" | "jpeg" => "image/jpeg",
-        "png" => "image/png",
-        _ => "application/octet-stream",
-    }
-    .to_string()
-}
-
 fn not_found(msg: &str) -> ApiError {
     (StatusCode::NOT_FOUND, Json(msg.to_string()))
 }
 
-/// Content type is always derived server-side from the extension, never trusted from the client.
+/// Only PDFs are accepted; the content type is set server-side, never trusted from the client.
 fn validate_upload_extension(filename: &str) -> Result<String, ApiError> {
     let ext = filename.split('.').next_back().unwrap_or("").to_lowercase();
     if !VALID_UPLOAD_EXTENSIONS.contains(&ext.as_str()) {
@@ -46,7 +30,7 @@ fn validate_upload_extension(filename: &str) -> Result<String, ApiError> {
             ext, VALID_UPLOAD_EXTENSIONS
         )));
     }
-    Ok(derive_content_type_from_ext(&ext))
+    Ok(UPLOAD_CONTENT_TYPE.to_string())
 }
 
 /// Resolves a `CreateMetadataPayload`'s `subcategory_code` (if any) against `category` and

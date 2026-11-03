@@ -973,7 +973,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     </div>
                     <div>
                         <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--muted-foreground); margin-bottom: 4px; text-transform: uppercase;">File</label>
-                        <input type="file" id="upload-file" required accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
+                        <input type="file" id="upload-file" required accept=".pdf" style="width: 100%; padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: #fff;">
                     </div>
                     <div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; margin-top: 8px;">
                         <button type="button" onclick="closeUploadModal()" class="filter-chip">Cancel</button>
@@ -1484,7 +1484,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 </div>
                 <div class="form-group">
                     <label for="tenant-agreement-${ownershipId}">Rental Agreement</label>
-                    <input type="file" id="tenant-agreement-${ownershipId}" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required>
+                    <input type="file" id="tenant-agreement-${ownershipId}" accept=".pdf" required>
                 </div>
                 <button type="button" class="download-btn" id="tenant-submit-${ownershipId}" onclick="submitTenant(${ownershipId})">Save Tenant</button>
             `;

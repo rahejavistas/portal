@@ -1401,7 +1401,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                             </div>
                             <div class="form-group" id="doc-file-group">
                                 <label for="doc-file">Document File</label>
-                                <input type="file" id="doc-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" required style="padding: 8px; width: 100%; background-color: var(--muted);">
+                                <input type="file" id="doc-file" accept=".pdf" required style="padding: 8px; width: 100%; background-color: var(--muted);">
                             </div>
                             <div class="form-group" id="doc-folder-group" style="display: none;">
                                 <label for="doc-folder">Folder</label>
@@ -1741,7 +1741,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             <input type="hidden" id="sign-document-requirement-id">
             <div class="form-group">
                 <label for="sign-document-file">Signed File</label>
-                <input type="file" id="sign-document-file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="padding: 8px; width: 100%; background-color: var(--muted);">
+                <input type="file" id="sign-document-file" accept=".pdf" style="padding: 8px; width: 100%; background-color: var(--muted);">
             </div>
             <div class="feedback-box" id="sign-document-feedback" style="margin-top:12px;"></div>
             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:20px;">
@@ -1914,7 +1914,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 <div style="font-size:11px; font-weight:700; color:var(--muted-foreground); text-transform:uppercase; margin-bottom:8px;">Or upload a new one</div>
                 <div style="display:flex; flex-wrap:wrap; gap:8px;">
                     <input type="text" id="example-doc-new-title" placeholder="Title" style="flex:1; min-width:160px;">
-                    <input type="file" id="example-doc-new-file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.jpg,.jpeg,.png" style="flex:1; min-width:160px; padding:8px; background-color:var(--muted); box-sizing:border-box;">
+                    <input type="file" id="example-doc-new-file" accept=".pdf" style="flex:1; min-width:160px; padding:8px; background-color:var(--muted); box-sizing:border-box;">
                 </div>
                 <div id="example-doc-new-feedback" class="feedback-box" style="display:none; margin-top:10px;"></div>
                 <div style="display:flex; justify-content:flex-end; margin-top:10px;">

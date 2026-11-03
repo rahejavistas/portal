@@ -23,6 +23,22 @@ pub struct S3Accessor {
     presigned_expiry: Duration,
 }
 
+fn content_disposition(download_name: &str) -> String {
+    let name = if download_name.to_lowercase().ends_with(".pdf") {
+        download_name.to_string()
+    } else {
+        format!("{download_name}.pdf")
+    };
+    let mut encoded = String::with_capacity(name.len() * 3);
+    for b in name.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => encoded.push(b as char),
+            _ => encoded.push_str(&format!("%{b:02X}")),
+        }
+    }
+    format!("inline; filename*=UTF-8''{encoded}")
+}
+
 impl S3Accessor {
     #[allow(deprecated)]
     pub async fn new(config: &S3Config) -> Self {
@@ -136,9 +152,11 @@ impl S3Accessor {
         Ok(resp.body)
     }
 
+    /// Presigned GET URL whose response saves the file as `download_name` (".pdf" appended if missing).
     pub async fn create_presigned_url(
         &self,
         key: &str,
+        download_name: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let presigning_config = PresigningConfig::expires_in(self.presigned_expiry)?;
 
@@ -147,6 +165,7 @@ impl S3Accessor {
             .get_object()
             .bucket(&self.bucket_name)
             .key(key)
+            .response_content_disposition(content_disposition(download_name))
             .presigned(presigning_config)
             .await
         {

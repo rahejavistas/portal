@@ -110,7 +110,7 @@ pub async fn admin_note_attachment_upload_url(
             crate::handlers::documents::VALID_UPLOAD_EXTENSIONS
         )));
     }
-    let content_type = crate::handlers::documents::derive_content_type_from_ext(&ext);
+    let content_type = crate::handlers::documents::UPLOAD_CONTENT_TYPE;
 
     let mut conn = state.pg_pool.acquire().await.internal_err()?;
     let actor = build_actor_context(&mut conn, &state.permissions_manager, &user).await?;
@@ -130,7 +130,7 @@ pub async fn admin_note_attachment_upload_url(
         payload.template_step_id,
         user.user_id,
         file_name,
-        &content_type,
+        content_type,
     )
     .await
     .internal_err()?;
@@ -141,7 +141,7 @@ pub async fn admin_note_attachment_upload_url(
         .s3_accessor()
         .create_presigned_put_url(
             &attachment_key(payload.process_id, attachment_id),
-            &content_type,
+            content_type,
         )
         .await
         .internal_err()?;
@@ -149,7 +149,7 @@ pub async fn admin_note_attachment_upload_url(
     Ok(Json(NoteAttachmentUploadUrlResponse {
         attachment_id,
         upload_url,
-        content_type,
+        content_type: content_type.to_string(),
     }))
 }
 
@@ -182,7 +182,7 @@ pub async fn admin_note_attachment_download_url(
         &std::collections::HashSet::new(),
     )
     .await?;
-    let attached = process::db::comment_attachment_is_attached(
+    let file_name = process::db::comment_attachment_file_name(
         &mut conn,
         payload.process_id,
         payload.attachment_id,
@@ -190,17 +190,20 @@ pub async fn admin_note_attachment_download_url(
     .await
     .internal_err()?;
     drop(conn);
-    if !attached {
+    let Some(file_name) = file_name else {
         return Err((
             StatusCode::NOT_FOUND,
             Json("Attachment not found".to_string()),
         ));
-    }
+    };
 
     let download_url = state
         .document_manager
         .s3_accessor()
-        .create_presigned_url(&attachment_key(payload.process_id, payload.attachment_id))
+        .create_presigned_url(
+            &attachment_key(payload.process_id, payload.attachment_id),
+            &file_name,
+        )
         .await
         .internal_err()?;
     Ok(Json(DocumentUrlResponse { download_url }))

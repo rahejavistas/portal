@@ -97,7 +97,7 @@ pub async fn process_admin_upload_url(
         ));
     }
 
-    let content_type = crate::handlers::documents::derive_content_type_from_ext(ext.as_str());
+    let content_type = crate::handlers::documents::UPLOAD_CONTENT_TYPE;
 
     let (result, upload_url, _key) = state
         .document_manager
@@ -107,7 +107,7 @@ pub async fn process_admin_upload_url(
                 description: None,
                 category: crate::document::RESIDENT_SPECIFIC_CATEGORY,
                 metadata: None,
-                content_type: &content_type,
+                content_type,
                 uploaded_by: Some(user.user_id),
             },
             Some(flat_id),
