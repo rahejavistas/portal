@@ -827,7 +827,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                 <nav class="nav-menu">
                     <button class="nav-item" id="tab-btn-documents" onclick="switchTab('documents'); closeSidebar()">Documents</button>
                     <button class="nav-item" id="tab-btn-billing" style="display:none;" onclick="switchTab('billing'); closeSidebar()">Billing</button>
-                    <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                    <a href="/process" class="nav-item" id="tab-link-workflows" style="text-decoration: none;" onclick="closeSidebar()">Applications</a>
                     <a href="/admin" class="admin-btn" id="admin-link" style="display:none;">
                         Admin Dashboard &rarr;
                     </a>
@@ -872,8 +872,8 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 0; border-bottom:1px solid var(--border);">
                         <input type="checkbox" id="notify-process-toggle" onchange="saveNotificationSettings()" style="margin-top:3px; accent-color:var(--primary); cursor:pointer; width:auto;">
                         <label for="notify-process-toggle" style="cursor:pointer;">
-                            <div style="font-weight:700; font-size:14px;">Process updates</div>
-                            <div style="color:var(--muted-foreground); font-size:13px; margin-top:2px;">Email me about process updates.</div>
+                            <div style="font-weight:700; font-size:14px;">Application updates</div>
+                            <div style="color:var(--muted-foreground); font-size:13px; margin-top:2px;">Email me about application updates.</div>
                         </label>
                     </div>
                     <div id="notify-signature-row" style="display:none; align-items:flex-start; gap:12px; padding:14px 0;">
@@ -888,7 +888,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
 
                 <div class="card" id="signer-info-card" style="display:none;">
                     <h3 style="margin-top:0; font-size:18px; font-weight:800; margin-bottom:8px;">Signer Information</h3>
-                    <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:20px;">You've been granted signing access. Fill in your contact details so a process reviewer can attach you as a signer on documents.</p>
+                    <p style="color:var(--muted-foreground); font-size:13px; margin-bottom:20px;">You've been granted signing access. Fill in your contact details so an application reviewer can attach you as a signer on documents.</p>
                     <div class="form-group">
                         <label for="signer-name">Full Name</label>
                         <input type="text" id="signer-name" placeholder="Your full name">
@@ -1051,7 +1051,7 @@ pub(crate) const DASHBOARD_HTML: &str = r#"
                     <h3>Your details</h3>
                     <p>Your email, flat, and roles. To change your password, use "Forgot Password" from the login screen.</p>
                     <h3>Notifications</h3>
-                    <p>Choose which emails you get for process updates and signature requests.</p>
+                    <p>Choose which emails you get for application updates and signature requests.</p>
                     <h3>Still stuck?</h3>
                     <p>Click your avatar in the top right, then "Contact Support".</p>
                 `,

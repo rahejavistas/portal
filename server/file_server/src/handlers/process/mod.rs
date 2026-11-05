@@ -170,6 +170,7 @@ pub(super) async fn build_actor_context(
         .internal_err()?;
     Ok(process::state_machine::ActorContext {
         is_admin: user.has_permission(authentication::Permission::ProcessReviewer),
+        is_super_admin: user.is_admin(),
         designation_codes,
         wing_representative_codes,
         is_active_tenant_for_this_flat: false,

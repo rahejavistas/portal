@@ -1218,18 +1218,18 @@ pub(crate) const ADMIN_HTML: &str = r#"
                     </button>
                     <div class="nav-group collapsed" id="processes-nav-group" style="display:none;">
                         <button class="nav-item nav-group-toggle" id="processes-nav-toggle" onclick="toggleProcessesNav()">
-                            <span>Processes</span>
+                            <span>Applications</span>
                             <span class="nav-group-arrow" id="processes-nav-arrow">&#9662;</span>
                         </button>
                         <div class="nav-subgroup" id="processes-nav-subgroup">
                             <a href="/process" class="nav-item nav-subitem" id="suite-btn-workflows" style="display:none; text-decoration: none;" onclick="closeSidebar()">
-                                Processes
+                                Applications
                             </a>
                             <button class="nav-item nav-subitem" id="suite-btn-signatures" style="display:none;" onclick="switchSuite('signatures'); closeSidebar()">
                                 Signatures
                             </button>
                             <button class="nav-item nav-subitem" id="suite-btn-templates" style="display:none;" onclick="switchSuite('templates'); closeSidebar()">
-                                Process Templates
+                                Application Templates
                             </button>
                         </div>
                     </div>
@@ -1622,7 +1622,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             </section>
 
             <section class="suite-panel" id="suite-templates">
-                <h2>Process Templates</h2>
+                <h2>Application Templates</h2>
                 <div class="card">
                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px;">
                         <p style="color:var(--muted-foreground); font-size:14px; margin:0;">Each template has versions; only the active one is what residents can start.</p>
@@ -2244,14 +2244,14 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 `,
             },
             templates: {
-                title: 'Process Templates',
+                title: 'Application Templates',
                 body: `
                     <h3>What a template is</h3>
-                    <p>A reusable workflow: the steps, who fills what, who reviews, and who signs, in what order. Residents start processes from these.</p>
+                    <p>A reusable workflow: the steps, who fills what, who reviews, and who signs, in what order. Residents start applications from these.</p>
                     <h3>Building one</h3>
                     <p>Click "+ New Template", add your steps and fields, and save. Saving creates a draft version. Residents can only start the version you've activated.</p>
                     <h3>Changing one later</h3>
-                    <p>Edits become a new version. Processes already running keep following the version they started on.</p>
+                    <p>Edits become a new version. Applications already running keep following the version they started on.</p>
                     <h3>Still stuck?</h3>
                     <p>Click your avatar in the top right, then "Contact Support".</p>
                 `,
@@ -2260,7 +2260,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 title: 'Signatures',
                 body: `
                     <h3>Signing queue</h3>
-                    <p>Documents waiting on your signature right now, from any process. Open one to review and sign.</p>
+                    <p>Documents waiting on your signature right now, from any application. Open one to review and sign.</p>
                     <h3>Signer directory</h3>
                     <p>Everyone who can be attached as a signer. If someone's missing, their role likely needs signing permission first, set under Roles &amp; Designations.</p>
                     <h3>Still stuck?</h3>
@@ -2373,11 +2373,11 @@ pub(crate) const ADMIN_HTML: &str = r#"
                 { label: 'Residents', action: () => switchSuite('residents'), show: canViewUsers },
                 { label: 'Documents', action: () => switchSuite('documents'), show: canManageDocuments || canManageCategories },
                 { label: 'Roles &amp; Designations', action: () => switchSuite('roles'), show: canManageRoles || canViewRoles || canManageDesignations },
-                { label: 'Process Templates', action: () => switchSuite('templates'), show: canManageProcessTemplates },
+                { label: 'Application Templates', action: () => switchSuite('templates'), show: canManageProcessTemplates },
                 { label: 'Signatures', action: () => switchSuite('signatures'), show: canSignDocuments || canManageSignerDirectory },
                 { label: 'Society Profile', action: () => switchSuite('society'), show: !!(user && user.designations && user.designations.includes('super_admin')) },
                 { label: 'Accounting & Billing', action: () => { window.location.href = '/admin-accounting'; }, show: !!(user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) },
-                { label: 'Processes', action: () => { window.location.href = '/process'; }, show: true },
+                { label: 'Applications', action: () => { window.location.href = '/process'; }, show: true },
             ];
         }
 
@@ -2663,7 +2663,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
         if (workflowsBtn) {
             workflowsBtn.style.display = canViewAllProcesses ? 'block' : 'none';
             workflowsBtn.href = '/admin-process';
-            workflowsBtn.textContent = 'Process Review';
+            workflowsBtn.textContent = 'Application Review';
         }
         const processesNavGroup = document.getElementById('processes-nav-group');
         if (processesNavGroup) {
@@ -3287,9 +3287,9 @@ pub(crate) const ADMIN_HTML: &str = r#"
             'designations.manage': { title: 'Manage Designation Setup', desc: 'Add new designations, modify the permissions a designation grants, and change which document categories it can view or manage.' },
             'documents.all.manage': { title: 'Manage All Documents', desc: 'View and manage documents in every category, regardless of per-category access.' },
             'documents.categories.manage': { title: 'Manage Document Categories', desc: 'Add new document categories.' },
-            'process.view': { title: 'View Processes', desc: 'View the processes of all residents, including the files attached to them. Cannot approve or deny steps.' },
-            'process.reviewer': { title: 'Review Processes', desc: 'Review resident processes: approve or deny submitted steps, and view the files attached to them.' },
-            'process.templates.manage': { title: 'Manage Process Templates', desc: 'Create/edit process templates and activate versions. Also allows changing which designations are required to sign a document field.' },
+            'process.view': { title: 'View Applications', desc: 'View the applications of all residents, including the files attached to them. Cannot approve or deny steps.' },
+            'process.reviewer': { title: 'Review Applications', desc: 'Review resident applications: approve or deny submitted steps, and view the files attached to them.' },
+            'process.templates.manage': { title: 'Manage Application Templates', desc: 'Create/edit application templates and activate versions. Also allows changing which designations are required to sign a document field.' },
             'accounting.view': { title: 'View Accounting', desc: 'View the ledger, invoices, receipts, payments, and every accounting report: GST summary, outstanding dues, ageing, defaulters, collection summary, and more. Read-only: cannot create, edit, or post anything.' },
             'accounting.manage': { title: 'Manage Accounting', desc: 'Full control of the accounting module: create billing plans and generate invoices, record payments, run the interest job, manage vendors/expenses and TDS, reconcile bank statements, set budgets, edit GST/interest rules and the chart of accounts, and close or reopen fiscal years. Includes everything View Accounting allows.' },
         };
@@ -3675,7 +3675,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             const isSettingsSelected = builderSelectedPath === 'settings';
             const selectedStage = (!isSettingsSelected && builderSelectedPath) ? stages[builderSelectedPath[0]] : null;
             const toggleLabel = isSettingsSelected
-                ? 'Process Settings'
+                ? 'Application Settings'
                 : selectedStage
                     ? `Stage ${builderSelectedPath[0] + 1}: ${selectedStage.name || '(untitled stage)'}`
                     : 'Select a stage';
@@ -3685,7 +3685,7 @@ pub(crate) const ADMIN_HTML: &str = r#"
             </div>`;
             html += `<div class="step-nav-item ${isSettingsSelected ? 'active' : ''}" onclick="builderSelectedPath='settings'; builderSidebarExpanded=false; renderBuilderStages(); renderBuilderStageDetail();">
                 <div class="step-nav-info">
-                    <span class="step-nav-name">⚙ Process Settings</span>
+                    <span class="step-nav-name">⚙ Application Settings</span>
                 </div>
             </div>`;
             html += stages.map((stage, i) => {
@@ -3928,7 +3928,7 @@ function openDesignationPicker(field) {
                     <h4 style="margin-bottom:4px;">Turnaround Time (TAT)</h4>
                     <p style="font-size:13px; color:var(--muted-foreground); margin-bottom:16px; max-width:520px;">
                         Once a resident has submitted every required field across all stages, this is how many working
-                        days the society has to fully complete the process before it's flagged overdue. Leave it blank
+                        days the society has to fully complete the application before it's flagged overdue. Leave it blank
                         to turn off SLA tracking for this template.
                     </p>
                     <div class="form-group" style="max-width:260px;">
@@ -4201,7 +4201,7 @@ function openDesignationPicker(field) {
                         </td>
                         <td style="text-align:right;">
                             <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px;">
-                                <a href="/process?process_id=${escapeHtml(r.process_id)}" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">View Process</a>
+                                <a href="/process?process_id=${escapeHtml(r.process_id)}" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">View Application</a>
                                 ${r.sign_url ? `<a href="${escapeHtml(r.sign_url)}" target="_blank" rel="noopener" class="action-select" style="cursor:pointer; text-decoration:none; display:inline-block; width:auto; white-space:nowrap;">Open Signing Page</a>` : ''}
                                 <button class="action-select" style="cursor:pointer; width:auto; white-space:nowrap;" onclick="openSignDocumentModal(${r.requirement_id}, '${jsAttrEscape(r.document_title)}', '${jsAttrEscape(r.signer_name)}')">Sign manually</button>
                             </div>
