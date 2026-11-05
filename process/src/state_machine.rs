@@ -298,7 +298,7 @@ pub fn tenant_stage_lacks_owner_declaration(template: &crate::ProcessTemplate) -
 // ==========================================
 
 /// Check if all mandatory fields in a step are filled and every substep is done. A substep
-/// with nothing mandatory (e.g. only optional fields) counts as done without being submitted.
+/// with only optional fields counts as done without being submitted.
 pub fn check_step_completed(
     step_id: i32,
     info_map: &HashMap<i32, StepInfo>,
@@ -332,7 +332,10 @@ pub fn check_step_completed(
     }
     info.substep_ids.iter().all(|sub_id| {
         state.steps.get(sub_id).is_some_and(|s| s.is_completed)
-            || check_step_completed(*sub_id, info_map, state)
+            || info_map.get(sub_id).is_some_and(|sub| {
+                sub.fields.iter().all(|f| f.is_optional)
+                    && check_step_completed(*sub_id, info_map, state)
+            })
     })
 }
 
@@ -1129,6 +1132,51 @@ mod tests {
             ..Default::default()
         };
         assert!(compute_review_updates(&template, &state, 2, true, &holder).is_ok());
+    }
+
+    #[test]
+    fn reopened_substep_with_filled_required_fields_still_blocks_parent_completion() {
+        let required_text = crate::ProcessFieldTemplate {
+            field_id: 24,
+            name: "Verified".to_string(),
+            description: None,
+            r#type: crate::FieldType::Text,
+            is_optional: false,
+            requirements: None,
+            requires_signature: false,
+            required_signs_from_designations: Vec::new(),
+            options: None,
+            example_document_id: None,
+        };
+        let mut parent = step_with(17, crate::StepOwner::User, false, None);
+        parent.substeps = Some(vec![step_with(
+            23,
+            crate::StepOwner::User,
+            false,
+            Some(vec![required_text]),
+        )]);
+        let template = template_of(vec![parent]);
+        let info_map = build_step_info_map(&template);
+
+        let mut state = ProcessStateInput::default();
+        state.fields.insert(
+            24,
+            FieldState {
+                text_value: Some("yes".to_string()),
+                document_id: None,
+            },
+        );
+        state.steps.insert(
+            23,
+            StepStateDb {
+                is_completed: false,
+                started_at: None,
+            },
+        );
+        assert!(
+            !check_step_completed(17, &info_map, &state),
+            "a rejected substep keeps its field values but must stay incomplete until resubmitted"
+        );
     }
 
     #[test]

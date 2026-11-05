@@ -42,8 +42,15 @@ impl DocumentManager {
 
     pub async fn generate_presigned_url(&self, doc: &Document) -> Result<String, String> {
         let key = super::derive_s3_key(doc.document_id);
+        let is_pdf =
+            doc.content_type.as_deref() == Some(crate::handlers::documents::UPLOAD_CONTENT_TYPE);
+        let download_name = if is_pdf && !doc.title.to_lowercase().ends_with(".pdf") {
+            format!("{}.pdf", doc.title)
+        } else {
+            doc.title.clone()
+        };
         self.s3_accessor
-            .create_presigned_url(&key, &doc.title)
+            .create_presigned_url(&key, &download_name)
             .await
             .map_err(|e| e.to_string())
     }
