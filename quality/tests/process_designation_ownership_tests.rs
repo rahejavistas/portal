@@ -890,3 +890,198 @@ async fn test_wing_representative_can_reopen_a_different_wings_completed_step() 
         .expect("any wing's representative, including wing B's, can reopen the step");
     assert_eq!(result["status"], "success");
 }
+
+fn resident_owned_draft() -> serde_json::Value {
+    serde_json::json!({
+        "template_id": null,
+        "name": "Resident Owned Test Process",
+        "description": null,
+        "is_optional": false,
+        "substeps": [
+            {
+                "name": "Resident Details",
+                "filled_by": { "kind": "user" },
+                "fields": [{ "name": "Note", "type": "text" }]
+            }
+        ]
+    })
+}
+
+fn review_status(
+    url: &str,
+    jwt: &str,
+    process_id: &str,
+    step_id: i64,
+    is_approved: bool,
+) -> Result<u16, u16> {
+    let resp = ureq::post(&format!("{}/api/v1/admin/process/review", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({
+            "process_id": process_id,
+            "template_step_id": step_id,
+            "is_approved": is_approved,
+            "notes": null,
+            "flagged_step_ids": null
+        }));
+    match resp {
+        Ok(r) => Ok(r.status()),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(e) => panic!("transport error: {:?}", e),
+    }
+}
+
+fn step_status(url: &str, jwt: &str, process_id: &str) -> String {
+    let state: serde_json::Value = ureq::post(&format!("{}/api/v1/process/state", url))
+        .set("Authorization", &auth(jwt))
+        .send_json(serde_json::json!({ "process_id": process_id }))
+        .unwrap()
+        .into_json()
+        .unwrap();
+    state["steps"][0]["status"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn test_super_admin_approves_unfilled_open_designation_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+
+    quick_create_user(&env, &admin_jwt, "resident_sa1@dtest.test", "D", "111");
+    let resident_jwt = quick_onboard_user(&env, "resident_sa1@dtest.test", "password123");
+    let state = start_process(&url, &resident_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, _) = field_and_step_ids(&state);
+    assert_eq!(state["steps"][0]["status"], "OPEN");
+
+    let status = review_status(&url, &admin_jwt, process_id, step_id, true)
+        .expect("super admin approves an unfilled open designation step");
+    assert_eq!(status, 200);
+    assert_eq!(step_status(&url, &resident_jwt, process_id), "COMPLETED");
+}
+
+#[tokio::test]
+async fn test_super_admin_denies_unfilled_open_designation_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+
+    quick_create_user(&env, &admin_jwt, "resident_sa2@dtest.test", "D", "112");
+    let resident_jwt = quick_onboard_user(&env, "resident_sa2@dtest.test", "password123");
+    let state = start_process(&url, &resident_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, _) = field_and_step_ids(&state);
+
+    let status = review_status(&url, &admin_jwt, process_id, step_id, false)
+        .expect("super admin denies an unfilled open designation step");
+    assert_eq!(status, 200);
+    assert_eq!(step_status(&url, &resident_jwt, process_id), "OPEN");
+}
+
+#[tokio::test]
+async fn test_designation_holder_approves_unfilled_open_step_of_their_designation() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    quick_toggle_designation_permission(&env, &admin_jwt, "secretary", "process.reviewer", true);
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+
+    let holder_id = quick_create_user(&env, &admin_jwt, "holder_ap1@dtest.test", "D", "113");
+    let holder_jwt = quick_onboard_user(&env, "holder_ap1@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, holder_id, "secretary");
+    quick_create_user(&env, &admin_jwt, "resident_ap1@dtest.test", "D", "114");
+    let resident_jwt = quick_onboard_user(&env, "resident_ap1@dtest.test", "password123");
+
+    let state = start_process(&url, &resident_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, _) = field_and_step_ids(&state);
+
+    let status = review_status(&url, &holder_jwt, process_id, step_id, true)
+        .expect("the designation holder approves their own unfilled step");
+    assert_eq!(status, 200);
+    assert_eq!(step_status(&url, &resident_jwt, process_id), "COMPLETED");
+}
+
+#[tokio::test]
+async fn test_reviewer_without_the_designation_cannot_approve_designation_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    quick_create_designation(&env, &admin_jwt, "auditor", "Auditor");
+    quick_toggle_designation_permission(&env, &admin_jwt, "auditor", "process.reviewer", true);
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+
+    let auditor_id = quick_create_user(&env, &admin_jwt, "auditor_ap2@dtest.test", "D", "115");
+    let auditor_jwt = quick_onboard_user(&env, "auditor_ap2@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, auditor_id, "auditor");
+    quick_create_user(&env, &admin_jwt, "resident_ap2@dtest.test", "D", "116");
+    let resident_jwt = quick_onboard_user(&env, "resident_ap2@dtest.test", "password123");
+
+    let state = start_process(&url, &resident_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, _) = field_and_step_ids(&state);
+
+    let err = review_status(&url, &auditor_jwt, process_id, step_id, true).unwrap_err();
+    assert_eq!(err, 400, "a reviewer who is neither holder nor super admin");
+    assert_eq!(step_status(&url, &resident_jwt, process_id), "OPEN");
+}
+
+#[tokio::test]
+async fn test_resident_without_reviewer_permission_cannot_review() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "secretary", "Secretary");
+    let template_id =
+        create_and_activate_template(&url, &admin_jwt, &designation_owned_draft("secretary"));
+
+    quick_create_user(&env, &admin_jwt, "resident_ap3@dtest.test", "D", "117");
+    let resident_jwt = quick_onboard_user(&env, "resident_ap3@dtest.test", "password123");
+    let state = start_process(&url, &resident_jwt, template_id);
+    let process_id = state["process_id"].as_str().unwrap();
+    let (step_id, _) = field_and_step_ids(&state);
+
+    let err = review_status(&url, &resident_jwt, process_id, step_id, true).unwrap_err();
+    assert_eq!(err, 400, "a resident is never a reviewer of their own step");
+    assert_eq!(step_status(&url, &resident_jwt, process_id), "OPEN");
+}
+
+#[tokio::test]
+async fn test_any_reviewer_approves_unfilled_open_resident_step() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    quick_create_designation(&env, &admin_jwt, "auditor", "Auditor");
+    quick_toggle_designation_permission(&env, &admin_jwt, "auditor", "process.reviewer", true);
+    let template_id = create_and_activate_template(&url, &admin_jwt, &resident_owned_draft());
+
+    let auditor_id = quick_create_user(&env, &admin_jwt, "auditor_rs@dtest.test", "D", "118");
+    let auditor_jwt = quick_onboard_user(&env, "auditor_rs@dtest.test", "password123");
+    quick_assign_designation(&env, &admin_jwt, auditor_id, "auditor");
+
+    for (email, flat, reviewer_jwt) in [
+        ("resident_rs1@dtest.test", "119", &auditor_jwt),
+        ("resident_rs2@dtest.test", "120", &admin_jwt),
+    ] {
+        quick_create_user(&env, &admin_jwt, email, "D", flat);
+        let resident_jwt = quick_onboard_user(&env, email, "password123");
+        let state = start_process(&url, &resident_jwt, template_id);
+        let process_id = state["process_id"].as_str().unwrap();
+        let (step_id, _) = field_and_step_ids(&state);
+        assert_eq!(state["steps"][0]["status"], "OPEN");
+
+        let status = review_status(&url, reviewer_jwt, process_id, step_id, true)
+            .expect("any reviewer approves an unfilled resident step");
+        assert_eq!(status, 200);
+        assert_eq!(step_status(&url, &resident_jwt, process_id), "COMPLETED");
+    }
+}

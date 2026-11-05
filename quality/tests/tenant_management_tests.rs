@@ -763,9 +763,9 @@ async fn test_tenant_login_shows_their_tenanted_flat_not_tbd() {
     assert_eq!(login["user"]["flat_number"], "0511");
 }
 
-/// An admin cannot approve an unfilled Open Tenant-owned step.
+/// A super admin can approve an unfilled Open Tenant-owned step.
 #[tokio::test]
-async fn test_admin_cannot_approve_an_unfilled_open_tenant_step() {
+async fn test_super_admin_can_approve_an_unfilled_open_tenant_step() {
     let env = quality::setup_api_test_env().await;
     let url = env.server_url();
     let admin_jwt = quick_setup_admin(&env);
@@ -787,14 +787,10 @@ async fn test_admin_cannot_approve_an_unfilled_open_tenant_step() {
             "notes": null,
             "flagged_step_ids": null
         }));
-    let err = match resp {
-        Ok(_) => panic!("expected the approval to be rejected"),
-        Err(ureq::Error::Status(code, _)) => code,
-        Err(e) => panic!("transport error: {:?}", e),
-    };
     assert_eq!(
-        err, 400,
-        "an admin must not be able to approve an Open Tenant-owned step that was never filled"
+        resp.expect("a super admin may approve any open step")
+            .status(),
+        200
     );
 }
 
