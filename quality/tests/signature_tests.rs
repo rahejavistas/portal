@@ -451,6 +451,48 @@ async fn test_add_signers_creates_ordered_requirements_and_blocks_step() {
 }
 
 #[tokio::test]
+async fn test_signed_replacement_rejects_non_pdf_content_type() {
+    let env = setup_api_test_env().await;
+    let url = env.server_url();
+    let admin_jwt = quick_setup_admin(&env);
+    let admin_auth = auth(&admin_jwt);
+    let (template_id, step_id, field_id) = save_template(&url, &admin_jwt);
+
+    quick_create_user(&env, &admin_jwt, "resident_np@sigtest.test", "SG", "261");
+    let res_jwt = quick_onboard_user(&env, "resident_np@sigtest.test", "password123");
+    let pid = start_process(&url, &res_jwt, template_id);
+    let doc_id = upload_doc_as_admin(&url, &admin_auth, &pid, "noc.pdf");
+    save_step(&url, &admin_auth, &pid, step_id, field_id, &doc_id);
+
+    let (jwt, signer, ..) = make_signer(&env, &admin_jwt, "sig_np", "262");
+    let requirements = add_signers(
+        &url,
+        &admin_auth,
+        &pid,
+        step_id,
+        field_id,
+        &doc_id,
+        &[signer],
+    )
+    .unwrap();
+    let req = requirement_id_for_signer(&requirements, signer);
+
+    for content_type in ["text/plain", "image/png", "application/msword"] {
+        let err = ureq::post(&format!(
+            "{}/api/v1/admin/documents/signatures/replace-upload-url",
+            url
+        ))
+        .set("Authorization", &auth(&jwt))
+        .send_json(serde_json::json!({"requirement_id": req, "content_type": content_type}))
+        .unwrap_err();
+        assert!(
+            matches!(err, ureq::Error::Status(400, _)),
+            "{content_type} must be rejected"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_signers_must_sign_in_order() {
     let env = setup_api_test_env().await;
     let url = env.server_url();

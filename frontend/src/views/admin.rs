@@ -6250,7 +6250,7 @@ function openDesignationPicker(field) {
 
         const regDocForm = document.getElementById('register-doc-form');
         const docFeedback = document.getElementById('doc-feedback');
-        const docAllowedExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.jpg', '.jpeg', '.png'];
+        const docAllowedExtensions = ['.pdf'];
         const docMaxSize = 1024 * 1024 * 1024;
 
         function validateDocFile(file) {
@@ -6259,7 +6259,7 @@ function openDesignationPicker(field) {
             }
             const fileName = file.name.toLowerCase();
             if (!docAllowedExtensions.some(ext => fileName.endsWith(ext))) {
-                return `${file.name}: invalid file type. Only PDF, Word, Excel, Text, and image (JPG/PNG) files are allowed.`;
+                return `${file.name}: invalid file type. Only PDF files are allowed.`;
             }
             return null;
         }

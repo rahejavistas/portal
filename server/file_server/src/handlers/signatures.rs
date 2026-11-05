@@ -363,6 +363,10 @@ pub async fn replace_upload_url(
 
     ensure_signer_still_eligible(&state, &requirement).await?;
 
+    if payload.content_type != crate::handlers::documents::UPLOAD_CONTENT_TYPE {
+        return Err(bad_request("Signed replacement must be a PDF"));
+    }
+
     let (new_document_id, upload_url) = state
         .document_manager
         .signature_replace_upload_url(payload.requirement_id, &payload.content_type, user.user_id)

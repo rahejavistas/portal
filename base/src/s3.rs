@@ -24,13 +24,8 @@ pub struct S3Accessor {
 }
 
 fn content_disposition(download_name: &str) -> String {
-    let name = if download_name.to_lowercase().ends_with(".pdf") {
-        download_name.to_string()
-    } else {
-        format!("{download_name}.pdf")
-    };
-    let mut encoded = String::with_capacity(name.len() * 3);
-    for b in name.bytes() {
+    let mut encoded = String::with_capacity(download_name.len() * 3);
+    for b in download_name.bytes() {
         match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => encoded.push(b as char),
             _ => encoded.push_str(&format!("%{b:02X}")),
@@ -152,7 +147,7 @@ impl S3Accessor {
         Ok(resp.body)
     }
 
-    /// Presigned GET URL whose response saves the file as `download_name` (".pdf" appended if missing).
+    /// Presigned GET URL whose response saves the file as `download_name`.
     pub async fn create_presigned_url(
         &self,
         key: &str,
