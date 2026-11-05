@@ -4,7 +4,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vistas Portal - Processes</title>
+    <title>Vistas Portal - Applications</title>
     <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * {
@@ -1238,10 +1238,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             <section id="screen-list">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px;">
                     <div>
-                        <h2>Processes</h2>
-                        <p class="section-desc" style="margin-bottom: 0;" id="processes-section-desc">Manage Your Processes</p>
+                        <h2>Applications</h2>
+                        <p class="section-desc" style="margin-bottom: 0;" id="processes-section-desc">Manage Your Applications</p>
                     </div>
-                    <button class="btn" id="start-process-btn" onclick="openStartProcessModal()">Start New Process</button>
+                    <button class="btn" id="start-process-btn" onclick="openStartProcessModal()">Start New Application</button>
                 </div>
 
                 <div class="subtab-bar" id="process-subtab-bar" style="display: none;">
@@ -1257,8 +1257,8 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
                 <div id="filters-container" style="display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
                     <div class="form-group" style="margin-bottom: 0; flex-grow: 1; min-width: 200px;">
-                        <label for="filter-search">Search Process / ID</label>
-                        <input type="text" id="filter-search" placeholder="Search by Process name or ID..." oninput="filterProcesses()">
+                        <label for="filter-search">Search Application / ID</label>
+                        <input type="text" id="filter-search" placeholder="Search by Application name or ID..." oninput="filterProcesses()">
                     </div>
                     <div class="form-group" id="admin-flat-filter-group" style="display: none; margin-bottom: 0; flex-grow: 1; min-width: 200px;">
                         <label for="filter-flat">Filter by Flat</label>
@@ -1274,7 +1274,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     <table>
                         <thead>
                             <tr>
-                                <th style="cursor:pointer;" onclick="setProcessSort('template_name')">Process Name<span id="sort-arrow-template_name"></span></th>
+                                <th style="cursor:pointer;" onclick="setProcessSort('template_name')">Application Name<span id="sort-arrow-template_name"></span></th>
                                 <th class="process-table-col-flat" style="cursor:pointer;" onclick="setProcessSort('flat_label')">Flat<span id="sort-arrow-flat_label"></span></th>
                                 <th id="col-state" style="cursor:pointer;" onclick="setProcessSort('status')">State<span id="sort-arrow-status"></span></th>
                                 <th class="process-table-col-date" style="cursor:pointer;" onclick="setProcessSort('created_at')">Started On<span id="sort-arrow-created_at"></span></th>
@@ -1298,7 +1298,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     <button class="btn btn-secondary" onclick="showProcessListScreen()" style="margin-bottom: 12px; font-size: 0.875rem; padding: 8px 14px;">
                         &larr; Back
                     </button>
-                    <h2 id="details-process-title" class="truncate" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Process Details</h2>
+                    <h2 id="details-process-title" class="truncate" style="margin-bottom: 8px; font-size: 1.625rem; line-height: 1.2;">Application Details</h2>
                     <div id="details-process-meta" style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
                         </div>
                     <button type="button" id="details-audit-trail-btn" style="display:none; margin-top:12px; height:36px; padding:0 14px; background:transparent; border:1px solid var(--border); color:var(--foreground); border-radius:6px; cursor:pointer; font-size:13px; font-weight:600;" onclick="openAuditTrailModal()">View Audit Trail</button>
@@ -1323,10 +1323,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
     <div class="modal-overlay" id="start-process-modal">
         <div class="modal-content">
             <button class="close-modal-btn" onclick="closeStartProcessModal()">&times;</button>
-            <h3 style="margin-top: 0; font-size: 1.5rem; font-weight: 800; margin-bottom: 24px;">Start New Process</h3>
+            <h3 style="margin-top: 0; font-size: 1.5rem; font-weight: 800; margin-bottom: 24px;">Start New Application</h3>
             <form id="start-process-form" onsubmit="handleStartProcess(event)">
                 <div class="form-group">
-                    <label for="select-process-template">Process Type</label>
+                    <label for="select-process-template">Application Type</label>
                     <select id="select-process-template" required>
                         <option value="">Loading...</option>
                     </select>
@@ -1524,10 +1524,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
         });
 
         const HELP_CONTENT_RESIDENT = {
-            title: 'Processes',
+            title: 'Applications',
             body: `
                 <h3>Starting one</h3>
-                <p>Click "Start New Process" and pick a process type. It walks you through the required steps and documents.</p>
+                <p>Click "Start New Application" and pick an application type. It walks you through the required steps and documents.</p>
                 <h3>Uploading & signing</h3>
                 <p>Fill each step's fields and upload requested documents. Some fields need admin review or a signature before the step counts as done.</p>
                 <h3>Still stuck?</h3>
@@ -1535,12 +1535,12 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             `,
         };
         const HELP_CONTENT_ADMIN = {
-            title: 'Process Review',
+            title: 'Application Review',
             body: `
                 <h3>The queue</h3>
-                <p>Every process step currently waiting on an admin: a review, a signature, or both.</p>
+                <p>Every application step currently waiting on an admin: a review, a signature, or both.</p>
                 <h3>Reviewing a step</h3>
-                <p>Open a process, check what the resident submitted, then approve or send it back with a note. Sending it back reopens that step for the resident.</p>
+                <p>Open an application, check what the resident submitted, then approve or send it back with a note. Sending it back reopens that step for the resident.</p>
                 <h3>Still stuck?</h3>
                 <p>Click your avatar in the top right, then "Contact Support".</p>
             `,
@@ -1662,7 +1662,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const startProcessBtn = document.getElementById('start-process-btn');
             if (startProcessBtn) startProcessBtn.style.display = 'none';
             const sectionDesc = document.getElementById('processes-section-desc');
-            if (sectionDesc) sectionDesc.textContent = 'Review resident processes';
+            if (sectionDesc) sectionDesc.textContent = 'Review resident applications';
         }
 
         const isAdmin = isAdminUser(user);
@@ -1707,7 +1707,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     </div>`
                     : '';
                 const templatesLink = canManageProcessTemplates
-                    ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Templates</a>`
+                    ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Application Templates</a>`
                     : '';
                 const signaturesLink = (canSignDocuments || canManageSignerDirectory)
                     ? `<a href="/admin?tab=signatures" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Signatures</a>`
@@ -1720,15 +1720,15 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     ? `<a href="/admin-accounting" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Accounting &amp; Billing</a>`
                     : '';
                 const processesLink = IS_ADMIN_PROCESS_PAGE
-                    ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
-                    : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>`;
+                    ? `<a href="/admin-process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Application Review</a>`
+                    : `<a href="/process" class="nav-item nav-subitem active" style="text-decoration: none;" onclick="closeSidebar()">Applications</a>`;
                 const otherProcessLink = !IS_ADMIN_PROCESS_PAGE && canAccessAdminProcessPage(user)
-                    ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Process Review</a>`
+                    ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration: none;" onclick="closeSidebar()">Application Review</a>`
                     : '';
                 const processesGroup = (IS_ADMIN_PROCESS_PAGE || canAccessAdminProcessPage(user) || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory)
                     ? `<div class="nav-group" id="processes-nav-group">
                         <button type="button" class="nav-item nav-group-toggle" onclick="toggleProcessNavGroup('processes-nav-group')">
-                            <span>Processes</span>
+                            <span>Applications</span>
                             <span class="nav-group-arrow">&#9662;</span>
                         </button>
                         <div class="nav-subgroup">
@@ -1755,7 +1755,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 sidebarBrandContainer.innerHTML = `
                     <nav class="nav-menu">
                         <a href="/dashboard?tab=documents" class="nav-item" style="text-decoration: none;" onclick="closeSidebar()">Documents</a>
-                        <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Processes</a>
+                        <a href="/process" class="nav-item active" style="text-decoration: none;" onclick="closeSidebar()">Applications</a>
                         ${adminDashboardLink}
                     </nav>
                 `;
@@ -1774,11 +1774,11 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 { label: 'Residents', action: () => { window.location.href = '/admin?tab=residents'; }, show: canViewUsers },
                 { label: 'Documents', action: () => { window.location.href = '/admin?tab=documents'; }, show: canManageDocs },
                 { label: 'Roles &amp; Designations', action: () => { window.location.href = '/admin?tab=roles'; }, show: canManageRoles },
-                { label: 'Process Templates', action: () => { window.location.href = '/admin?tab=templates'; }, show: canManageProcessTemplates },
+                { label: 'Application Templates', action: () => { window.location.href = '/admin?tab=templates'; }, show: canManageProcessTemplates },
                 { label: 'Signatures', action: () => { window.location.href = '/admin?tab=signatures'; }, show: canSignDocuments || canManageSignerDirectory },
                 { label: 'Society Profile', action: () => { window.location.href = '/admin?tab=society'; }, show: isSuperAdmin },
                 { label: 'Accounting &amp; Billing', action: () => { window.location.href = '/admin-accounting'; }, show: !!(user && user.accounting_enabled && (user.can_manage_accounting || user.can_view_accounting)) },
-                { label: 'Process Review', action: () => { window.location.href = '/admin-process'; }, show: canAccessAdminProcessPage(user) },
+                { label: 'Application Review', action: () => { window.location.href = '/admin-process'; }, show: canAccessAdminProcessPage(user) },
                 { label: 'My Dashboard', action: () => { window.location.href = '/dashboard'; }, show: true },
             ];
         }
@@ -2037,7 +2037,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     document.getElementById('process-rows-target').innerHTML = `
                         <tr>
                             <td colspan="6" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
-                                Failed to load processes: ${escapeHtml(errText)}
+                                Failed to load applications: ${escapeHtml(errText)}
                             </td>
                         </tr>
                     `;
@@ -2047,7 +2047,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 document.getElementById('process-rows-target').innerHTML = `
                     <tr>
                         <td colspan="6" style="text-align: center; color: var(--danger); padding: 40px; font-weight: 500;">
-                            Network error while loading processes.
+                            Network error while loading applications.
                         </td>
                     </tr>
                 `;
@@ -2083,10 +2083,10 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             if (!IS_ADMIN_PROCESS_PAGE) return '';
             const isDone = p.status === 'COMPLETED' || p.is_completed === true;
             if (isDone) {
-                return `<span title="Process completed - TAT clock stopped" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
+                return `<span title="Application completed - TAT clock stopped" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
             }
             if (!p.effective_due_date) {
-                return `<span title="No TAT tracking for this process" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
+                return `<span title="No TAT tracking for this application" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:#9CA3AF; margin-right:6px; vertical-align:middle;"></span>`;
             }
             const color = p.is_sla_paused ? '#B45309' : '#16A34A';
             const title = p.is_sla_paused ? 'TAT paused - waiting on resubmission' : 'TAT running';
@@ -2154,7 +2154,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 tbody.innerHTML = `
                     <tr>
                         <td colspan="6" style="text-align: center; color: var(--muted-foreground); padding: 40px; font-weight: 500;">
-                            No processes found.
+                            No applications found.
                         </td>
                     </tr>
                 `;
@@ -2209,7 +2209,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
 
             if (canReviewProcess(user)) {
                 statusEl.style.color = 'var(--danger)';
-                statusEl.textContent = 'Administrative accounts cannot initiate processes directly. Please use the resident view.';
+                statusEl.textContent = 'Administrative accounts cannot initiate applications directly. Please use the resident view.';
                 document.getElementById('start-process-submit-btn').disabled = true;
                 return;
             }
@@ -2226,9 +2226,9 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 const templates = await resp.json();
                 templateSelect.innerHTML = templates.length > 0
                     ? templates.map(t => `<option value="${t.template_id}">${escapeHtml(t.name)}</option>`).join('')
-                    : '<option value="">No processes available</option>';
+                    : '<option value="">No applications available</option>';
             } catch (err) {
-                templateSelect.innerHTML = '<option value="">Failed to load process types</option>';
+                templateSelect.innerHTML = '<option value="">Failed to load application types</option>';
             }
 
             flatSelect.innerHTML = '';
@@ -2293,7 +2293,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                 } else {
                     const errText = await readErrorMessage(response);
                     statusEl.style.color = 'var(--danger)';
-                    statusEl.textContent = `Failed to start process: ${errText}`;
+                    statusEl.textContent = `Failed to start application: ${errText}`;
                 }
             } catch(e) {
                 statusEl.style.color = 'var(--danger)';
@@ -2349,14 +2349,14 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
                     renderProcessDetails();
                 } else {
                     const errText = await readErrorMessage(response);
-                    document.getElementById('details-process-title').textContent = 'Error Loading Process';
+                    document.getElementById('details-process-title').textContent = 'Error Loading Application';
                     document.getElementById('details-process-meta').innerHTML = `<span style="font-size:0.8125rem;color:#EF4444;">${escapeHtml(errText)}</span>`;
                     document.getElementById('details-sidebar-target').innerHTML = '';
                     document.getElementById('details-content-target').innerHTML = '';
                 }
             } catch(e) {
                 console.error(e);
-                document.getElementById('details-process-title').textContent = 'Error Loading Process';
+                document.getElementById('details-process-title').textContent = 'Error Loading Application';
                 document.getElementById('details-process-meta').innerHTML = '<span style="font-size:0.8125rem;color:#EF4444;">Connection error occurred.</span>';
                 document.getElementById('details-sidebar-target').innerHTML = '';
                 document.getElementById('details-content-target').innerHTML = '';
@@ -2499,7 +2499,7 @@ const PROCESS_HTML_TEMPLATE: &str = r#"
             const p = currentProcessDetails;
             const metaContainer = document.getElementById('details-process-meta');
 
-            const titleText = p.process_name || 'Process';
+            const titleText = p.process_name || 'Application';
             document.getElementById('details-process-title').textContent = titleText;
             document.getElementById('details-process-title').title = titleText;
 
@@ -4290,14 +4290,14 @@ pub(crate) fn admin_process_html() -> String {
 fn render_process_page(is_admin_view: bool) -> String {
     let mode = if is_admin_view { "true" } else { "false" };
     let title = if is_admin_view {
-        "Vistas Portal - Process Review"
+        "Vistas Portal - Application Review"
     } else {
-        "Vistas Portal - Processes"
+        "Vistas Portal - Applications"
     };
     PROCESS_HTML_TEMPLATE
         .replace("__PROCESS_MODE__", mode)
         .replace(
-            "<title>Vistas Portal - Processes</title>",
+            "<title>Vistas Portal - Applications</title>",
             &format!("<title>{}</title>", title),
         )
 }

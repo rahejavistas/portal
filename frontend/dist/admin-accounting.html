@@ -359,7 +359,7 @@
                 title: 'No Dues File',
                 body: `
                     <h3>What this does</h3>
-                    <p>Uploads the latest dues compliance export. Every flat's outstanding amount is replaced with this file's figures - the No Dues check in any process always reflects whichever upload is most recent.</p>
+                    <p>Uploads the latest dues compliance export. Every flat's outstanding amount is replaced with this file's figures - the No Dues check in any application always reflects whichever upload is most recent.</p>
                     <h3>Still stuck?</h3>
                     <p>Click your avatar in the top right, then "Contact Support".</p>
                 `,
@@ -674,7 +674,7 @@
                 { label: 'Reports', action: () => switchAcctTab('reports'), show: true },
                 { label: 'Settings', action: () => switchAcctTab('settings'), show: true },
                 { label: 'Back to Admin', action: () => { window.location.href = '/admin'; }, show: true },
-                { label: 'Processes', action: () => { window.location.href = '/process'; }, show: true },
+                { label: 'Applications', action: () => { window.location.href = '/process'; }, show: true },
             ];
         }
 
@@ -2356,12 +2356,12 @@
                     <div class="nav-subgroup">${residentsLink}${rolesLink}</div>
                 </div>` : '';
             const documentsLink = canManageDocuments ? `<a href="/admin?tab=documents" class="nav-item" style="text-decoration:none;">Documents</a>` : '';
-            const processesLink = canViewAllProcesses ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration:none;">Process Review</a>` : '';
+            const processesLink = canViewAllProcesses ? `<a href="/admin-process" class="nav-item nav-subitem" style="text-decoration:none;">Application Review</a>` : '';
             const signaturesLink = (canSignDocuments || canManageSignerDirectory) ? `<a href="/admin?tab=signatures" class="nav-item nav-subitem" style="text-decoration:none;">Signatures</a>` : '';
-            const templatesLink = canManageProcessTemplates ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration:none;">Process Templates</a>` : '';
+            const templatesLink = canManageProcessTemplates ? `<a href="/admin?tab=templates" class="nav-item nav-subitem" style="text-decoration:none;">Application Templates</a>` : '';
             const processesGroup = (canViewAllProcesses || canManageProcessTemplates || canSignDocuments || canManageSignerDirectory) ? `
                 <div class="nav-group collapsed" id="processes-nav-group">
-                    <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup('processes-nav-group')"><span>Processes</span><span class="nav-group-arrow">&#9662;</span></button>
+                    <button type="button" class="nav-item nav-group-toggle" onclick="toggleNavGroup('processes-nav-group')"><span>Applications</span><span class="nav-group-arrow">&#9662;</span></button>
                     <div class="nav-subgroup">${processesLink}${signaturesLink}${templatesLink}</div>
                 </div>` : '';
             const hasFlat = !!(user && user.wing !== 'TBD' && user.flat_number !== 'TBD');

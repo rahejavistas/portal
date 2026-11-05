@@ -38,6 +38,8 @@ impl ProcessTurn {
 #[derive(Debug, Clone, Default)]
 pub struct ActorContext {
     pub is_admin: bool,
+    /// Bypasses owner-fill checks on open steps; the ultimate fallback.
+    pub is_super_admin: bool,
     pub designation_codes: HashSet<String>,
     /// Every wing's representative designation code, system-wide.
     pub wing_representative_codes: HashSet<String>,
@@ -295,7 +297,8 @@ pub fn tenant_stage_lacks_owner_declaration(template: &crate::ProcessTemplate) -
 // Pure computation functions
 // ==========================================
 
-/// Check if all mandatory fields in a step are filled.
+/// Check if all mandatory fields in a step are filled and every substep is done. A substep
+/// with nothing mandatory (e.g. only optional fields) counts as done without being submitted.
 pub fn check_step_completed(
     step_id: i32,
     info_map: &HashMap<i32, StepInfo>,
@@ -328,11 +331,8 @@ pub fn check_step_completed(
         }
     }
     info.substep_ids.iter().all(|sub_id| {
-        state
-            .steps
-            .get(sub_id)
-            .map(|s| s.is_completed)
-            .unwrap_or(false)
+        state.steps.get(sub_id).is_some_and(|s| s.is_completed)
+            || check_step_completed(*sub_id, info_map, state)
     })
 }
 
@@ -778,19 +778,19 @@ pub fn compute_review_updates(
         _ => None,
     };
 
-    // Open exclusive-owner step: block approval unless its holder actually filled it first.
+    // Open owner-held step: approvable only by its holder or a super admin, filled or not.
     match status {
         StepStatus::PendingReview => {}
         StepStatus::Open => {
             if is_approved
+                && !actor.is_super_admin
                 && matches!(
                     info.filled_by,
                     crate::StepOwner::Designation { .. }
                         | crate::StepOwner::WingRepresentative
                         | crate::StepOwner::Tenant
                 )
-                && !(actor.may_act_on(&info.filled_by)
-                    && check_step_completed(step_id, &info_map, state))
+                && !actor.may_act_on(&info.filled_by)
             {
                 return Err(
                     "This stage must be filled by its assigned owner before approval".to_string(),
@@ -1100,6 +1100,86 @@ mod tests {
     }
 
     #[test]
+    fn holder_or_super_admin_may_approve_open_designation_step_even_if_unfilled() {
+        let officer = crate::StepOwner::Designation {
+            code: "compliance_officer".to_string(),
+        };
+        let mut field = declaration_field(24);
+        field.r#type = crate::FieldType::Text;
+        let template = template_of(vec![step_with(2, officer, false, Some(vec![field]))]);
+        let state = ProcessStateInput::default();
+
+        let super_admin = ActorContext {
+            is_admin: true,
+            is_super_admin: true,
+            ..Default::default()
+        };
+        let approved = compute_review_updates(&template, &state, 2, true, &super_admin).unwrap();
+        assert!(approved.is_completed);
+        assert_eq!(approved.acted_as_designation, None);
+
+        let plain_admin = compute_review_updates(&template, &state, 2, true, &actor(true));
+        assert!(plain_admin.is_err());
+
+        let non_admin = compute_review_updates(&template, &state, 2, true, &actor(false));
+        assert!(non_admin.is_err());
+
+        let holder = ActorContext {
+            designation_codes: HashSet::from(["compliance_officer".to_string()]),
+            ..Default::default()
+        };
+        assert!(compute_review_updates(&template, &state, 2, true, &holder).is_ok());
+    }
+
+    #[test]
+    fn substep_with_only_optional_fields_does_not_block_parent_completion() {
+        let optional_doc = crate::ProcessFieldTemplate {
+            field_id: 19,
+            name: "Document1".to_string(),
+            description: None,
+            r#type: crate::FieldType::File,
+            is_optional: true,
+            requirements: None,
+            requires_signature: false,
+            required_signs_from_designations: Vec::new(),
+            options: None,
+            example_document_id: None,
+        };
+        let required_text = crate::ProcessFieldTemplate {
+            field_id: 24,
+            r#type: crate::FieldType::Text,
+            is_optional: false,
+            ..optional_doc.clone()
+        };
+        let mut parent = step_with(17, crate::StepOwner::User, false, None);
+        parent.substeps = Some(vec![
+            step_with(18, crate::StepOwner::User, false, Some(vec![optional_doc])),
+            step_with(23, crate::StepOwner::User, false, Some(vec![required_text])),
+        ]);
+        let template = template_of(vec![parent]);
+        let info_map = build_step_info_map(&template);
+
+        let mut state = ProcessStateInput::default();
+        assert!(!check_step_completed(17, &info_map, &state));
+
+        state.fields.insert(
+            24,
+            FieldState {
+                text_value: Some("yes".to_string()),
+                document_id: None,
+            },
+        );
+        state.steps.insert(
+            23,
+            StepStateDb {
+                is_completed: true,
+                started_at: None,
+            },
+        );
+        assert!(check_step_completed(17, &info_map, &state));
+    }
+
+    #[test]
     fn test_validate_save_and_completion() {
         let template = crate::test_fixtures::tenant_onboarding_fixture();
         let state = ProcessStateInput::default();
@@ -1392,79 +1472,29 @@ mod tests {
         let mut designation_codes = HashSet::new();
         designation_codes.insert("secretary".to_string());
         let secretary = ActorContext {
-            is_admin: true,
-            designation_codes,
-            ..Default::default()
-        };
-        let result = validate_save(
-            &template,
-            &state,
-            7,
-            &[SaveFieldInput {
-                template_field_id: 111,
-                text_value: Some("Discussed".to_string()),
-                document_id: None,
-            }],
-            &secretary,
-        )
-        .unwrap();
-        assert_eq!(result.new_status, StepStatus::PendingReview);
-        assert_eq!(result.acted_as_designation, Some("secretary".to_string()));
-    }
-
-    #[test]
-    fn open_designation_step_cannot_be_approved_before_its_holder_fills_it() {
-        let mut template = crate::test_fixtures::tenant_onboarding_fixture();
-        template.substeps.as_mut().unwrap()[1].filled_by = crate::StepOwner::Designation {
-            code: "secretary".to_string(),
-        };
-
-        let mut state = ProcessStateInput::default();
-        for fid in [101, 102, 103, 105, 106, 107, 108, 109, 110] {
-            state.fields.insert(
-                fid,
-                FieldState {
-                    text_value: None,
-                    document_id: Some(Uuid::new_v4()),
-                },
-            );
-        }
-        for sid in [3, 4, 5, 6, 2] {
-            state.steps.insert(
-                sid,
-                StepStateDb {
-                    is_completed: true,
-                    started_at: None,
-                },
-            );
-        }
-        state.reviews.insert(
-            2,
-            vec![ReviewState {
-                is_approved: true,
-                created_at: chrono::Utc::now(),
-            }],
-        );
-
-        let mut designation_codes = HashSet::new();
-        designation_codes.insert("secretary".to_string());
-        let secretary = ActorContext {
-            is_admin: true,
             designation_codes,
             ..Default::default()
         };
 
         let result = compute_review_updates(&template, &state, 7, true, &secretary);
         assert!(
-            result.is_err(),
-            "step 7's field 111 was never filled, so it must not be approvable yet"
+            result.is_ok(),
+            "the holder may approve their open step even though field 111 was never filled"
         );
 
         let result = compute_review_updates(&template, &state, 7, true, &actor(true));
         assert!(
             result.is_err(),
-            "a global admin without the designation must not be able to approve it either"
+            "a reviewer without the designation must not approve the step"
         );
+
+        let super_admin = ActorContext {
+            is_admin: true,
+            is_super_admin: true,
+            ..Default::default()
+        };
+        let result = compute_review_updates(&template, &state, 7, true, &super_admin);
+        assert!(result.is_ok(), "a super admin may approve any open step");
     }
 
     #[test]

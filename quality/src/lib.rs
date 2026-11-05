@@ -699,7 +699,7 @@ pub fn quick_create_document(
 
     let mut payload = serde_json::json!({
         "title": title,
-        "filename": "seeded.txt",
+        "filename": "seeded.pdf",
         "description": "Programmatic helper seeded document",
         "category": category,
         "metadata": {
